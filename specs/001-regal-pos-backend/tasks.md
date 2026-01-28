@@ -21,7 +21,7 @@ Project can be built and basic health check passes.
 
 - [X] T001 Create project directory structure (src/, tests/, docs/, docker/, etc.)
 - [X] T002 Initialize Python project with requirements.txt including FastAPI, SQLModel, Alembic, Redis, PyJWT
-- [ ] T003 Create initial Dockerfile for API service
+- [X] T003 Create initial Dockerfile for API service
 - [X] T004 Create docker-compose.yml with services: api, postgres, redis
 - [X] T005 Configure development environment with .env, .gitignore, .dockerignore
 - [X] T006 Set up basic FastAPI application structure with main.py and routers directory
@@ -143,10 +143,10 @@ OpenAPI specification is available and comprehensive tests pass.
 ### Tasks
 
 - [X] T060 Create OpenAPI specification (openapi.yaml) with all endpoints
-- [ ] T061 Write unit tests for all models
-- [ ] T062 Write unit tests for all services
-- [ ] T063 Write integration tests for authentication flows
-- [ ] T064 Write integration tests for all user stories
+- [X] T061 Write unit tests for all models
+- [X] T062 Write unit tests for all services
+- [X] T063 Write integration tests for authentication flows
+- [X] T064 Write integration tests for all user stories
 - [ ] T065 Write end-to-end tests for critical user journeys
 - [ ] T066 Implement test coverage reporting
 
