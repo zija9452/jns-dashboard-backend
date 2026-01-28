@@ -1,0 +1,41 @@
+{
+  "project": "dashboard-backend — backend specification",
+  "target_audience": "Backend developers, DevOps engineers, QA",
+  "focus": "FastAPI (Python) backend only — multi-container (docker-compose) local/dev setup, SQLModel + Alembic migrations, Neon (Postgres-compatible) for production, Redis for cache/broker, RBAC 'better-auth' (JWT access+refresh, bcrypt/argon2, optional 2FA hooks). Implement exact parity with Regal POS admin/cashier/employee tabs and fields. API contract (OpenAPI/Postman/Markdown) will be delivered separately — do NOT include endpoint params/URLs in this specification.",
+  "success_criteria": [
+    "All domain models implemented (User/Role/Product/Customer/Vendor/Salesman/StockEntry/Expense/Invoice/CustomOrder/Refund/AuditLog) with SQLModel + migrations.",
+    "Role-based access enforced for Admin, Cashier, Employee at endpoint and resource level.",
+    "Core endpoints implemented and documented (auth, products, customers, vendors, stock, invoices, refunds, expenses, reports) and covered by unit/integration tests.",
+    "Dockerized services + docker-compose to run full stack locally (api, redis, worker, local postgres for dev).",
+    "OpenAPI spec (openapi.yaml) or Postman collection produced separately that contains full params, request/response examples, auth headers, pagination and error schema.",
+    "Automated tests (pytest) with CI config example; linting and basic type checks included.",
+    "Audit logs capture critical actions (invoice creation, refunds, stock adjustments, role changes)."
+  ],
+  "constraints": [
+    "All persistent data must be SQLModel-compatible and work with Neon/Postgres.",
+    "Do NOT place API params, endpoint URLs, or full request/response examples inside this /sp.specification command.",
+    "Local dev uses postgres container; production uses Neon via env-driven connection string.",
+    "Use docker-compose for local multi-container orchestration (no k8s required in this spec)."
+  ],
+  "not_in_scope": [
+    "Frontend UI implementation",
+    "Payment gateway integrations (unless requested separately)",
+    "Physical POS hardware drivers / integrations",
+    "Extensive BI dashboards or analytics UIs (logging/metrics hooks may be included)"
+  ],
+  "deliverables": [
+    "docker-compose.yml (api, redis, worker, local postgres for dev)",
+    "Dockerfiles for api & worker",
+    "FastAPI app organized by domain routers (auth, products, customers, vendors, salesman, stock, expenses, invoices, refunds, reports, admin)",
+    "SQLModel models + Alembic migrations",
+    "Auth module (RBAC, JWT access+refresh, refresh revocation, password hashing, 2FA hooks)",
+    "OpenAPI spec or Postman collection (provided separately on request)",
+    "README with local dev, env vars, and Neon production notes",
+    "Unit & integration tests (pytest) and CI example (GitHub Actions)"
+  ],
+  "acceptance_tests": [
+    "Create users for each role and verify permitted/forbidden endpoints.",
+    "CRUD product lifecycle + stock adjustments and audit log entries.",
+    "Create invoice and refund transactions with proper audit trails."
+  ]
+}

@@ -1,0 +1,731 @@
+openapi: 3.0.3
+info:
+  title: Regal POS Backend
+  description: Backend API for Regal POS system with exact parity to admin dashboard
+  version: 1.0.0
+servers:
+  - url: http://localhost:8000
+    description: Development server
+  - url: https://api.regalpos.com
+    description: Production server
+paths:
+  /:
+    get:
+      summary: Root endpoint
+      description: Welcome message for the Regal POS Backend API
+      responses:
+        '200':
+          description: Welcome message
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Welcome to Regal POS Backend API"
+  /health:
+    get:
+      summary: Health check endpoint
+      description: Check the health status of the service
+      responses:
+        '200':
+          description: Health status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "healthy"
+                  service:
+                    type: string
+                    example: "regal-pos-backend"
+  /auth/login:
+    post:
+      summary: User login
+      description: Authenticate user and return JWT tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - username
+                - password
+              properties:
+                username:
+                  type: string
+                  example: "admin"
+                password:
+                  type: string
+                  example: "admin123"
+      responses:
+        '200':
+          description: Successful login
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                    example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                  refresh_token:
+                    type: string
+                    example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                  token_type:
+                    type: string
+                    example: "bearer"
+                  expires_in:
+                    type: integer
+                    example: 900
+        '401':
+          description: Invalid credentials
+  /auth/refresh:
+    post:
+      summary: Refresh access token
+      description: Refresh the access token using a refresh token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - refresh_token
+              properties:
+                refresh_token:
+                  type: string
+                  example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+      responses:
+        '200':
+          description: New tokens
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                    example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                  refresh_token:
+                    type: string
+                    example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                  token_type:
+                    type: string
+                    example: "bearer"
+                  expires_in:
+                    type: integer
+                    example: 900
+        '401':
+          description: Invalid refresh token
+  /auth/logout:
+    post:
+      summary: User logout
+      description: Revoke refresh token and logout user
+      responses:
+        '200':
+          description: Successfully logged out
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Successfully logged out"
+  /users:
+    get:
+      summary: Get all users
+      description: Retrieve a list of all users (admin only)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: skip
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+      responses:
+        '200':
+          description: List of users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+        '403':
+          description: Forbidden
+    post:
+      summary: Create a new user
+      description: Create a new user (admin only)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserCreate'
+      responses:
+        '200':
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: Bad request
+        '403':
+          description: Forbidden
+  /users/{user_id}:
+    get:
+      summary: Get a user by ID
+      description: Retrieve a specific user by ID
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: User details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '404':
+          description: User not found
+    put:
+      summary: Update a user
+      description: Update a specific user by ID
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserUpdate'
+      responses:
+        '200':
+          description: User updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '404':
+          description: User not found
+    delete:
+      summary: Delete a user
+      description: Delete a specific user by ID (admin only)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: User deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "User deleted successfully"
+        '404':
+          description: User not found
+  /products:
+    get:
+      summary: Get all products
+      description: Retrieve a list of all products
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: skip
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+      responses:
+        '200':
+          description: List of products
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Product'
+    post:
+      summary: Create a new product
+      description: Create a new product (admin only)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductCreate'
+      responses:
+        '200':
+          description: Product created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '400':
+          description: Bad request
+        '403':
+          description: Forbidden
+  /products/{product_id}:
+    get:
+      summary: Get a product by ID
+      description: Retrieve a specific product by ID
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: product_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Product details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '404':
+          description: Product not found
+    put:
+      summary: Update a product
+      description: Update a specific product by ID (admin only)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: product_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductUpdate'
+      responses:
+        '200':
+          description: Product updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '404':
+          description: Product not found
+    delete:
+      summary: Delete a product
+      description: Delete a specific product by ID (admin only)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: product_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Product deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Product deleted successfully"
+        '404':
+          description: Product not found
+  /pos/quick-sell:
+    post:
+      summary: Quick sell functionality
+      description: Create an invoice with minimal details for quick transactions (cashier only)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                product_ids:
+                  type: array
+                  items:
+                    type: string
+                customer_id:
+                  type: string
+                  nullable: true
+      responses:
+        '200':
+          description: Invoice created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Invoice'
+        '400':
+          description: Bad request
+        '403':
+          description: Forbidden
+  /pos/cash-drawer/open:
+    post:
+      summary: Open cash drawer
+      description: Record opening of cash drawer (cashier only)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - amount
+              properties:
+                amount:
+                  type: number
+                  example: 100.0
+                note:
+                  type: string
+                  example: "Opening amount for shift"
+      responses:
+        '200':
+          description: Cash drawer opened
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Cash drawer opened"
+                  amount:
+                    type: number
+                    example: 100.0
+                  timestamp:
+                    type: string
+                    format: date-time
+                  cashier:
+                    type: string
+                    example: "cashier123"
+  /pos/cash-drawer/close:
+    post:
+      summary: Close cash drawer
+      description: Record closing of cash drawer and calculate variance (cashier only)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - expected_amount
+                - actual_amount
+              properties:
+                expected_amount:
+                  type: number
+                  example: 150.0
+                actual_amount:
+                  type: number
+                  example: 148.5
+                note:
+                  type: string
+                  example: "Minor variance due to rounding"
+      responses:
+        '200':
+          description: Cash drawer closed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Cash drawer closed"
+                  expected_amount:
+                    type: number
+                    example: 150.0
+                  actual_amount:
+                    type: number
+                    example: 148.5
+                  variance:
+                    type: number
+                    example: -1.5
+                  timestamp:
+                    type: string
+                    format: date-time
+                  cashier:
+                    type: string
+                    example: "cashier123"
+                  note:
+                    type: string
+                    example: "Minor variance due to rounding"
+  /admin:
+    get:
+      summary: Admin dashboard overview
+      description: Get admin dashboard overview with key metrics (admin only)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Admin dashboard data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  summary:
+                    type: object
+                    properties:
+                      total_users:
+                        type: integer
+                      total_products:
+                        type: integer
+                      total_customers:
+                        type: integer
+                      total_invoices:
+                        type: integer
+                      total_expenses:
+                        type: integer
+                  recent_activity:
+                    type: object
+                    properties:
+                      recent_invoices:
+                        type: array
+                        items:
+                          type: string
+                      recent_customers:
+                        type: array
+                        items:
+                          type: string
+                  last_updated:
+                    type: string
+                    format: date-time
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        full_name:
+          type: string
+        email:
+          type: string
+          format: email
+        username:
+          type: string
+        role_id:
+          type: string
+          format: uuid
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    UserCreate:
+      type: object
+      required:
+        - full_name
+        - email
+        - username
+        - password
+        - role_id
+      properties:
+        full_name:
+          type: string
+        email:
+          type: string
+          format: email
+        username:
+          type: string
+        password:
+          type: string
+        role_id:
+          type: string
+          format: uuid
+        is_active:
+          type: boolean
+          default: true
+    UserUpdate:
+      type: object
+      properties:
+        full_name:
+          type: string
+        email:
+          type: string
+          format: email
+        username:
+          type: string
+        password:
+          type: string
+        role_id:
+          type: string
+          format: uuid
+        is_active:
+          type: boolean
+    Product:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        sku:
+          type: string
+        name:
+          type: string
+        desc:
+          type: string
+        unit_price:
+          type: number
+        cost_price:
+          type: number
+        tax_rate:
+          type: number
+        vendor_id:
+          type: string
+          format: uuid
+        stock_level:
+          type: integer
+        barcode:
+          type: string
+        category:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    ProductCreate:
+      type: object
+      required:
+        - sku
+        - name
+        - unit_price
+        - cost_price
+      properties:
+        sku:
+          type: string
+        name:
+          type: string
+        desc:
+          type: string
+        unit_price:
+          type: number
+        cost_price:
+          type: number
+        tax_rate:
+          type: number
+        vendor_id:
+          type: string
+          format: uuid
+        stock_level:
+          type: integer
+          default: 0
+        barcode:
+          type: string
+        category:
+          type: string
+    ProductUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        desc:
+          type: string
+        unit_price:
+          type: number
+        cost_price:
+          type: number
+        tax_rate:
+          type: number
+        vendor_id:
+          type: string
+          format: uuid
+        stock_level:
+          type: integer
+        barcode:
+          type: string
+        category:
+          type: string
+    Invoice:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        invoice_no:
+          type: string
+        customer_id:
+          type: string
+          format: uuid
+        items:
+          type: string
+        totals:
+          type: string
+        taxes:
+          type: number
+        discounts:
+          type: number
+        status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
