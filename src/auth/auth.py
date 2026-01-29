@@ -7,19 +7,18 @@ from fastapi.security import OAuth2PasswordBearer, HTTPBearer, HTTPAuthorization
 from sqlmodel import Session, select
 from pydantic import BaseModel
 import os
-from dotenv import load_dotenv
 
 from ..database.database import get_db
 from ..models.user import User
+from ..config.settings import settings
+from ..middleware.security import session_manager
 
-load_dotenv()
-
-# Secret keys from environment variables
-SECRET_KEY = os.getenv("ACCESS_TOKEN_SECRET_KEY")
-REFRESH_SECRET_KEY = os.getenv("REFRESH_TOKEN_SECRET_KEY",)
-ALGORITHM = os.getenv("ALGORITHM")
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
-REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "30"))
+# Use the settings for configuration
+SECRET_KEY = settings.access_token_secret_key
+REFRESH_SECRET_KEY = settings.refresh_token_secret_key
+ALGORITHM = settings.algorithm
+ACCESS_TOKEN_EXPIRE_MINUTES = settings.access_token_expire_minutes
+REFRESH_TOKEN_EXPIRE_DAYS = settings.refresh_token_expire_days
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")

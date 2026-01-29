@@ -13,7 +13,7 @@ class Role(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     name: str = Field(unique=True, max_length=50)  # admin, cashier, employee
     permissions: str = Field(default="{}")  # JSON string for permissions
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now())
 
     # Relationship to Users
     users: List["User"] = Relationship(back_populates="role")

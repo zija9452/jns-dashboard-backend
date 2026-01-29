@@ -12,8 +12,8 @@ load_dotenv()
 redis_client = redis.Redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"))
 
 # Secret keys from environment variables
-REFRESH_SECRET_KEY = os.getenv("REFRESH_TOKEN_SECRET_KEY", "your-default-refresh-secret-key-change-this-in-production")
-ALGORITHM = "HS256"
+REFRESH_SECRET_KEY = os.getenv("REFRESH_TOKEN_SECRET_KEY")
+ALGORITHM = os.getenv("ALGORITHM")
 REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "30"))
 
 def store_refresh_token(user_id: int, token: str, expires_at: datetime):

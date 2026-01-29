@@ -18,8 +18,8 @@ class CustomOrder(SQLModel, table=True):
     fields: str = Field()  # JSON string for custom order data
     status: CustomOrderStatus = Field(default=CustomOrderStatus.PENDING)
     linked_invoice: Optional[uuid.UUID] = Field(default=None, foreign_key="invoices.id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
+    created_at: datetime = Field(default_factory=lambda: datetime.now())
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(), nullable=False)
 
 class CustomOrderRead(SQLModel):
     id: uuid.UUID

@@ -11,8 +11,8 @@ class Salesman(SQLModel, table=True):
     name: str = Field(max_length=100)
     code: str = Field(unique=True, max_length=20)
     commission_rate: Optional[Decimal] = Field(default=0.00, max_digits=5, decimal_places=2)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
+    created_at: datetime = Field(default_factory=lambda: datetime.now())
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(), nullable=False)
 
 class SalesmanRead(SQLModel):
     id: uuid.UUID

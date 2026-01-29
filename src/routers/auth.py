@@ -11,6 +11,7 @@ from ..models.user import User
 from ..auth.auth import authenticate_user, create_access_token, create_refresh_token
 from ..auth.token_manager import store_refresh_token, invalidate_refresh_token
 from ..auth.password import verify_password, get_password_hash
+from ..middleware.security import session_manager
 
 router = APIRouter()
 

@@ -1,0 +1,89 @@
+[tool.poetry]
+name = "regal-pos-backend"
+version = "1.0.0"
+description = "Backend API for Regal POS system with exact parity to admin dashboard"
+authors = ["Regal POS Team"]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+fastapi = "0.104.1"
+uvicorn = {extras = ["standard"], version = "0.24.0"}
+sqlmodel = "0.0.16"
+alembic = "1.13.1"
+asyncpg = "0.29.0"
+redis = "5.0.1"
+pyjwt = {extras = ["crypto"], version = "2.8.0"}
+passlib = {extras = ["bcrypt"], version = "1.7.4"}
+python-multipart = "0.0.6"
+python-dotenv = "1.0.0"
+pydantic = "2.5.0"
+pydantic-settings = "2.1.0"
+sqlalchemy = "2.0.23"
+psycopg2-binary = "2.9.9"
+cryptography = "41.0.8"
+prometheus-client = "0.20.0"
+tenacity = "8.2.3"
+opentelemetry-api = "1.24.0"
+opentelemetry-sdk = "1.24.0"
+opentelemetry-exporter-otlp = "1.24.0"
+opentelemetry-instrumentation-fastapi = "0.45b0"
+opentelemetry-instrumentation-sqlalchemy = "0.45b0"
+opentelemetry-instrumentation-redis = "0.45b0"
+opentelemetry-instrumentation-requests = "0.45b0"
+hypothesis = "6.88.4"
+locust = "2.14.0"
+locust-plugins = "4.1.2"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "7.4.3"
+httpx = "0.25.2"
+pytest-asyncio = "0.1.0"
+pytest-cov = "4.1.0"
+bleach = "6.3.0"
+webencodings = "0.5.1"
+mutmut = "^2.4.0"
+cosmic-ray = "^3.4.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.mutmut]
+paths_to_mutate = ["src/**/*.py"]
+backup = false
+runner = "python -m pytest"
+tests_dir = "tests/"
+test_time_multiplier = 10.0
+test_time_base = 5.0
+
+[tool.cosmic-ray]
+module-path = "src"
+timeout = 50
+test-command = "python -m pytest tests/"
+
+[tool.cosmic-ray.work-delay]
+value = 10
+
+[tool.cosmic-ray.dbs]
+value = "cosmic-ray-results"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
+addopts = "-v --tb=short"
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["*/tests/*", "*/venv/*", "*/__pycache__/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:"
+]

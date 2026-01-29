@@ -25,8 +25,8 @@ class User(UserBase, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     password_hash: str = Field(max_length=255)
     meta: Optional[str] = Field(default=None)  # JSON string for extensibility
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
+    created_at: datetime = Field(default_factory=lambda: datetime.now())
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(), nullable=False)
 
     # Relationship to Role
     role: "Role" = Relationship(back_populates="users")

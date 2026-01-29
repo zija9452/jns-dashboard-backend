@@ -11,8 +11,8 @@ class Vendor(SQLModel, table=True):
     name: str = Field(max_length=100)
     contacts: str = Field()  # JSON string for phone, email, address
     terms: Optional[str] = Field(default=None)  # JSON string for payment terms, etc.
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
+    created_at: datetime = Field(default_factory=lambda: datetime.now())
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(), nullable=False)
 
 class VendorRead(SQLModel):
     id: uuid.UUID

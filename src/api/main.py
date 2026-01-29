@@ -5,13 +5,26 @@ import os
 
 from src.routers import auth, users, products, customers, vendors, salesman, stock, expenses, invoices, custom_orders, refunds, admin, pos
 from src.utils.error_handlers import setup_error_handlers
+from src.middleware.security import SecurityHeadersMiddleware
+from src.utils.metrics import MetricsMiddleware, start_metrics_server
+from src.utils.structured_logging import setup_structured_logging, CorrelationIdMiddleware
+from src.middleware.compression import CompressionMiddleware
+from src.utils.tracing import setup_tracing
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     from src.app_startup import initialize_database
     await initialize_database()
+
+    # Start metrics server in a background thread
+    import threading
+    from src.utils.metrics import start_metrics_server
+    metrics_thread = threading.Thread(target=start_metrics_server, daemon=True)
+    metrics_thread.start()
+
     yield
+
     # Shutdown
 
 app = FastAPI(
@@ -21,16 +34,36 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Setup structured logging
+setup_structured_logging(level="INFO", format_type="json")
+
 # Setup error handlers
 setup_error_handlers(app)
 
-# CORS middleware
+# Add correlation ID middleware
+app.add_middleware(CorrelationIdMiddleware)
+
+# Add compression middleware
+app.add_middleware(CompressionMiddleware)
+
+# Setup and add tracing middleware
+app = setup_tracing(app)
+
+# Metrics middleware
+app.add_middleware(MetricsMiddleware)
+
+# Security headers middleware
+app.add_middleware(SecurityHeadersMiddleware)
+
+# CORS middleware - More secure configuration for production
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with specific origins
+    allow_origins=os.getenv("ALLOWED_ORIGINS", "").split(",") if os.getenv("ALLOWED_ORIGINS") else ["http://localhost:3000", "http://127.0.0.1:3000"],  # Specify your frontend URLs
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    # Expose headers that browsers are allowed to access
+    expose_headers=["Access-Control-Allow-Origin", "Access-Control-Allow-Credentials"]
 )
 
 @app.get("/")

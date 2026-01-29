@@ -24,8 +24,8 @@ class Product(SQLModel, table=True):
     branch: Optional[str] = Field(default=None, max_length=50)
     limited_qty: bool = Field(default=False)
     brand_action: Optional[str] = Field(default=None, max_length=100)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
+    created_at: datetime = Field(default_factory=lambda: datetime.now())
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(), nullable=False)
 
 class ProductRead(SQLModel):
     id: uuid.UUID

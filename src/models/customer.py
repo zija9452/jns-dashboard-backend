@@ -14,8 +14,8 @@ class Customer(SQLModel, table=True):
     billing_addr: Optional[str] = Field(default=None)  # JSON string for address
     shipping_addr: Optional[str] = Field(default=None)  # JSON string for address
     credit_limit: Optional[Decimal] = Field(default=0.00, max_digits=10, decimal_places=2)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
+    created_at: datetime = Field(default_factory=lambda: datetime.now())
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(), nullable=False)
 
 class CustomerRead(SQLModel):
     id: uuid.UUID

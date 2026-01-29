@@ -20,7 +20,7 @@ class AuditLog(SQLModel, table=True):
     action: AuditAction  # Type of action performed
     user_id: Optional[uuid.UUID] = Field(default=None, foreign_key="users.id")  # User who performed action
     changes: str = Field(default="{}")  # JSON string with details of changes made
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now())
 
 class AuditLogRead(SQLModel):
     id: uuid.UUID

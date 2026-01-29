@@ -15,7 +15,7 @@ class Refund(SQLModel, table=True):
     amount: Decimal = Field(max_digits=10, decimal_places=2)
     reason: str  # Text field for reason
     processed_by: uuid.UUID = Field(foreign_key="users.id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now())
 
 class RefundRead(SQLModel):
     id: uuid.UUID

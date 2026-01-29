@@ -5,6 +5,7 @@ from ..models.user import User, UserCreate, UserUpdate
 from ..models.role import Role
 from ..auth.password import get_password_hash
 from ..utils.audit_logger import audit_log
+from ..middleware.security import session_manager
 
 class UserService:
     """
@@ -82,6 +83,10 @@ class UserService:
 
         # Prepare update data
         update_data = user_update.dict(exclude_unset=True)
+
+        # Check if password is being updated to trigger session invalidation
+        password_updated = "password" in update_data
+
         if "password" in update_data:
             update_data["password_hash"] = get_password_hash(update_data.pop("password"))
 
@@ -91,6 +96,10 @@ class UserService:
 
         await db.commit()
         await db.refresh(db_user)
+
+        # If password was updated, invalidate all sessions for this user
+        if password_updated:
+            session_manager.invalidate_user_sessions(str(user_id))
 
         # Log the action
         await audit_log(

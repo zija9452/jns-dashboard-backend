@@ -24,8 +24,8 @@ class Invoice(SQLModel, table=True):
     discounts: Optional[Decimal] = Field(default=0.00, max_digits=10, decimal_places=2)
     status: InvoiceStatus = Field(default=InvoiceStatus.DRAFT)
     payments: Optional[str] = Field(default="[]")  # JSON string for payment records
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
+    created_at: datetime = Field(default_factory=lambda: datetime.now())
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(), nullable=False)
 
 class InvoiceRead(SQLModel):
     id: uuid.UUID

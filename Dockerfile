@@ -12,7 +12,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application
 COPY ./src /app/src
-COPY .env.example /app/.env.example
 
 # Create a non-root user
 RUN adduser --disabled-password --gecos '' appuser

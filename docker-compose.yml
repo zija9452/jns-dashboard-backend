@@ -10,7 +10,7 @@ services:
       - ./requirements.txt:/app/requirements.txt
       - ./.env:/app/.env
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:password@postgres:5432/regal_pos_dev
+      - DATABASE_URL=postgresql://neondb_owner:npg_DSJeaHiRo69W@ep-falling-base-ahj4k5gl-pooler.c-3.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require
       - REDIS_URL=redis://redis:6379
     depends_on:
       postgres:
@@ -29,9 +29,9 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
     environment:
-      - POSTGRES_DB=regal_pos_dev
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=neobdb
+      - POSTGRES_USER=J&S
+      - POSTGRES_PASSWORD=npg_DSJeaHiRo69W
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
