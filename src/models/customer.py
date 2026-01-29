@@ -1,4 +1,5 @@
 from sqlmodel import SQLModel, Field, Relationship
+from sqlalchemy import Column, Numeric
 from typing import Optional
 from decimal import Decimal
 from datetime import datetime
@@ -13,7 +14,7 @@ class Customer(SQLModel, table=True):
     contacts: str = Field()  # JSON string for phone, email, etc.
     billing_addr: Optional[str] = Field(default=None)  # JSON string for address
     shipping_addr: Optional[str] = Field(default=None)  # JSON string for address
-    credit_limit: Optional[Decimal] = Field(default=0.00, max_digits=10, decimal_places=2)
+    credit_limit: Optional[Decimal] = Field(default=0.00, sa_column=Column(Numeric(10, 2), nullable=True))
     created_at: datetime = Field(default_factory=lambda: datetime.now())
     updated_at: datetime = Field(default_factory=lambda: datetime.now(), nullable=False)
 

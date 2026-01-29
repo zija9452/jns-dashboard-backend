@@ -1,4 +1,5 @@
 from sqlmodel import SQLModel, Field, Relationship
+from pydantic import condecimal
 from typing import Optional, List
 from decimal import Decimal
 from datetime import datetime
@@ -20,8 +21,8 @@ class Invoice(SQLModel, table=True):
     customer_id: uuid.UUID = Field(foreign_key="customers.id")
     items: str = Field()  # JSON string for line items
     totals: str = Field()  # JSON string for subtotal, tax, total
-    taxes: Decimal = Field(default=0.00, max_digits=10, decimal_places=2)
-    discounts: Optional[Decimal] = Field(default=0.00, max_digits=10, decimal_places=2)
+    taxes: condecimal(decimal_places=2, max_digits=10) = Field(default=0.00)
+    discounts: Optional[condecimal(decimal_places=2, max_digits=10)] = Field(default=0.00)
     status: InvoiceStatus = Field(default=InvoiceStatus.DRAFT)
     payments: Optional[str] = Field(default="[]")  # JSON string for payment records
     created_at: datetime = Field(default_factory=lambda: datetime.now())

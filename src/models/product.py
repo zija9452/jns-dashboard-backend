@@ -1,4 +1,5 @@
 from sqlmodel import SQLModel, Field, Relationship
+from sqlalchemy import Column, Numeric
 from typing import Optional
 from decimal import Decimal
 from datetime import datetime
@@ -12,14 +13,14 @@ class Product(SQLModel, table=True):
     sku: str = Field(unique=True, max_length=50)
     name: str = Field(max_length=100)
     desc: Optional[str] = Field(default=None)
-    unit_price: Decimal = Field(max_digits=10, decimal_places=2)
-    cost_price: Decimal = Field(max_digits=10, decimal_places=2)
-    tax_rate: Optional[Decimal] = Field(default=0.00, max_digits=5, decimal_places=2)
+    unit_price: Decimal = Field(sa_column=Column(Numeric(10, 2), nullable=False))
+    cost_price: Decimal = Field(sa_column=Column(Numeric(10, 2), nullable=False))
+    tax_rate: Optional[Decimal] = Field(default=0.00, sa_column=Column(Numeric(5, 2), nullable=True))
     vendor_id: Optional[uuid.UUID] = Field(default=None, foreign_key="vendors.id")
     stock_level: int = Field(default=0)
     attributes: Optional[str] = Field(default=None)  # JSON string for extensibility
     barcode: Optional[str] = Field(default=None, unique=True, max_length=50)
-    discount: Optional[Decimal] = Field(default=0.00, max_digits=5, decimal_places=2)
+    discount: Optional[Decimal] = Field(default=0.00, sa_column=Column(Numeric(5, 2), nullable=True))
     category: Optional[str] = Field(default=None, max_length=50)
     branch: Optional[str] = Field(default=None, max_length=50)
     limited_qty: bool = Field(default=False)

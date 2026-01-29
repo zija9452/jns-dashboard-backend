@@ -1,4 +1,5 @@
 from sqlmodel import SQLModel, Field, Relationship
+from sqlalchemy import Column, Numeric
 from typing import Optional
 from decimal import Decimal
 from datetime import datetime, date
@@ -9,7 +10,7 @@ class Expense(SQLModel, table=True):
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     expense_type: str = Field(max_length=50)  # e.g., rent, utilities, supplies
-    amount: Decimal = Field(max_digits=10, decimal_places=2)
+    amount: Decimal = Field(sa_column=Column(Numeric(10, 2), nullable=False))
     date: date = Field(default_factory=date.today)
     note: Optional[str] = Field(default=None)
     created_by: uuid.UUID = Field(foreign_key="users.id")
@@ -32,7 +33,7 @@ class ExpenseCreate(SQLModel):
     created_by: uuid.UUID
 
 class ExpenseUpdate(SQLModel):
-    type: Optional[str] = None
+    expense_type: Optional[str] = None
     amount: Optional[Decimal] = None
     date: Optional[date] = None
     note: Optional[str] = None

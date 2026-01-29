@@ -7,19 +7,16 @@ services:
       - "8000:8000"
     volumes:
       - ./src:/app/src  # Bind mount for hot-reload
-      - ./requirements.txt:/app/requirements.txt
       - ./.env:/app/.env
     environment:
-      - DATABASE_URL=postgresql://neondb_owner:npg_DSJeaHiRo69W@ep-falling-base-ahj4k5gl-pooler.c-3.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require
+      - DATABASE_URL=postgresql+asyncpg://neondb_owner:npg_DSJeaHiRo69W@ep-falling-base-ahj4k5gl-pooler.c-3.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require
       - REDIS_URL=redis://redis:6379
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: >
-      sh -c "pip install --no-deps -r requirements.txt &&
-             uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload"
+    command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
 
   postgres:
     image: postgres:15-alpine
