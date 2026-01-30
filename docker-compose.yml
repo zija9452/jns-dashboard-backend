@@ -9,7 +9,7 @@ services:
       - ./src:/app/src  # Bind mount for hot-reload
       - ./.env:/app/.env
     environment:
-      - DATABASE_URL=postgresql+asyncpg://neondb_owner:npg_DSJeaHiRo69W@ep-falling-base-ahj4k5gl-pooler.c-3.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require
+      - DATABASE_URL=postgresql+asyncpg://postgres:password@postgres:5432/neobdb
       - REDIS_URL=redis://redis:6379
     depends_on:
       postgres:
@@ -27,7 +27,7 @@ services:
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
     environment:
       - POSTGRES_DB=neobdb
-      - POSTGRES_USER=J&S
+      - POSTGRES_USER=neondb_owner
       - POSTGRES_PASSWORD=npg_DSJeaHiRo69W
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]

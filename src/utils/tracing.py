@@ -10,7 +10,7 @@ from typing import Callable, Any
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 from opentelemetry.instrumentation.redis import RedisInstrumentor
@@ -34,13 +34,15 @@ tracer_provider = TracerProvider(
 # Set the global tracer provider
 trace.set_tracer_provider(tracer_provider)
 
+# Set global propagators
+from opentelemetry.propagators.composite import CompositePropagator
+propagator = CompositePropagator([W3CBaggagePropagator(), TraceContextTextMapPropagator()])
+set_global_textmap(propagator)
+
 # Configure exporter (OTLP collector)
 try:
-    otlp_exporter = OTLPSpanExporter(
-        endpoint=os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317"),
-        # Note: For newer versions of opentelemetry-exporter-otlp, you may need to use:
-        # headers={"Authorization": f"Bearer {os.getenv('OTEL_AUTH_TOKEN')}"} if os.getenv('OTEL_AUTH_TOKEN') else {}
-    )
+    otlp_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318/v1/traces")  # Using HTTP endpoint
+    otlp_exporter = OTLPSpanExporter(endpoint=otlp_endpoint)
     span_processor = BatchSpanProcessor(otlp_exporter)
     tracer_provider.add_span_processor(span_processor)
 except Exception as e:
@@ -48,20 +50,6 @@ except Exception as e:
 
 # Global tracer
 tracer = trace.get_tracer(__name__)
-
-
-class TracingMiddleware:
-    """
-    Middleware to add distributed tracing to requests
-    """
-    def __init__(self, app):
-        self.app = app
-        # Instrument the FastAPI app
-        FastAPIInstrumentor.instrument_app(app)
-
-    async def __call__(self, scope, receive, send):
-        # The actual tracing is handled by the FastAPI instrumentation
-        await self.app(scope, receive, send)
 
 
 def instrument_libraries():
@@ -89,29 +77,7 @@ def trace_function(span_name: str = None):
     """
     def decorator(func: Callable) -> Callable:
         @wraps(func)
-        async def async_wrapper(*args, **kwargs):
-            name = span_name or f"{func.__module__}.{func.__name__}"
-
-            with tracer.start_as_current_span(name) as span:
-                # Add function parameters as attributes
-                for i, arg in enumerate(args):
-                    span.set_attribute(f"arg.{i}", str(arg)[:100])  # Limit length
-
-                for key, value in kwargs.items():
-                    span.set_attribute(f"kwarg.{key}", str(value)[:100])  # Limit length
-
-                try:
-                    result = await func(*args, **kwargs)
-                    span.set_attribute("result.success", True)
-                    return result
-                except Exception as e:
-                    span.set_attribute("result.success", False)
-                    span.set_attribute("error.type", type(e).__name__)
-                    span.set_attribute("error.message", str(e)[:200])
-                    raise
-
-        @wraps(func)
-        def sync_wrapper(*args, **kwargs):
+        def wrapper(*args, **kwargs):
             name = span_name or f"{func.__module__}.{func.__name__}"
 
             with tracer.start_as_current_span(name) as span:
@@ -132,13 +98,7 @@ def trace_function(span_name: str = None):
                     span.set_attribute("error.message", str(e)[:200])
                     raise
 
-        # Return appropriate wrapper based on whether the function is async
-        import asyncio
-        if asyncio.iscoroutinefunction(func):
-            return async_wrapper
-        else:
-            return sync_wrapper
-
+        return wrapper
     return decorator
 
 
@@ -186,27 +146,7 @@ def setup_tracing(app):
         FastAPIInstrumentor.instrument_app(app)
 
         logger.info("Tracing setup completed successfully")
-        return TracingMiddleware(app)
+        return app  # Return the app directly
     except Exception as e:
         logger.error(f"Failed to setup tracing: {e}")
         return app
-
-
-# Example usage functions
-@trace_function("get_user_trace")
-def example_traced_function(user_id: str):
-    """
-    Example of a traced function
-    """
-    logger.info(f"Processing user {user_id}")
-    return f"User {user_id} processed"
-
-
-async def example_traced_async_function(order_id: str):
-    """
-    Example of a traced async function
-    """
-    with tracer.start_as_current_span("process_order") as span:
-        span.set_attribute("order.id", order_id)
-        logger.info(f"Processing order {order_id}")
-        return f"Order {order_id} processed"

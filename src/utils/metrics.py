@@ -52,14 +52,30 @@ class MetricsMiddleware:
     Middleware to collect metrics for each request
     """
 
-    def __init__(self):
+    def __init__(self, app=None):  # Accept app parameter for compatibility
+        self.app = app
         self.logger = logging.getLogger(__name__)
 
-    async def __call__(self, request: Request, call_next):
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+
+        request = Request(scope)
         start_time = time.time()
 
+        # Capture response status code and headers
+        response_status = None
+        response_headers = {}
+
+        async def send_wrapper(message):
+            nonlocal response_status
+            if message["type"] == "http.response.start":
+                response_status = message["status"]
+                response_headers.update(dict(message["headers"]))
+            await send(message)
+
         try:
-            response = await call_next(request)
+            await self.app(scope, receive, send_wrapper)
         except Exception as e:
             # Increment error counter
             ERROR_COUNT.labels(
@@ -80,17 +96,21 @@ class MetricsMiddleware:
             REQUEST_COUNT.labels(
                 method=request.method,
                 path=request.url.path,
-                status_code=response.status_code
+                status_code=response_status or 500
             ).inc()
 
-            content_length = response.headers.get('content-length')
+            # Get content length from response headers
+            content_length = None
+            for header_name, header_value in response_headers.items():
+                if header_name.decode('utf-8').lower() == 'content-length':
+                    content_length = header_value.decode('utf-8')
+                    break
+
             if content_length:
                 API_RESPONSE_SIZE.labels(
                     method=request.method,
                     path=request.url.path
                 ).observe(int(content_length))
-
-        return response
 
 
 def monitor_api_call(endpoint_name: str):
