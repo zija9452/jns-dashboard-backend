@@ -1,7 +1,6 @@
 fastapi==0.115.0
 uvicorn[standard]==0.37.0
 python-jose[cryptography]==3.5.0
-sqlmodel==0.0.22
 alembic==1.15.0
 asyncpg==0.30.0
 redis==5.2.0
@@ -33,3 +32,5 @@ hypothesis>=6.88.4
 locust>=2.35.0
 locust-plugins==5.0.0
 sentry-sdk==2.20.0
+sqlmodel==0.0.31
+argon2-cffi==25.1.0

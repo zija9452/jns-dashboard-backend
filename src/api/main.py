@@ -75,17 +75,16 @@ def health_check():
     return {"status": "healthy", "service": "regal-pos-backend"}
 
 @app.get("/health/db")
-def db_health():
+async def db_health():
     """Check database connectivity"""
     from sqlmodel import select
     from src.models.user import User
 
     try:
-        # Attempt to connect to the database and perform a simple query
-        from src.database.database import SessionLocal
-        db = SessionLocal()
-        db.exec(select(User).limit(1))
-        db.close()
+        # Attempt to connect to the database and perform a simple query using async session
+        from src.database.database import AsyncSessionLocal
+        async with AsyncSessionLocal() as session:
+            await session.execute(select(User).limit(1))
         return {"status": "healthy", "service": "database"}
     except Exception as e:
         return {"status": "unhealthy", "service": "database", "error": str(e)}, 503

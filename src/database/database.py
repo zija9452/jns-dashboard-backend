@@ -1,7 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import SQLModel
-from contextlib import asynccontextmanager
 import os
 from dotenv import load_dotenv
 
@@ -9,10 +8,8 @@ load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-import ssl
-
 # For Neon with asyncpg, we need to handle SSL differently
-if "neon.tech" in DATABASE_URL:
+if DATABASE_URL and "neon.tech" in DATABASE_URL:
     # For Neon connections, use ssl=True in connect_args
     engine = create_async_engine(
         DATABASE_URL,
@@ -20,8 +17,7 @@ if "neon.tech" in DATABASE_URL:
         connect_args={
             "server_settings": {
                 "application_name": "regal-pos-app"
-            },
-            "ssl": True  # Enable SSL for Neon
+            }
         }
     )
 else:
