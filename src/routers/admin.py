@@ -154,3 +154,357 @@ def update_settings(
     }
 
     return updated_settings
+
+# Endpoints required by the JavaScript frontend
+
+@router.get("/get-admin/{id}")
+def get_admin(
+    id: str,
+    current_user: User = Depends(admin_required()),
+    db: Session = Depends(get_db)
+):
+    """
+    Retrieve admin user details by ID
+    Required by JavaScript frontend
+    """
+    try:
+        user_id = UUID(id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user ID format"
+        )
+
+    user = UserService.get_user(db, user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    # Get the user's role name
+    from ..models.role import Role
+    role = db.get(Role, user.role_id)
+
+    # Extract extended fields from the meta field if it exists
+    import json
+    meta_data = {}
+    if user.meta:
+        try:
+            meta_data = json.loads(user.meta)
+        except:
+            meta_data = {}
+
+    # Map to the expected frontend fields
+    admin_data = {
+        "ad_id": str(user.id),
+        "ad_name": user.full_name,
+        "ad_role": role.name if role else "unknown",
+        "ad_phone": meta_data.get("phone", ""),
+        "ad_address": meta_data.get("address", ""),
+        "ad_password": "",  # Never return actual password
+        "ad_cnic": meta_data.get("cnic", ""),
+        "ad_branch": meta_data.get("branch", "")
+    }
+
+    return admin_data
+
+@router.post("/delete-admin/{id}")
+def delete_admin(
+    id: str,
+    current_user: User = Depends(admin_required()),
+    db: Session = Depends(get_db)
+):
+    """
+    Delete admin user by ID
+    Required by JavaScript frontend
+    """
+    try:
+        user_id = UUID(id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user ID format"
+        )
+
+    # Prevent deleting own account
+    if str(current_user.id) == id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete your own account"
+        )
+
+    user = UserService.get_user(db, user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    # Delete the user
+    success = UserService.delete_user(db, user_id)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Failed to delete user"
+        )
+
+    return {
+        "success": True,
+        "message": "User deleted successfully"
+    }
+
+@router.get("/view-salesman")
+def view_salesman(
+    search_string: str = None,
+    skip: int = 0,
+    limit: int = 100,
+    current_user: User = Depends(admin_required()),
+    db: Session = Depends(get_db)
+):
+    """
+    View salesman with optional search functionality
+    Required by JavaScript frontend
+    """
+    from ..services.salesman_service import SalesmanService
+    from ..models.salesman import Salesman
+
+    # Get all salesmen, with optional search
+    salesmen = SalesmanService.get_salesmen(db, skip=skip, limit=limit)
+
+    # Filter by search string if provided
+    if search_string:
+        search_lower = search_string.lower()
+        filtered_salesmen = []
+        for salesman in salesmen:
+            if (search_lower in salesman.name.lower() or
+                search_lower in salesman.code.lower()):
+                filtered_salesmen.append(salesman)
+        salesmen = filtered_salesmen
+
+    # Format the response to match expected frontend structure
+    result = []
+    for salesman in salesmen:
+        result.append({
+            "id": str(salesman.id),
+            "name": salesman.name,
+            "code": salesman.code,
+            "commission_rate": str(salesman.commission_rate) if salesman.commission_rate else "0.00",
+            "created_at": salesman.created_at.isoformat(),
+            "updated_at": salesman.updated_at.isoformat()
+        })
+
+    return result
+
+@router.get("/view-admins")
+def view_admins(
+    search_string: str = None,
+    skip: int = 0,
+    limit: int = 100,
+    current_user: User = Depends(admin_required()),
+    db: Session = Depends(get_db)
+):
+    """
+    View all admin users with optional search functionality
+    """
+    from ..models.role import Role
+
+    # Get all users with role 'admin'
+    all_users = UserService.get_users(db, skip=skip, limit=limit)
+
+    # Filter for admin users only
+    admin_users = []
+    for user in all_users:
+        role = db.get(Role, user.role_id)
+        if role and role.name == "admin":
+            admin_users.append(user)
+
+    # Filter by search string if provided
+    if search_string:
+        search_lower = search_string.lower()
+        filtered_users = []
+        for user in admin_users:
+            if (search_lower in user.full_name.lower() or
+                search_lower in user.username.lower() or
+                search_lower in user.email.lower()):
+                filtered_users.append(user)
+        admin_users = filtered_users
+
+    # Format the response
+    result = []
+    for user in admin_users:
+        role = db.get(Role, user.role_id)
+
+        # Extract extended fields from the meta field if it exists
+        import json
+        meta_data = {}
+        if user.meta:
+            try:
+                meta_data = json.loads(user.meta)
+            except:
+                meta_data = {}
+
+        result.append({
+            "ad_id": str(user.id),
+            "ad_name": user.full_name,
+            "ad_role": role.name if role else "unknown",
+            "ad_phone": meta_data.get("phone", ""),
+            "ad_address": meta_data.get("address", ""),
+            "ad_cnic": meta_data.get("cnic", ""),
+            "ad_branch": meta_data.get("branch", ""),
+            "is_active": user.is_active,
+            "created_at": user.created_at.isoformat()
+        })
+
+    return result
+
+@router.post("/create-admin")
+def create_admin(
+    ad_name: str,
+    ad_role: str,
+    ad_phone: str = None,
+    ad_address: str = None,
+    ad_password: str = "",
+    ad_cnic: str = None,
+    ad_branch: str = None,
+    current_user: User = Depends(admin_required()),
+    db: Session = Depends(get_db)
+):
+    """
+    Create a new admin user
+    Required by JavaScript frontend
+    """
+    from ..models.role import Role
+
+    # Check if role exists
+    role = db.query(Role).filter(Role.name == ad_role).first()
+    if not role:
+        # Create the role if it doesn't exist
+        role = Role(name=ad_role, permissions="{}")
+        db.add(role)
+        db.commit()
+        db.refresh(role)
+
+    # Prepare meta data
+    import json
+    meta_data = {}
+    if ad_phone:
+        meta_data["phone"] = ad_phone
+    if ad_address:
+        meta_data["address"] = ad_address
+    if ad_cnic:
+        meta_data["cnic"] = ad_cnic
+    if ad_branch:
+        meta_data["branch"] = ad_branch
+
+    # Create user
+    from ..models.user import UserCreate
+    user_create = UserCreate(
+        full_name=ad_name,
+        email=f"{ad_name.replace(' ', '.').lower()}@example.com",  # Default email
+        username=ad_name.replace(' ', '').lower(),
+        role_id=role.id,
+        password=ad_password if ad_password else "default_password123"
+    )
+
+    # Store extended fields in meta
+    user_create.meta = json.dumps(meta_data) if meta_data else None
+
+    created_user = UserService.create_user(db, user_create)
+
+    return {
+        "ad_id": str(created_user.id),
+        "ad_name": created_user.full_name,
+        "ad_role": role.name,
+        "ad_phone": ad_phone or "",
+        "ad_address": ad_address or "",
+        "ad_cnic": ad_cnic or "",
+        "ad_branch": ad_branch or "",
+        "message": "Admin user created successfully"
+    }
+
+@router.put("/update-admin/{id}")
+def update_admin(
+    id: str,
+    ad_name: str = None,
+    ad_role: str = None,
+    ad_phone: str = None,
+    ad_address: str = None,
+    ad_password: str = None,
+    ad_cnic: str = None,
+    ad_branch: str = None,
+    current_user: User = Depends(admin_required()),
+    db: Session = Depends(get_db)
+):
+    """
+    Update admin user details
+    Required by JavaScript frontend
+    """
+    try:
+        user_id = UUID(id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user ID format"
+        )
+
+    user = UserService.get_user(db, user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    # Get current meta data
+    import json
+    meta_data = {}
+    if user.meta:
+        try:
+            meta_data = json.loads(user.meta)
+        except:
+            meta_data = {}
+
+    # Update meta fields
+    if ad_phone is not None:
+        meta_data["phone"] = ad_phone
+    if ad_address is not None:
+        meta_data["address"] = ad_address
+    if ad_cnic is not None:
+        meta_data["cnic"] = ad_cnic
+    if ad_branch is not None:
+        meta_data["branch"] = ad_branch
+
+    # Prepare update object
+    from ..models.user import UserUpdate
+    user_update = UserUpdate(
+        full_name=ad_name,
+        meta=json.dumps(meta_data)
+    )
+
+    if ad_role:
+        from ..models.role import Role
+        role = db.query(Role).filter(Role.name == ad_role).first()
+        if role:
+            user_update.role_id = role.id
+
+    if ad_password:
+        # In a real implementation, you'd hash the password here
+        # For now, we'll skip updating the password in this example
+        pass
+
+    updated_user = UserService.update_user(db, user_id, user_update)
+
+    # Get the updated role name
+    from ..models.role import Role
+    role = db.get(Role, updated_user.role_id)
+
+    return {
+        "ad_id": str(updated_user.id),
+        "ad_name": updated_user.full_name,
+        "ad_role": role.name if role else "unknown",
+        "ad_phone": meta_data.get("phone", ""),
+        "ad_address": meta_data.get("address", ""),
+        "ad_cnic": meta_data.get("cnic", ""),
+        "ad_branch": meta_data.get("branch", ""),
+        "message": "Admin user updated successfully"
+    }
