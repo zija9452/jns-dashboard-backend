@@ -11,7 +11,7 @@ class Expense(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     expense_type: str = Field(max_length=50)  # e.g., rent, utilities, supplies
     amount: Decimal = Field(sa_column=Column(Numeric(10, 2), nullable=False))
-    date: date = Field(default_factory=date.today)
+    expense_date: date = Field(default_factory=date.today)
     note: Optional[str] = Field(default=None)
     created_by: uuid.UUID = Field(foreign_key="users.id")
     created_at: datetime = Field(default_factory=lambda: datetime.now())
@@ -20,7 +20,7 @@ class ExpenseRead(SQLModel):
     id: uuid.UUID
     expense_type: str
     amount: Decimal
-    date: date
+    expense_date: date
     note: Optional[str]
     created_by: uuid.UUID
     created_at: datetime

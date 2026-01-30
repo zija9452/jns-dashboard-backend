@@ -5,6 +5,7 @@ from uuid import UUID
 import uuid
 
 from ..database.database import get_db
+from ..models.user import User  # Import User at the top to avoid NameError
 from ..models.invoice import Invoice, InvoiceCreate, InvoiceUpdate, InvoiceRead, InvoiceStatus
 from ..services.invoice_service import InvoiceService
 from ..auth.auth import get_current_user
@@ -136,6 +137,3 @@ def delete_invoice(
         )
 
     return {"message": "Invoice deleted successfully"}
-
-# Import statement needed for User type hint
-from ..models.user import User

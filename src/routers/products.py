@@ -6,6 +6,7 @@ import uuid
 
 from ..database.database import get_db
 from ..models.product import Product, ProductCreate, ProductUpdate, ProductRead
+from ..models.user import User  # Import User at the top to avoid NameError
 from ..services.product_service import ProductService
 from ..auth.auth import get_current_user
 from ..auth.rbac import admin_required, cashier_required, employee_required

@@ -1,4 +1,5 @@
 from sqlmodel import SQLModel, Field, Relationship
+from sqlalchemy import Column, Numeric
 from typing import Optional
 from decimal import Decimal
 from datetime import datetime
@@ -10,7 +11,7 @@ class Salesman(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     name: str = Field(max_length=100)
     code: str = Field(unique=True, max_length=20)
-    commission_rate: Optional[Decimal] = Field(default=0.00, decimal_places=2, max_digits=5)
+    commission_rate: Optional[Decimal] = Field(default=0.00, sa_column=Column(Numeric(5, 2), nullable=True))
     created_at: datetime = Field(default_factory=lambda: datetime.now())
     updated_at: datetime = Field(default_factory=lambda: datetime.now(), nullable=False)
 

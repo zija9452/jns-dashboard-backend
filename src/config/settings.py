@@ -55,9 +55,11 @@ class Settings(BaseSettings):
     prometheus_enabled: bool = os.getenv("PROMETHEUS_ENABLED", "false").lower() == "true"
     sentry_dsn: Optional[str] = os.getenv("SENTRY_DSN", None)
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
+    model_config = {
+        "env_file": ".env",
+        "case_sensitive": True,
+        "extra": "allow"  # Allow extra fields for compatibility
+    }
 
 
 # Create global settings instance

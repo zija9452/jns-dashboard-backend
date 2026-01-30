@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime, timedelta
 
 from ..database.database import get_db
+from ..models.user import User  # Import User at the top to avoid NameError
 from ..models.invoice import Invoice, InvoiceCreate, InvoiceRead, InvoiceStatus
 from ..models.product import Product
 from ..models.customer import Customer
@@ -591,6 +592,3 @@ def print_duplicate_bill(
     # This could involve updating an audit log or a print counter
 
     return duplicate_bill
-
-# Import statement needed for User type hint
-from ..models.user import User

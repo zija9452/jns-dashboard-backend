@@ -5,6 +5,7 @@ from uuid import UUID
 import uuid
 
 from ..database.database import get_db
+from ..models.user import User  # Import User at the top to avoid NameError
 from ..models.salesman import Salesman, SalesmanCreate, SalesmanUpdate, SalesmanRead
 from ..services.salesman_service import SalesmanService
 from ..auth.auth import get_current_user
@@ -138,6 +139,3 @@ def delete_salesman(
         )
 
     return {"message": "Salesman deleted successfully"}
-
-# Import statement needed for User type hint
-from ..models.user import User

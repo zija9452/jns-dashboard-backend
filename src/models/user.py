@@ -16,7 +16,7 @@ class UserBase(SQLModel):
     full_name: str = Field(max_length=100)
     email: str = Field(unique=True, max_length=255)
     username: str = Field(unique=True, min_length=3, max_length=30)
-    role_id: uuid.UUID
+    role_id: uuid.UUID = Field(foreign_key="roles.id")
     is_active: bool = Field(default=True)
 
 class User(UserBase, table=True):

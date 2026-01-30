@@ -5,6 +5,7 @@ from uuid import UUID
 import uuid
 
 from ..database.database import get_db
+from ..models.user import User  # Import User at the top to avoid NameError
 from ..models.vendor import Vendor, VendorCreate, VendorUpdate, VendorRead
 from ..services.vendor_service import VendorService
 from ..auth.auth import get_current_user
@@ -121,6 +122,3 @@ def delete_vendor(
         )
 
     return {"message": "Vendor deleted successfully"}
-
-# Import statement needed for User type hint
-from ..models.user import User

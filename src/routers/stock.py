@@ -5,6 +5,7 @@ from uuid import UUID
 import uuid
 
 from ..database.database import get_db
+from ..models.user import User  # Import User at the top to avoid NameError
 from ..models.stock_entry import StockEntry, StockEntryCreate, StockEntryUpdate, StockEntryRead
 from ..services.stock_service import StockService
 from ..auth.auth import get_current_user
@@ -136,6 +137,3 @@ def delete_stock_entry(
         )
 
     return {"message": "Stock entry deleted successfully"}
-
-# Import statement needed for User type hint
-from ..models.user import User

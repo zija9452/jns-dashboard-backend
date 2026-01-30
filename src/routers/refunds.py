@@ -5,6 +5,7 @@ from uuid import UUID
 import uuid
 
 from ..database.database import get_db
+from ..models.user import User  # Import User at the top to avoid NameError
 from ..models.refund import Refund, RefundCreate, RefundUpdate, RefundRead
 from ..services.refund_service import RefundService
 from ..auth.auth import get_current_user
@@ -135,6 +136,3 @@ def delete_refund(
         )
 
     return {"message": "Refund deleted successfully"}
-
-# Import statement needed for User type hint
-from ..models.user import User

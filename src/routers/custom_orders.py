@@ -5,6 +5,7 @@ from uuid import UUID
 import uuid
 
 from ..database.database import get_db
+from ..models.user import User  # Import User at the top to avoid NameError
 from ..models.custom_order import CustomOrder, CustomOrderCreate, CustomOrderUpdate, CustomOrderRead, CustomOrderStatus
 from ..services.custom_order_service import CustomOrderService
 from ..auth.auth import get_current_user
@@ -133,6 +134,3 @@ def delete_custom_order(
         )
 
     return {"message": "Custom order deleted successfully"}
-
-# Import statement needed for User type hint
-from ..models.user import User

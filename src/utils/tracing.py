@@ -3,20 +3,22 @@ Distributed tracing utilities for the Regal POS Backend
 Implements OpenTelemetry tracing for request flows
 """
 import os
+import logging
+from functools import wraps
+from typing import Callable, Any
+
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 from opentelemetry.instrumentation.redis import RedisInstrumentor
 from opentelemetry.instrumentation.requests import RequestsInstrumentor
-from opentelemetry.propagate import set_global_textmap
 from opentelemetry.sdk.resources import Resource
-from opentelemetry.propagators.textmap_propagator import DictGetter
-import logging
-from functools import wraps
-from typing import Callable, Any
+from opentelemetry.propagate import set_global_textmap
+from opentelemetry.baggage.propagation import W3CBaggagePropagator
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +38,8 @@ trace.set_tracer_provider(tracer_provider)
 try:
     otlp_exporter = OTLPSpanExporter(
         endpoint=os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317"),
-        insecure=True  # Set to False in production with proper TLS
+        # Note: For newer versions of opentelemetry-exporter-otlp, you may need to use:
+        # headers={"Authorization": f"Bearer {os.getenv('OTEL_AUTH_TOKEN')}"} if os.getenv('OTEL_AUTH_TOKEN') else {}
     )
     span_processor = BatchSpanProcessor(otlp_exporter)
     tracer_provider.add_span_processor(span_processor)
