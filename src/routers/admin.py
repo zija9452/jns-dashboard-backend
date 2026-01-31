@@ -593,28 +593,17 @@ async def get_max_pro_id(
     Get the maximum product ID for barcode calculation
     Required by JavaScript frontend
     """
-    from sqlmodel import select, func
+    from sqlmodel import select
     from ..models.product import Product
 
-    # Query to get the maximum ID in the products table
-    statement = select(func.max(Product.id))
+    # Query to get all products and count them to create a simple numeric ID
+    statement = select(Product)
     result = await db.execute(statement)
-    max_id_result = result.scalar_one_or_none()
+    products = result.scalars().all()
 
-    if max_id_result:
-        # Convert UUID to a string representation for the frontend
-        max_id_str = str(max_id_result)
-        # Use a portion of the UUID as a simple ID for frontend calculations
-        # Take last 6 characters to make it manageable
-        max_id_part = max_id_str.replace('-', '')[-6:]  # Remove dashes and take last 6 chars
-        # Convert to integer if possible, or use a default value
-        try:
-            # Interpret as hex to convert to number
-            max_id_num = int(max_id_part, 16) % 1000000  # Limit to reasonable range
-        except ValueError:
-            max_id_num = 1000  # Default fallback
-    else:
-        max_id_num = 1000  # Default if no products exist
+    # Return the count of products + 1000 as a simple ID for the frontend
+    # This simulates a sequential ID for barcode calculation
+    max_id_num = len(products) + 1000
 
     return max_id_num
 
@@ -853,10 +842,16 @@ async def get_stock_detail(
     if not pro_name:
         return {"error": "Product not found"}
 
-    # Find product by name
-    statement = select(Product).where(Product.name.ilike(f"%{pro_name}%"))
+    # Find product by name - use exact match first, then partial
+    statement = select(Product).where(Product.name == pro_name)
     result = await db.execute(statement)
     product = result.scalar_one_or_none()
+
+    # If exact match not found, try partial match
+    if not product:
+        statement = select(Product).where(Product.name.ilike(f"%{pro_name}%")).limit(1)
+        result = await db.execute(statement)
+        product = result.scalar_one_or_none()
 
     if product:
         return {
