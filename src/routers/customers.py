@@ -37,7 +37,7 @@ async def create_customer(
     Create a new customer
     Requires admin role
     """
-    return await CustomerService.create_customer(db, customer_create)
+    return await CustomerService.create_customer(db, customer_create, str(current_user.id))
 
 @router.get("/{customer_id}", response_model=CustomerRead)
 async def get_customer(
@@ -94,7 +94,7 @@ async def update_customer(
             detail="Customer not found"
         )
 
-    return await CustomerService.update_customer(db, customer_uuid, customer_update)
+    return await CustomerService.update_customer(db, customer_uuid, customer_update, str(current_user.id))
 
 @router.delete("/{customer_id}")
 async def delete_customer(
@@ -114,7 +114,7 @@ async def delete_customer(
             detail="Invalid customer ID format"
         )
 
-    success = await CustomerService.delete_customer(db, customer_uuid)
+    success = await CustomerService.delete_customer(db, customer_uuid, str(current_user.id))
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

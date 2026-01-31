@@ -12,7 +12,7 @@ class CustomerService:
     """
 
     @staticmethod
-    async def create_customer(db: AsyncSession, customer_create: CustomerCreate) -> Customer:
+    async def create_customer(db: AsyncSession, customer_create: CustomerCreate, user_id: str) -> Customer:
         """
         Create a new customer
         """
@@ -31,7 +31,7 @@ class CustomerService:
         # Log the action
         await audit_log(
             db=db,
-            user_id="",  # Need to pass actual user ID from context
+            user_id=user_id,
             entity="Customer",
             action="CREATE",
             changes={
@@ -64,7 +64,7 @@ class CustomerService:
         return customers
 
     @staticmethod
-    async def update_customer(db: AsyncSession, customer_id: UUID, customer_update: CustomerUpdate) -> Optional[Customer]:
+    async def update_customer(db: AsyncSession, customer_id: UUID, customer_update: CustomerUpdate, user_id: str) -> Optional[Customer]:
         """
         Update a customer
         """
@@ -73,7 +73,7 @@ class CustomerService:
             return None
 
         # Prepare update data
-        update_data = customer_update.dict(exclude_unset=True)
+        update_data = customer_update.model_dump(exclude_unset=True)
 
         # Update the customer
         for field, value in update_data.items():
@@ -85,7 +85,7 @@ class CustomerService:
         # Log the action
         await audit_log(
             db=db,
-            user_id="",  # Need to pass actual user ID from context
+            user_id=user_id,
             entity="Customer",
             action="UPDATE",
             changes=update_data
@@ -94,7 +94,7 @@ class CustomerService:
         return db_customer
 
     @staticmethod
-    async def delete_customer(db: AsyncSession, customer_id: UUID) -> bool:
+    async def delete_customer(db: AsyncSession, customer_id: UUID, user_id: str) -> bool:
         """
         Delete a customer
         """
@@ -108,7 +108,7 @@ class CustomerService:
         # Log the action
         await audit_log(
             db=db,
-            user_id="",  # Need to pass actual user ID from context
+            user_id=user_id,
             entity="Customer",
             action="DELETE",
             changes={"id": str(customer_id)}
