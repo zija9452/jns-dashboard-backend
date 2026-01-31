@@ -5,6 +5,7 @@ from decimal import Decimal
 from datetime import datetime
 import uuid
 import json
+from pydantic import ConfigDict
 
 class Product(SQLModel, table=True):
     __tablename__ = "products"
@@ -28,6 +29,7 @@ class Product(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now())
     updated_at: datetime = Field(default_factory=lambda: datetime.now(), nullable=False)
 
+
 class ProductRead(SQLModel):
     id: uuid.UUID
     sku: str
@@ -48,6 +50,7 @@ class ProductRead(SQLModel):
     created_at: datetime
     updated_at: datetime
 
+
 class ProductCreate(SQLModel):
     sku: str
     name: str
@@ -65,6 +68,7 @@ class ProductCreate(SQLModel):
     limited_qty: bool = False
     brand_action: Optional[str] = None
 
+
 class ProductUpdate(SQLModel):
     name: Optional[str] = None
     desc: Optional[str] = None
@@ -80,3 +84,5 @@ class ProductUpdate(SQLModel):
     branch: Optional[str] = None
     limited_qty: Optional[bool] = None
     brand_action: Optional[str] = None
+
+    model_config = ConfigDict(json_encoders={Decimal: float})

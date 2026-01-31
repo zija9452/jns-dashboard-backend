@@ -1,4 +1,5 @@
-from sqlmodel import Session, select
+from sqlmodel import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
 from uuid import UUID
 from ..models.user import User, UserCreate, UserUpdate
@@ -13,7 +14,7 @@ class UserService:
     """
 
     @staticmethod
-    async def create_user(db: Session, user_create: UserCreate) -> User:
+    async def create_user(db: AsyncSession, user_create: UserCreate) -> User:
         """
         Create a new user
         """
@@ -46,34 +47,37 @@ class UserService:
         return db_user
 
     @staticmethod
-    async def get_user(db: Session, user_id: UUID) -> Optional[User]:
+    async def get_user(db: AsyncSession, user_id: UUID) -> Optional[User]:
         """
         Get a user by ID
         """
         statement = select(User).where(User.id == user_id)
-        user = db.exec(statement).first()
+        result = await db.execute(statement)
+        user = result.scalar_one_or_none()
         return user
 
     @staticmethod
-    async def get_user_by_username(db: Session, username: str) -> Optional[User]:
+    async def get_user_by_username(db: AsyncSession, username: str) -> Optional[User]:
         """
         Get a user by username
         """
         statement = select(User).where(User.username == username)
-        user = db.exec(statement).first()
+        result = await db.execute(statement)
+        user = result.scalar_one_or_none()
         return user
 
     @staticmethod
-    async def get_users(db: Session, skip: int = 0, limit: int = 100) -> List[User]:
+    async def get_users(db: AsyncSession, skip: int = 0, limit: int = 100) -> List[User]:
         """
         Get a list of users with pagination
         """
         statement = select(User).offset(skip).limit(limit)
-        users = db.exec(statement).all()
+        result = await db.execute(statement)
+        users = result.scalars().all()
         return users
 
     @staticmethod
-    async def update_user(db: Session, user_id: UUID, user_update: UserUpdate) -> Optional[User]:
+    async def update_user(db: AsyncSession, user_id: UUID, user_update: UserUpdate) -> Optional[User]:
         """
         Update a user
         """
@@ -113,7 +117,7 @@ class UserService:
         return db_user
 
     @staticmethod
-    async def delete_user(db: Session, user_id: UUID) -> bool:
+    async def delete_user(db: AsyncSession, user_id: UUID) -> bool:
         """
         Delete a user
         """

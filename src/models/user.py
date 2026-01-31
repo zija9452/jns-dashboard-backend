@@ -43,6 +43,7 @@ class UserRead(SQLModel):
 
 class UserCreate(UserBase):
     password: str
+    meta: Optional[str] = None
 
 class UserUpdate(SQLModel):
     full_name: Optional[str] = None

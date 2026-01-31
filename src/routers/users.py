@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlmodel import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
 from uuid import UUID
 import uuid
@@ -15,33 +15,34 @@ from ..auth.password import get_password_hash
 router = APIRouter()
 
 @router.get("/", response_model=List[UserRead])
-def get_users(
+async def get_users(
     skip: int = 0,
     limit: int = 100,
     current_user: User = Depends(admin_required()),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Get list of users with pagination
     Requires admin role
     """
-    users = UserService.get_users(db, skip=skip, limit=limit)
+    users = await UserService.get_users(db, skip=skip, limit=limit)
     return users
 
 @router.post("/", response_model=UserRead)
-def create_user(
+async def create_user(
     user_create: UserCreate,
     current_user: User = Depends(admin_required()),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Create a new user
     Requires admin role
     """
     # Check if role exists
-    from sqlmodel import select
+    from sqlalchemy import select
     role_statement = select(Role).where(Role.id == user_create.role_id)
-    role = db.exec(role_statement).first()
+    result = await db.execute(role_statement)
+    role = result.scalar_one_or_none()
     if not role:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -49,27 +50,29 @@ def create_user(
         )
 
     # Check if username or email already exists
-    existing_user_by_username = UserService.get_user_by_username(db, user_create.username)
+    existing_user_by_username = await UserService.get_user_by_username(db, user_create.username)
     if existing_user_by_username:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Username already taken"
         )
 
-    existing_user_by_email = db.exec(select(User).where(User.email == user_create.email)).first()
+    email_statement = select(User).where(User.email == user_create.email)
+    email_result = await db.execute(email_statement)
+    existing_user_by_email = email_result.scalar_one_or_none()
     if existing_user_by_email:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered"
         )
 
-    return UserService.create_user(db, user_create)
+    return await UserService.create_user(db, user_create)
 
 @router.get("/{user_id}", response_model=UserRead)
-def get_user(
+async def get_user(
     user_id: str,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Get a specific user by ID
@@ -83,7 +86,7 @@ def get_user(
             detail="Invalid user ID format"
         )
 
-    user = UserService.get_user(db, user_uuid)
+    user = await UserService.get_user(db, user_uuid)
 
     if not user:
         raise HTTPException(
@@ -101,11 +104,11 @@ def get_user(
     return user
 
 @router.put("/{user_id}", response_model=UserRead)
-def update_user(
+async def update_user(
     user_id: str,
     user_update: UserUpdate,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Update a specific user by ID
@@ -119,7 +122,7 @@ def update_user(
             detail="Invalid user ID format"
         )
 
-    user = UserService.get_user(db, user_uuid)
+    user = await UserService.get_user(db, user_uuid)
 
     if not user:
         raise HTTPException(
@@ -143,22 +146,23 @@ def update_user(
 
     # If updating role, verify it exists
     if user_update.role_id:
-        from sqlmodel import select
+        from sqlalchemy import select
         role_statement = select(Role).where(Role.id == user_update.role_id)
-        role = db.exec(role_statement).first()
+        role_result = await db.execute(role_statement)
+        role = role_result.scalar_one_or_none()
         if not role:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Role does not exist"
             )
 
-    return UserService.update_user(db, user_uuid, user_update)
+    return await UserService.update_user(db, user_uuid, user_update)
 
 @router.delete("/{user_id}")
-def delete_user(
+async def delete_user(
     user_id: str,
     current_user: User = Depends(admin_required()),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Delete a specific user by ID
@@ -179,7 +183,7 @@ def delete_user(
             detail="Cannot delete your own account"
         )
 
-    success = UserService.delete_user(db, user_uuid)
+    success = await UserService.delete_user(db, user_uuid)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

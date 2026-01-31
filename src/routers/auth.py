@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, status, Response
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from datetime import timedelta, datetime
 from typing import Optional
-from sqlmodel import Session, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 from pydantic import BaseModel
 import uuid
 from jose import jwt
@@ -62,7 +63,7 @@ class RefreshResponse(BaseModel):
     expires_in: int
 
 @router.post("/login", response_model=TokenResponse)
-async def login(form_data: OAuth2PasswordRequestForm = Depends(), response: Response = None, db: Session = Depends(get_db)):
+async def login(form_data: OAuth2PasswordRequestForm = Depends(), response: Response = None, db: AsyncSession = Depends(get_db)):
     """
     Authenticate user and return JWT tokens
     Sets access_token as cookie and returns tokens in response body
@@ -109,7 +110,7 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), response: Resp
     }
 
 @router.post("/refresh", response_model=RefreshResponse)
-async def refresh_token_endpoint(refresh_request: RefreshRequest, response: Response, db: Session = Depends(get_db)):
+async def refresh_token_endpoint(refresh_request: RefreshRequest, response: Response, db: AsyncSession = Depends(get_db)):
     """
     Refresh access token using refresh token
     """

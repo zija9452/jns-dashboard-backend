@@ -1,4 +1,5 @@
-from sqlmodel import Session, select
+from sqlmodel import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
 from uuid import UUID
 from decimal import Decimal
@@ -11,7 +12,7 @@ class CustomerService:
     """
 
     @staticmethod
-    async def create_customer(db: Session, customer_create: CustomerCreate) -> Customer:
+    async def create_customer(db: AsyncSession, customer_create: CustomerCreate) -> Customer:
         """
         Create a new customer
         """
@@ -43,25 +44,27 @@ class CustomerService:
         return db_customer
 
     @staticmethod
-    async def get_customer(db: Session, customer_id: UUID) -> Optional[Customer]:
+    async def get_customer(db: AsyncSession, customer_id: UUID) -> Optional[Customer]:
         """
         Get a customer by ID
         """
         statement = select(Customer).where(Customer.id == customer_id)
-        customer = db.exec(statement).first()
+        result = await db.execute(statement)
+        customer = result.scalar_one_or_none()
         return customer
 
     @staticmethod
-    async def get_customers(db: Session, skip: int = 0, limit: int = 100) -> List[Customer]:
+    async def get_customers(db: AsyncSession, skip: int = 0, limit: int = 100) -> List[Customer]:
         """
         Get a list of customers with pagination
         """
         statement = select(Customer).offset(skip).limit(limit)
-        customers = db.exec(statement).all()
+        result = await db.execute(statement)
+        customers = result.scalars().all()
         return customers
 
     @staticmethod
-    async def update_customer(db: Session, customer_id: UUID, customer_update: CustomerUpdate) -> Optional[Customer]:
+    async def update_customer(db: AsyncSession, customer_id: UUID, customer_update: CustomerUpdate) -> Optional[Customer]:
         """
         Update a customer
         """
@@ -91,7 +94,7 @@ class CustomerService:
         return db_customer
 
     @staticmethod
-    async def delete_customer(db: Session, customer_id: UUID) -> bool:
+    async def delete_customer(db: AsyncSession, customer_id: UUID) -> bool:
         """
         Delete a customer
         """

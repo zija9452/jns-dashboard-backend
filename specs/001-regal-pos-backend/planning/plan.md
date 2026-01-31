@@ -16,6 +16,7 @@
 **Cache/Broker**: Redis (for sessions, rate-limiting, celery broker)
 **Containers**: Docker + docker-compose
 **Architecture**: Monolithic API with domain-based routers
+**Concurrency Model**: Asynchronous operations using async/await patterns for high-concurrency POS operations
 
 **Resolved Unknowns**:
 - Product model fields include: id, sku, name, desc, unit_price, cost_price, tax_rate, vendor_id, stock_level, attributes, barcode, discount, category, branch, limited_qty, brand_action

@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import os
+from decimal import Decimal
 
 from src.routers import auth, users, products, customers, vendors, salesman, stock, expenses, invoices, custom_orders, refunds, admin, pos
 from src.utils.error_handlers import setup_error_handlers
@@ -31,7 +32,9 @@ app = FastAPI(
     title="Regal POS Backend",
     description="Backend API for Regal POS system with exact parity to admin dashboard",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    # Configure JSON encoders to handle Decimal serialization
+    json_encoders={Decimal: float}
 )
 
 # Setup structured logging

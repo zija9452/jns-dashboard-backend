@@ -81,6 +81,7 @@ Employee users need access to most system functions similar to admin but with li
 - **FR-011**: System MUST support pagination with default 50 items per page and maximum 200 items per page
 - **FR-012**: System MUST implement instant logout when browser window is closed
 - **FR-013**: System MUST provide endpoints with configurable pagination limits for frontend flexibility
+- **FR-014**: System MUST implement asynchronous operations using async/await patterns for improved performance and scalability with high-concurrency POS operations
 
 ### Key Entities *(include if feature involves data)*
 

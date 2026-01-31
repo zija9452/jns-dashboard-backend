@@ -1,4 +1,5 @@
-from sqlmodel import Session, select
+from sqlmodel import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
 from uuid import UUID
 from decimal import Decimal
@@ -17,7 +18,7 @@ class InvoiceService:
     """
 
     @staticmethod
-    async def create_invoice(db: Session, invoice_create: InvoiceCreate, user_id: UUID) -> Invoice:
+    async def create_invoice(db: AsyncSession, invoice_create: InvoiceCreate, user_id: UUID) -> Invoice:
         """
         Create a new invoice and update stock levels accordingly
         """
@@ -57,7 +58,7 @@ class InvoiceService:
         return db_invoice
 
     @staticmethod
-    async def _update_stock_levels_for_invoice(db: Session, invoice: Invoice, decrease: bool = True):
+    async def _update_stock_levels_for_invoice(db: AsyncSession, invoice: Invoice, decrease: bool = True):
         """
         Internal method to update stock levels based on invoice items
         """
@@ -76,7 +77,8 @@ class InvoiceService:
             if product_id and quantity:
                 # Get the product to update its stock
                 statement = select(Product).where(Product.id == UUID(product_id))
-                product = db.exec(statement).first()
+                result = await db.execute(statement)
+                product = result.scalar_one_or_none()
 
                 if product:
                     # Update stock level (decrease for sales, increase for returns)
@@ -85,16 +87,17 @@ class InvoiceService:
                     await db.commit()
 
     @staticmethod
-    async def get_invoice(db: Session, invoice_id: UUID) -> Optional[Invoice]:
+    async def get_invoice(db: AsyncSession, invoice_id: UUID) -> Optional[Invoice]:
         """
         Get an invoice by ID
         """
         statement = select(Invoice).where(Invoice.id == invoice_id)
-        invoice = db.exec(statement).first()
+        result = await db.execute(statement)
+        invoice = result.scalar_one_or_none()
         return invoice
 
     @staticmethod
-    async def get_invoices(db: Session, customer_id: Optional[UUID] = None, skip: int = 0, limit: int = 100) -> List[Invoice]:
+    async def get_invoices(db: AsyncSession, customer_id: Optional[UUID] = None, skip: int = 0, limit: int = 100) -> List[Invoice]:
         """
         Get a list of invoices with pagination, optionally filtered by customer
         """
@@ -102,11 +105,12 @@ class InvoiceService:
         if customer_id:
             statement = statement.where(Invoice.customer_id == customer_id)
         statement = statement.order_by(Invoice.created_at.desc()).offset(skip).limit(limit)
-        invoices = db.exec(statement).all()
+        result = await db.execute(statement)
+        invoices = result.scalars().all()
         return invoices
 
     @staticmethod
-    async def update_invoice(db: Session, invoice_id: UUID, invoice_update: InvoiceUpdate, user_id: UUID) -> Optional[Invoice]:
+    async def update_invoice(db: AsyncSession, invoice_id: UUID, invoice_update: InvoiceUpdate, user_id: UUID) -> Optional[Invoice]:
         """
         Update an invoice
         """
@@ -152,7 +156,7 @@ class InvoiceService:
         return db_invoice
 
     @staticmethod
-    async def delete_invoice(db: Session, invoice_id: UUID, user_id: UUID) -> bool:
+    async def delete_invoice(db: AsyncSession, invoice_id: UUID, user_id: UUID) -> bool:
         """
         Delete an invoice and restore stock levels
         """
@@ -178,7 +182,7 @@ class InvoiceService:
         return True
 
     @staticmethod
-    async def mark_invoice_paid(db: Session, invoice_id: UUID, user_id: UUID) -> Optional[Invoice]:
+    async def mark_invoice_paid(db: AsyncSession, invoice_id: UUID, user_id: UUID) -> Optional[Invoice]:
         """
         Mark an invoice as paid
         """

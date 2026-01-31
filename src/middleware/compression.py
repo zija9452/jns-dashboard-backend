@@ -41,7 +41,7 @@ class CompressionMiddleware(BaseHTTPMiddleware):
         # Check if response should be compressed
         should_compress = self._should_compress(response)
 
-        if should_compress:
+        if should_compress and hasattr(response, 'body'):
             # Compress the response content
             compressed_content = self._compress_content(response.body)
 
@@ -66,8 +66,13 @@ class CompressionMiddleware(BaseHTTPMiddleware):
         """
         Determine if a response should be compressed
         """
-        # Don't compress if content is too small
-        if len(response.body) < self.minimum_size:
+        # Don't compress streaming responses (they don't have a body attribute)
+        if hasattr(response, 'body'):
+            # Don't compress if content is too small
+            if len(response.body) < self.minimum_size:
+                return False
+        else:
+            # Streaming response - we can't determine size ahead of time
             return False
 
         # Don't compress if content is already encoded

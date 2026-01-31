@@ -1,4 +1,6 @@
-from sqlmodel import Session, select
+from sqlmodel import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from typing import List, Optional
 from typing import List, Optional
 from uuid import UUID
 from decimal import Decimal
@@ -11,7 +13,7 @@ class SalesmanService:
     """
 
     @staticmethod
-    async def create_salesman(db: Session, salesman_create: SalesmanCreate) -> Salesman:
+    async def create_salesman(db: AsyncSession, salesman_create: SalesmanCreate) -> Salesman:
         """
         Create a new salesman
         """
@@ -41,34 +43,37 @@ class SalesmanService:
         return db_salesman
 
     @staticmethod
-    async def get_salesman(db: Session, salesman_id: UUID) -> Optional[Salesman]:
+    async def get_salesman(db: AsyncSession, salesman_id: UUID) -> Optional[Salesman]:
         """
         Get a salesman by ID
         """
         statement = select(Salesman).where(Salesman.id == salesman_id)
-        salesman = db.exec(statement).first()
+        result = await db.execute(statement)
+        salesman = result.scalar_one_or_none()
         return salesman
 
     @staticmethod
-    async def get_salesman_by_code(db: Session, code: str) -> Optional[Salesman]:
+    async def get_salesman_by_code(db: AsyncSession, code: str) -> Optional[Salesman]:
         """
         Get a salesman by code
         """
         statement = select(Salesman).where(Salesman.code == code)
-        salesman = db.exec(statement).first()
+        result = await db.execute(statement)
+        salesman = result.scalar_one_or_none()
         return salesman
 
     @staticmethod
-    async def get_salesmen(db: Session, skip: int = 0, limit: int = 100) -> List[Salesman]:
+    async def get_salesmen(db: AsyncSession, skip: int = 0, limit: int = 100) -> List[Salesman]:
         """
         Get a list of salesmen with pagination
         """
         statement = select(Salesman).offset(skip).limit(limit)
-        salesmen = db.exec(statement).all()
+        result = await db.execute(statement)
+        salesmen = result.scalars().all()
         return salesmen
 
     @staticmethod
-    async def update_salesman(db: Session, salesman_id: UUID, salesman_update: SalesmanUpdate) -> Optional[Salesman]:
+    async def update_salesman(db: AsyncSession, salesman_id: UUID, salesman_update: SalesmanUpdate) -> Optional[Salesman]:
         """
         Update a salesman
         """
@@ -77,7 +82,7 @@ class SalesmanService:
             return None
 
         # Prepare update data
-        update_data = salesman_update.dict(exclude_unset=True)
+        update_data = salesman_update.model_dump(exclude_unset=True)
 
         # Update the salesman
         for field, value in update_data.items():
@@ -98,7 +103,7 @@ class SalesmanService:
         return db_salesman
 
     @staticmethod
-    async def delete_salesman(db: Session, salesman_id: UUID) -> bool:
+    async def delete_salesman(db: AsyncSession, salesman_id: UUID) -> bool:
         """
         Delete a salesman
         """

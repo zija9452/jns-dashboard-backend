@@ -4,7 +4,9 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer, HTTPBearer, HTTPAuthorizationCredentials
-from sqlmodel import Session, select
+from sqlmodel import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from pydantic import BaseModel
 import os
 
@@ -12,6 +14,7 @@ from ..database.database import get_db
 from ..models.user import User
 from ..config.settings import settings
 from ..middleware.security import session_manager
+from ..auth.password import verify_password, get_password_hash
 
 # Use the settings for configuration
 SECRET_KEY = settings.access_token_secret_key
@@ -20,7 +23,7 @@ ALGORITHM = settings.algorithm
 ACCESS_TOKEN_EXPIRE_MINUTES = settings.access_token_expire_minutes
 REFRESH_TOKEN_EXPIRE_DAYS = settings.refresh_token_expire_days
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")  # Kept for compatibility with other parts of auth module
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
 class OAuth2PasswordCookieBearer(OAuth2PasswordBearer):
@@ -61,21 +64,14 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     username: Optional[str] = None
-    user_id: Optional[int] = None
+    user_id: Optional[str] = None
 
 class RefreshToken(BaseModel):
     refresh_token: str
 
-def verify_password(plain_password: str, hashed_password: str):
-    return pwd_context.verify(plain_password, hashed_password)
+# Note: verify_password and get_password_hash are imported from ..auth.password
 
-def get_password_hash(password: str):
-    # Truncate password if it's too long for bcrypt (max 72 bytes)
-    if len(password.encode('utf-8')) > 72:
-        password = password[:72]
-    return pwd_context.hash(password)
-
-async def authenticate_user(username: str, password: str, db: Session):
+async def authenticate_user(username: str, password: str, db: AsyncSession):
     # This function retrieves the user from the database
     # Using async operations with SQLModel since the db parameter is an AsyncSession
     statement = select(User).where(User.username == username)
@@ -122,7 +118,7 @@ def verify_token(token: str, secret_key: str = SECRET_KEY):
     except JWTError:
         return None
 
-async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -132,10 +128,19 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     if token_data is None:
         raise credentials_exception
 
-    statement = select(User).where(User.id == token_data.user_id)
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+    # Load user with role relationship for proper RBAC checks
+    statement = select(User).options(selectinload(User.role)).where(User.id == token_data.user_id)
     result = await db.execute(statement)
     user = result.scalar_one_or_none()
 
     if user is None:
-        raise credentials_exception
+        # Check if user was found in token but not in DB - this could indicate account deactivation
+        # Raise a clear error that the user exists in the token but not in the database
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User account not found or deactivated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     return user
