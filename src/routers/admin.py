@@ -727,7 +727,7 @@ async def delete_product(
             detail="Invalid product ID format"
         )
 
-    success = await ProductService.delete_product(db, product_id)
+    success = await ProductService.delete_product(db, product_id, str(current_user.id))
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
