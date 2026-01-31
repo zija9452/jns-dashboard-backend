@@ -1,4 +1,5 @@
-from sqlmodel import Session, select
+from sqlmodel import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
 from uuid import UUID
 from ..models.vendor import Vendor, VendorCreate, VendorUpdate
@@ -10,7 +11,7 @@ class VendorService:
     """
 
     @staticmethod
-    async def create_vendor(db: Session, vendor_create: VendorCreate) -> Vendor:
+    async def create_vendor(db: AsyncSession, vendor_create: VendorCreate, user_id: str) -> Vendor:
         """
         Create a new vendor
         """
@@ -27,7 +28,7 @@ class VendorService:
         # Log the action
         await audit_log(
             db=db,
-            user_id="",  # Need to pass actual user ID from context
+            user_id=user_id,
             entity="Vendor",
             action="CREATE",
             changes={
@@ -39,25 +40,27 @@ class VendorService:
         return db_vendor
 
     @staticmethod
-    async def get_vendor(db: Session, vendor_id: UUID) -> Optional[Vendor]:
+    async def get_vendor(db: AsyncSession, vendor_id: UUID) -> Optional[Vendor]:
         """
         Get a vendor by ID
         """
         statement = select(Vendor).where(Vendor.id == vendor_id)
-        vendor = db.exec(statement).first()
+        result = await db.execute(statement)
+        vendor = result.scalar_one_or_none()
         return vendor
 
     @staticmethod
-    async def get_vendors(db: Session, skip: int = 0, limit: int = 100) -> List[Vendor]:
+    async def get_vendors(db: AsyncSession, skip: int = 0, limit: int = 100) -> List[Vendor]:
         """
         Get a list of vendors with pagination
         """
         statement = select(Vendor).offset(skip).limit(limit)
-        vendors = db.exec(statement).all()
+        result = await db.execute(statement)
+        vendors = result.scalars().all()
         return vendors
 
     @staticmethod
-    async def update_vendor(db: Session, vendor_id: UUID, vendor_update: VendorUpdate) -> Optional[Vendor]:
+    async def update_vendor(db: AsyncSession, vendor_id: UUID, vendor_update: VendorUpdate, user_id: str) -> Optional[Vendor]:
         """
         Update a vendor
         """
@@ -66,7 +69,7 @@ class VendorService:
             return None
 
         # Prepare update data
-        update_data = vendor_update.dict(exclude_unset=True)
+        update_data = vendor_update.model_dump(exclude_unset=True)
 
         # Update the vendor
         for field, value in update_data.items():
@@ -78,7 +81,7 @@ class VendorService:
         # Log the action
         await audit_log(
             db=db,
-            user_id="",  # Need to pass actual user ID from context
+            user_id=user_id,
             entity="Vendor",
             action="UPDATE",
             changes=update_data
@@ -87,7 +90,7 @@ class VendorService:
         return db_vendor
 
     @staticmethod
-    async def delete_vendor(db: Session, vendor_id: UUID) -> bool:
+    async def delete_vendor(db: AsyncSession, vendor_id: UUID, user_id: str) -> bool:
         """
         Delete a vendor
         """
@@ -101,7 +104,7 @@ class VendorService:
         # Log the action
         await audit_log(
             db=db,
-            user_id="",  # Need to pass actual user ID from context
+            user_id=user_id,
             entity="Vendor",
             action="DELETE",
             changes={"id": str(vendor_id)}

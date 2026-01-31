@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlmodel import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
 from uuid import UUID
 import uuid
@@ -14,36 +14,36 @@ from ..auth.rbac import admin_required, cashier_required, employee_required
 router = APIRouter()
 
 @router.get("/", response_model=List[VendorRead])
-def get_vendors(
+async def get_vendors(
     skip: int = 0,
     limit: int = 100,
     current_user: User = Depends(employee_required()),  # Employees and above can view vendors
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Get list of vendors with pagination
     Employees and admins can view vendors
     """
-    vendors = VendorService.get_vendors(db, skip=skip, limit=limit)
+    vendors = await VendorService.get_vendors(db, skip=skip, limit=limit)
     return vendors
 
 @router.post("/", response_model=VendorRead)
-def create_vendor(
+async def create_vendor(
     vendor_create: VendorCreate,
     current_user: User = Depends(admin_required()),  # Only admins can create vendors
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Create a new vendor
     Requires admin role
     """
-    return VendorService.create_vendor(db, vendor_create)
+    return await VendorService.create_vendor(db, vendor_create, str(current_user.id))
 
 @router.get("/{vendor_id}", response_model=VendorRead)
-def get_vendor(
+async def get_vendor(
     vendor_id: str,
     current_user: User = Depends(employee_required()),  # Employees and above can view vendor details
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Get a specific vendor by ID
@@ -57,7 +57,7 @@ def get_vendor(
             detail="Invalid vendor ID format"
         )
 
-    vendor = VendorService.get_vendor(db, vendor_uuid)
+    vendor = await VendorService.get_vendor(db, vendor_uuid)
 
     if not vendor:
         raise HTTPException(
@@ -68,11 +68,11 @@ def get_vendor(
     return vendor
 
 @router.put("/{vendor_id}", response_model=VendorRead)
-def update_vendor(
+async def update_vendor(
     vendor_id: str,
     vendor_update: VendorUpdate,
     current_user: User = Depends(admin_required()),  # Only admins can update vendors
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Update a specific vendor by ID
@@ -86,7 +86,7 @@ def update_vendor(
             detail="Invalid vendor ID format"
         )
 
-    vendor = VendorService.get_vendor(db, vendor_uuid)
+    vendor = await VendorService.get_vendor(db, vendor_uuid)
 
     if not vendor:
         raise HTTPException(
@@ -94,13 +94,13 @@ def update_vendor(
             detail="Vendor not found"
         )
 
-    return VendorService.update_vendor(db, vendor_uuid, vendor_update)
+    return await VendorService.update_vendor(db, vendor_uuid, vendor_update, str(current_user.id))
 
 @router.delete("/{vendor_id}")
-def delete_vendor(
+async def delete_vendor(
     vendor_id: str,
     current_user: User = Depends(admin_required()),  # Only admins can delete vendors
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Delete a specific vendor by ID
@@ -114,7 +114,7 @@ def delete_vendor(
             detail="Invalid vendor ID format"
         )
 
-    success = VendorService.delete_vendor(db, vendor_uuid)
+    success = await VendorService.delete_vendor(db, vendor_uuid, str(current_user.id))
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -126,10 +126,10 @@ def delete_vendor(
 # Endpoints required by the JavaScript frontend
 
 @router.get("/get-vendor/{id}")
-def get_vendor_details(
+async def get_vendor_details(
     id: str,
     current_user: User = Depends(admin_required()),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Retrieve specific vendor details by ID
@@ -143,7 +143,7 @@ def get_vendor_details(
             detail="Invalid vendor ID format"
         )
 
-    vendor = VendorService.get_vendor(db, vendor_id)
+    vendor = await VendorService.get_vendor(db, vendor_id)
     if not vendor:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -170,7 +170,7 @@ def get_vendor_details(
     return vendor_data
 
 @router.get("/view-vendor")
-def view_vendors(
+async def view_vendors(
     search_string: str = None,
     branches: str = None,
     searchphone: str = None,
@@ -178,14 +178,14 @@ def view_vendors(
     skip: int = 0,
     limit: int = 100,
     current_user: User = Depends(admin_required()),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     View vendors with search and branch filtering
     Required by JavaScript frontend
     """
     # Get all vendors with pagination
-    vendors = VendorService.get_vendors(db, skip=skip, limit=limit)
+    vendors = await VendorService.get_vendors(db, skip=skip, limit=limit)
 
     # Apply filters
     filtered_vendors = []
@@ -251,10 +251,10 @@ def view_vendors(
     return result
 
 @router.post("/delete-vendor/{id}")
-def delete_vendor_frontend(
+async def delete_vendor_frontend(
     id: str,
     current_user: User = Depends(admin_required()),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Delete a vendor by ID (frontend compatible response)
@@ -268,7 +268,7 @@ def delete_vendor_frontend(
             detail="Invalid vendor ID format"
         )
 
-    success = VendorService.delete_vendor(db, vendor_id)
+    success = await VendorService.delete_vendor(db, vendor_id, str(current_user.id))
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -281,10 +281,10 @@ def delete_vendor_frontend(
     }
 
 @router.post("/get-vendor-balance")
-def get_vendor_balance(
+async def get_vendor_balance(
     branches: str = None,
     current_user: User = Depends(admin_required()),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Get vendor balance by branch
@@ -304,9 +304,9 @@ def get_vendor_balance(
     }
 
 @router.post("/vendor-view-report")
-def vendor_view_report(
+async def vendor_view_report(
     current_user: User = Depends(admin_required()),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Generate vendor view report
