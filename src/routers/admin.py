@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Dict, Any
+from typing import List, Dict, Any
 from uuid import UUID
 import uuid
 from datetime import datetime, timedelta
@@ -8,13 +8,15 @@ from datetime import datetime, timedelta
 from ..database.database import get_db
 from ..models.user import User  # Import User at the top to avoid NameError
 from ..models.salesman import Salesman, SalesmanCreate, SalesmanUpdate
+from ..models.stock_entry import StockEntry, StockEntryType
 from ..auth.auth import get_current_user
-from ..auth.rbac import admin_required
+from ..auth.rbac import admin_required, employee_required
 from ..services.user_service import UserService
 from ..services.product_service import ProductService
 from ..services.invoice_service import InvoiceService
 from ..services.customer_service import CustomerService
 from ..services.expense_service import ExpenseService
+from ..services.stock_service import StockService
 
 router = APIRouter()
 
@@ -1544,3 +1546,73 @@ async def vendor_view_report(
     encoded_pdf = base64.b64encode(pdf_content.encode()).decode()
 
     return encoded_pdf
+# Stock Management Endpoints required by the JavaScript frontend
+
+@router.get("/ViewStock")
+async def view_stock(
+    search_string: str = None,
+    branches: str = None,
+    shelf: str = None,
+    skip: int = 0,
+    limit: int = 100,
+    current_user: User = Depends(admin_required()),  # Require admin for stock management
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    View stock with search and branch filtering
+    Required by JavaScript frontend
+    """
+    from ..models.product import Product
+    from sqlalchemy import select
+
+    # Get products with pagination
+    statement = select(Product).offset(skip).limit(limit)
+    result = await db.execute(statement)
+    products = result.scalars().all()
+
+    # Apply filters
+    filtered_products = []
+    for product in products:
+        # Apply branch filter if provided
+        if branches and product.branch \!= branches:
+            continue
+
+        # Apply search filter if provided
+        should_include = True
+        if search_string:
+            search_lower = search_string.lower()
+            if (search_lower not in product.name.lower() and
+                search_lower not in (product.barcode or "").lower() and
+                search_lower not in (product.sku or "").lower()):
+                should_include = False
+
+        if should_include:
+            filtered_products.append(product)
+
+    # Format the response to match frontend expectations
+    result = []
+    for product in filtered_products:
+        # Calculate margin if prices are available
+        margin = 0.0
+        if product.unit_price and product.cost_price and float(product.cost_price) \!= 0:
+            margin = ((float(product.unit_price) - float(product.cost_price)) / float(product.cost_price)) * 100
+
+        result.append({
+            "pro_id": str(product.id),
+            "pro_name": product.name,
+            "quantity": product.stock_level,
+            "branch": product.branch or "",
+            "ven_name": "",  # Will need to join with vendor table to get vendor name
+            "pro_price": float(product.unit_price) if product.unit_price else 0.0,
+            "pro_cost": float(product.cost_price) if product.cost_price else 0.0,
+            "pro_barcode": product.barcode or "",
+            "pro_dis": float(product.discount) if product.discount else 0.0,
+            "cat_id_fk": product.category or "",
+            "limitedquan": product.limited_qty,
+            "brand": product.brand_action or "",
+            "pro_image": product.attributes or "",
+            "margin": margin
+        })
+
+    return result
+
