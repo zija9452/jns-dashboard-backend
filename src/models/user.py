@@ -24,7 +24,11 @@ class User(UserBase, table=True):
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     password_hash: str = Field(max_length=255)
-    meta: Optional[str] = Field(default=None)  # JSON string for extensibility
+    phone: Optional[str] = Field(default=None, max_length=20)  # Phone number field
+    address: Optional[str] = Field(default=None, max_length=200)  # Address field
+    cnic: Optional[str] = Field(default=None, max_length=20)  # CNIC field
+    branch: Optional[str] = Field(default=None, max_length=50)  # Branch field
+    meta: Optional[str] = Field(default=None)  # JSON string for additional extensibility
     created_at: datetime = Field(default_factory=lambda: datetime.now())
     updated_at: datetime = Field(default_factory=lambda: datetime.now(), nullable=False)
 
@@ -37,12 +41,20 @@ class UserRead(SQLModel):
     email: str
     username: str
     role_id: uuid.UUID
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    cnic: Optional[str] = None
+    branch: Optional[str] = None
     is_active: bool
     created_at: datetime
     updated_at: datetime
 
 class UserCreate(UserBase):
     password: str
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    cnic: Optional[str] = None
+    branch: Optional[str] = None
     meta: Optional[str] = None
 
 class UserUpdate(SQLModel):
@@ -51,5 +63,9 @@ class UserUpdate(SQLModel):
     username: Optional[str] = None
     password: Optional[str] = None
     role_id: Optional[uuid.UUID] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    cnic: Optional[str] = None
+    branch: Optional[str] = None
     is_active: Optional[bool] = None
     meta: Optional[str] = None

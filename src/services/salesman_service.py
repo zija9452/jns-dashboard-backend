@@ -13,13 +13,16 @@ class SalesmanService:
     """
 
     @staticmethod
-    async def create_salesman(db: AsyncSession, salesman_create: SalesmanCreate) -> Salesman:
+    async def create_salesman(db: AsyncSession, salesman_create: SalesmanCreate, user_id: str = None) -> Salesman:
         """
         Create a new salesman
         """
         db_salesman = Salesman(
             name=salesman_create.name,
             code=salesman_create.code,
+            phone=salesman_create.phone,
+            address=salesman_create.address,
+            branch=salesman_create.branch,
             commission_rate=salesman_create.commission_rate
         )
 
@@ -30,13 +33,16 @@ class SalesmanService:
         # Log the action
         await audit_log(
             db=db,
-            user_id="",  # Need to pass actual user ID from context
+            user_id=user_id or "",  # Use provided user ID or empty string if not provided
             entity="Salesman",
             action="CREATE",
             changes={
                 "name": salesman_create.name,
                 "code": salesman_create.code,
-                "commission_rate": str(salesman_create.commission_rate)
+                "phone": salesman_create.phone or "",
+                "address": salesman_create.address or "",
+                "branch": salesman_create.branch or "",
+                "commission_rate": str(salesman_create.commission_rate) if salesman_create.commission_rate else "0.00"
             }
         )
 
@@ -73,7 +79,7 @@ class SalesmanService:
         return salesmen
 
     @staticmethod
-    async def update_salesman(db: AsyncSession, salesman_id: UUID, salesman_update: SalesmanUpdate) -> Optional[Salesman]:
+    async def update_salesman(db: AsyncSession, salesman_id: UUID, salesman_update: SalesmanUpdate, user_id: str = None) -> Optional[Salesman]:
         """
         Update a salesman
         """
@@ -84,26 +90,35 @@ class SalesmanService:
         # Prepare update data
         update_data = salesman_update.model_dump(exclude_unset=True)
 
-        # Update the salesman
+        # Update the salesman with all fields
         for field, value in update_data.items():
-            setattr(db_salesman, field, value)
+            if hasattr(db_salesman, field):
+                setattr(db_salesman, field, value)
 
         await db.commit()
         await db.refresh(db_salesman)
 
+        # Convert Decimal objects to strings for JSON serialization
+        serialized_changes = {}
+        for key, value in update_data.items():
+            if isinstance(value, Decimal):
+                serialized_changes[key] = str(value)
+            else:
+                serialized_changes[key] = value
+
         # Log the action
         await audit_log(
             db=db,
-            user_id="",  # Need to pass actual user ID from context
+            user_id=user_id or "",  # Use provided user ID or empty string if not provided
             entity="Salesman",
             action="UPDATE",
-            changes=update_data
+            changes=serialized_changes
         )
 
         return db_salesman
 
     @staticmethod
-    async def delete_salesman(db: AsyncSession, salesman_id: UUID) -> bool:
+    async def delete_salesman(db: AsyncSession, salesman_id: UUID, user_id: str = None) -> bool:
         """
         Delete a salesman
         """
@@ -117,7 +132,7 @@ class SalesmanService:
         # Log the action
         await audit_log(
             db=db,
-            user_id="",  # Need to pass actual user ID from context
+            user_id=user_id or "",  # Use provided user ID or empty string if not provided
             entity="Salesman",
             action="DELETE",
             changes={"id": str(salesman_id)}

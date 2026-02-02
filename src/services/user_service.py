@@ -21,13 +21,17 @@ class UserService:
         # Hash the password
         password_hash = get_password_hash(user_create.password)
 
-        # Create the user object
+        # Create the user object with all fields
         db_user = User(
             full_name=user_create.full_name,
             email=user_create.email,
             username=user_create.username,
             password_hash=password_hash,
             role_id=user_create.role_id,
+            phone=user_create.phone,
+            address=user_create.address,
+            cnic=user_create.cnic,
+            branch=user_create.branch,
             is_active=user_create.is_active if hasattr(user_create, 'is_active') else True
         )
 
@@ -86,7 +90,7 @@ class UserService:
             return None
 
         # Prepare update data
-        update_data = user_update.dict(exclude_unset=True)
+        update_data = user_update.model_dump(exclude_unset=True)
 
         # Check if password is being updated to trigger session invalidation
         password_updated = "password" in update_data
@@ -103,15 +107,31 @@ class UserService:
 
         # If password was updated, invalidate all sessions for this user
         if password_updated:
-            session_manager.invalidate_user_sessions(str(user_id))
+            session_manager.invalidate_user_sessions(str(db_user.id))
 
-        # Log the action
+        # Log the action - convert any UUID objects to strings for JSON serialization
+        import json
+        from uuid import UUID
+
+        def convert_uuids_to_strings(obj):
+            """Recursively convert UUID objects to strings in a dictionary"""
+            if isinstance(obj, UUID):
+                return str(obj)
+            elif isinstance(obj, dict):
+                return {key: convert_uuids_to_strings(value) for key, value in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_uuids_to_strings(item) for item in obj]
+            else:
+                return obj
+
+        safe_changes = convert_uuids_to_strings(update_data)
+
         await audit_log(
             db=db,
             user_id=str(db_user.id),
             entity="User",
             action="UPDATE",
-            changes=update_data
+            changes=safe_changes
         )
 
         return db_user
@@ -125,16 +145,14 @@ class UserService:
         if not db_user:
             return False
 
+        # First, delete related audit logs to avoid foreign key constraint
+        from sqlalchemy import delete
+        from ..models.audit_log import AuditLog
+        stmt = delete(AuditLog).where(AuditLog.user_id == user_id)
+        await db.execute(stmt)
+
+        # Now delete the user
         await db.delete(db_user)
         await db.commit()
-
-        # Log the action
-        await audit_log(
-            db=db,
-            user_id=str(db_user.id),
-            entity="User",
-            action="DELETE",
-            changes={}
-        )
 
         return True

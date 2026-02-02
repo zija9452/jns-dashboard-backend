@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 
 from ..database.database import get_db
 from ..models.user import User  # Import User at the top to avoid NameError
+from ..models.salesman import Salesman, SalesmanCreate, SalesmanUpdate
 from ..auth.auth import get_current_user
 from ..auth.rbac import admin_required
 from ..services.user_service import UserService
@@ -211,11 +212,11 @@ async def get_admin(
         "ad_id": str(user.id),
         "ad_name": user.full_name,
         "ad_role": role.name if role else "unknown",
-        "ad_phone": meta_data.get("phone", ""),
-        "ad_address": meta_data.get("address", ""),
+        "ad_phone": user.phone or "",
+        "ad_address": user.address or "",
         "ad_password": "",  # Never return actual password
-        "ad_cnic": meta_data.get("cnic", ""),
-        "ad_branch": meta_data.get("branch", "")
+        "ad_cnic": user.cnic or "",
+        "ad_branch": user.branch or ""
     }
 
     return admin_data
@@ -265,6 +266,45 @@ async def delete_admin(
         "message": "User deleted successfully"
     }
 
+@router.get("/GetSalesman/{id}")
+async def get_salesman(
+    id: str,
+    current_user: User = Depends(admin_required()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Retrieve specific salesman details by ID
+    Required by JavaScript frontend
+    """
+    from ..services.salesman_service import SalesmanService
+    from ..models.salesman import Salesman
+
+    try:
+        salesman_id = UUID(id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid salesman ID format"
+        )
+
+    salesman = await SalesmanService.get_salesman(db, salesman_id)
+    if not salesman:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Salesman not found"
+        )
+
+    # Map to the expected frontend fields based on the JavaScript code
+    salesman_data = {
+        "sal_id": str(salesman.id),
+        "sal_name": salesman.name,
+        "sal_phone": salesman.phone or "",  # Using actual phone field from model
+        "sal_address": salesman.address or "",  # Using actual address field from model
+        "branch": salesman.branch or ""  # Using actual branch field from model
+    }
+
+    return salesman_data
+
 @router.get("/viewsalesman")
 async def view_salesman(
     search_string: str = None,
@@ -297,15 +337,192 @@ async def view_salesman(
     result = []
     for salesman in salesmen:
         result.append({
-            "id": str(salesman.id),
-            "name": salesman.name,
-            "code": salesman.code,
-            "commission_rate": str(salesman.commission_rate) if salesman.commission_rate else "0.00",
-            "created_at": salesman.created_at.isoformat(),
-            "updated_at": salesman.updated_at.isoformat()
+            "sal_id": str(salesman.id),
+            "sal_name": salesman.name,
+            "sal_phone": salesman.phone or "",  # Using actual phone field from model
+            "sal_address": salesman.address or "",  # Using actual address field from model
+            "branch": salesman.branch or ""  # Using actual branch field from model
         })
 
     return result
+
+# JavaScript frontend seems to call this endpoint for admin search (likely copy-paste error)
+# So we'll also provide admin user search under the same endpoint name
+@router.get("/viewadmin")
+async def view_admin(
+    search_string: str = None,
+    skip: int = 0,
+    limit: int = 100,
+    current_user: User = Depends(admin_required()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    View admin users with optional search functionality
+    Required by JavaScript frontend - alternative to viewsalesman for admin users
+    """
+    from ..models.role import Role
+    from sqlalchemy import select
+
+    # Get all users, with optional search
+    all_users = await UserService.get_users(db, skip=skip, limit=limit)
+
+    # Filter for admin users only
+    admin_users = []
+    for user in all_users:
+        role_result = await db.execute(select(Role).where(Role.id == user.role_id))
+        role = role_result.scalar_one_or_none()
+        if role and (role.name == "admin" or role.name == "employee" or role.name == "cashier"):  # Include all staff roles
+            admin_users.append(user)
+
+    # Filter by search string if provided
+    if search_string:
+        search_lower = search_string.lower()
+        filtered_users = []
+        for user in admin_users:
+            if (search_lower in user.full_name.lower() or
+                search_lower in user.username.lower() or
+                search_lower in user.email.lower() or
+                search_lower in (user.phone or "").lower() or
+                search_lower in (user.address or "").lower() or
+                search_lower in (user.cnic or "").lower()):
+                filtered_users.append(user)
+        admin_users = filtered_users
+
+    # Format the response to match expected frontend structure
+    result = []
+    for user in admin_users:
+        role_result = await db.execute(select(Role).where(Role.id == user.role_id))
+        role = role_result.scalar_one_or_none()
+
+        result.append({
+            "ad_id": str(user.id),
+            "ad_name": user.full_name,
+            "ad_role": role.name if role else "unknown",
+            "ad_phone": user.phone or "",
+            "ad_address": user.address or "",
+            "ad_cnic": user.cnic or "",
+            "ad_branch": user.branch or ""
+        })
+
+    return result
+
+# Admin-specific salesman CRUD endpoints
+
+@router.post("/salesman")
+async def create_salesman_admin(
+    salesman_create: SalesmanCreate,
+    current_user: User = Depends(admin_required()),  # Only admins can create salesmen
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Create a new salesman via admin endpoint
+    Required by JavaScript frontend
+    """
+    from ..services.salesman_service import SalesmanService
+    from ..models.salesman import Salesman
+
+    # Check if code already exists
+    existing_salesman = await SalesmanService.get_salesman_by_code(db, salesman_create.code)
+    if existing_salesman:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Salesman with this code already exists"
+        )
+
+    created_salesman = await SalesmanService.create_salesman(db, salesman_create, str(current_user.id))
+
+    # Format response to match expected frontend structure
+    return {
+        "sal_id": str(created_salesman.id),
+        "sal_name": created_salesman.name,
+        "sal_phone": created_salesman.phone or "",
+        "sal_address": created_salesman.address or "",
+        "branch": created_salesman.branch or "",
+        "code": created_salesman.code,
+        "commission_rate": str(created_salesman.commission_rate)
+    }
+
+@router.put("/salesman/{id}")
+async def update_salesman_admin(
+    id: str,
+    salesman_update: SalesmanUpdate,
+    current_user: User = Depends(admin_required()),  # Only admins can update salesmen
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Update a specific salesman by ID via admin endpoint
+    Required by JavaScript frontend
+    """
+    from ..services.salesman_service import SalesmanService
+    from ..models.salesman import Salesman
+
+    try:
+        salesman_id = UUID(id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid salesman ID format"
+        )
+
+    # Check if updating code and if new code already exists
+    if salesman_update.code:
+        existing_salesman = await SalesmanService.get_salesman_by_code(db, salesman_update.code)
+        if existing_salesman and str(existing_salesman.id) != id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Salesman with this code already exists"
+            )
+
+    updated_salesman = await SalesmanService.update_salesman(db, salesman_id, salesman_update, str(current_user.id))
+
+    if not updated_salesman:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Salesman not found"
+        )
+
+    # Format response to match expected frontend structure
+    return {
+        "sal_id": str(updated_salesman.id),
+        "sal_name": updated_salesman.name,
+        "sal_phone": updated_salesman.phone or "",
+        "sal_address": updated_salesman.address or "",
+        "branch": updated_salesman.branch or "",
+        "code": updated_salesman.code,
+        "commission_rate": str(updated_salesman.commission_rate)
+    }
+
+@router.delete("/salesman/{id}")
+async def delete_salesman_admin(
+    id: str,
+    current_user: User = Depends(admin_required()),  # Only admins can delete salesmen
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Delete a specific salesman by ID via admin endpoint
+    Required by JavaScript frontend
+    """
+    from ..services.salesman_service import SalesmanService
+
+    try:
+        salesman_id = UUID(id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid salesman ID format"
+        )
+
+    success = await SalesmanService.delete_salesman(db, salesman_id, str(current_user.id))
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Salesman not found"
+        )
+
+    return {
+        "success": True,
+        "message": "Salesman deleted successfully"
+    }
 
 @router.get("/viewadmins")
 async def view_admins(
@@ -349,23 +566,14 @@ async def view_admins(
         role_result = await db.execute(select(Role).where(Role.id == user.role_id))
         role = role_result.scalar_one_or_none()
 
-        # Extract extended fields from the meta field if it exists
-        import json
-        meta_data = {}
-        if user.meta:
-            try:
-                meta_data = json.loads(user.meta)
-            except:
-                meta_data = {}
-
         result.append({
             "ad_id": str(user.id),
             "ad_name": user.full_name,
             "ad_role": role.name if role else "unknown",
-            "ad_phone": meta_data.get("phone", ""),
-            "ad_address": meta_data.get("address", ""),
-            "ad_cnic": meta_data.get("cnic", ""),
-            "ad_branch": meta_data.get("branch", ""),
+            "ad_phone": user.phone or "",
+            "ad_address": user.address or "",
+            "ad_cnic": user.cnic or "",
+            "ad_branch": user.branch or "",
             "is_active": user.is_active,
             "created_at": user.created_at.isoformat()
         })
@@ -416,30 +624,25 @@ async def create_admin(
         await db.commit()
         await db.refresh(role)
 
-    # Prepare meta data
-    import json
-    meta_data = {}
-    if ad_phone:
-        meta_data["phone"] = ad_phone
-    if ad_address:
-        meta_data["address"] = ad_address
-    if ad_cnic:
-        meta_data["cnic"] = ad_cnic
-    if ad_branch:
-        meta_data["branch"] = ad_branch
-
     # Create user
     from ..models.user import UserCreate
+    import uuid
+    # Generate unique email by adding a random suffix to avoid conflicts
+    base_email = ad_name.replace(' ', '.').lower()
+    unique_email = f"{base_email}.{str(uuid.uuid4())[:8]}@example.com"
+    unique_username = f"{ad_name.replace(' ', '').lower()}.{str(uuid.uuid4())[:8]}"
+
     user_create = UserCreate(
         full_name=ad_name,
-        email=f"{ad_name.replace(' ', '.').lower()}@example.com",  # Default email
-        username=ad_name.replace(' ', '').lower(),
+        email=unique_email,  # Default email with unique suffix
+        username=unique_username,
         role_id=role.id,
+        phone=ad_phone,
+        address=ad_address,
+        cnic=ad_cnic,
+        branch=ad_branch,
         password=ad_password if ad_password else "default_password123"
     )
-
-    # Store extended fields in meta
-    user_create.meta = json.dumps(meta_data) if meta_data else None
 
     created_user = await UserService.create_user(db, user_create)
 
@@ -504,31 +707,20 @@ async def update_admin(
             detail="User not found"
         )
 
-    # Get current meta data
-    import json
-    meta_data = {}
-    if user.meta:
-        try:
-            meta_data = json.loads(user.meta)
-        except:
-            meta_data = {}
-
-    # Update meta fields
-    if ad_phone is not None:
-        meta_data["phone"] = ad_phone
-    if ad_address is not None:
-        meta_data["address"] = ad_address
-    if ad_cnic is not None:
-        meta_data["cnic"] = ad_cnic
-    if ad_branch is not None:
-        meta_data["branch"] = ad_branch
-
-    # Prepare update object
+    # Prepare update data - only include fields that are provided
     from ..models.user import UserUpdate
-    user_update = UserUpdate(
-        full_name=ad_name,
-        meta=json.dumps(meta_data)
-    )
+    update_data = {}
+
+    if ad_name is not None:
+        update_data["full_name"] = ad_name
+    if ad_phone is not None:
+        update_data["phone"] = ad_phone
+    if ad_address is not None:
+        update_data["address"] = ad_address
+    if ad_cnic is not None:
+        update_data["cnic"] = ad_cnic
+    if ad_branch is not None:
+        update_data["branch"] = ad_branch
 
     if ad_role:
         from ..models.role import Role
@@ -536,13 +728,20 @@ async def update_admin(
         role_result = await db.execute(select(Role).where(Role.name == ad_role))
         role = role_result.scalar_one_or_none()
         if role:
-            user_update.role_id = role.id
+            update_data["role_id"] = str(role.id)  # Convert UUID to string for audit logging
 
     if ad_password:
         # In a real implementation, you'd hash the password here
         # For now, we'll skip updating the password in this example
         pass
 
+    # Convert UUIDs to strings for audit logging
+    audit_data = update_data.copy()
+    for key, value in audit_data.items():
+        if isinstance(value, UUID):
+            audit_data[key] = str(value)
+
+    user_update = UserUpdate(**update_data)
     updated_user = await UserService.update_user(db, user_id, user_update)
 
     # Get the updated role name
@@ -555,10 +754,10 @@ async def update_admin(
         "ad_id": str(updated_user.id),
         "ad_name": updated_user.full_name,
         "ad_role": role.name if role else "unknown",
-        "ad_phone": meta_data.get("phone", ""),
-        "ad_address": meta_data.get("address", ""),
-        "ad_cnic": meta_data.get("cnic", ""),
-        "ad_branch": meta_data.get("branch", ""),
+        "ad_phone": updated_user.phone or "",
+        "ad_address": updated_user.address or "",
+        "ad_cnic": updated_user.cnic or "",
+        "ad_branch": updated_user.branch or "",
         "message": "Admin user updated successfully"
     }
 
@@ -870,14 +1069,18 @@ async def get_customer_vendor_by_branch(
     Get salesmen by branch for customer form
     Required by JavaScript frontend
     """
-    # For now, return a mock response with salesman data
-    # In a real implementation, you would query actual salesman data
-    salesmans = [
-        {"sal_id": "1", "sal_name": "John Smith"},
-        {"sal_id": "2", "sal_name": "Jane Doe"},
-        {"sal_id": "3", "sal_name": "Mike Johnson"},
-        {"sal_id": "4", "sal_name": "Sarah Williams"}
-    ]
+    from ..services.salesman_service import SalesmanService
+
+    # Get all salesmen from the database
+    salesmen = await SalesmanService.get_salesmen(db, skip=0, limit=1000)
+
+    # Format the response to match expected frontend structure
+    salesmans = []
+    for salesman in salesmen:
+        salesmans.append({
+            "sal_id": str(salesman.id),
+            "sal_name": salesman.name
+        })
 
     return {
         "salesmans": salesmans

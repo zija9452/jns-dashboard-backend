@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Dict, Any
-from sqlmodel import Session, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 import json
 from ..models.audit_log import AuditLog
 from ..models.user import User
@@ -12,7 +13,7 @@ class AuditLogger:
 
     @staticmethod
     async def log_action(
-        db: Session,
+        db: AsyncSession,
         user_id: str,
         entity: str,
         action: str,
@@ -46,7 +47,7 @@ class AuditLogger:
 
 # Convenience function for use throughout the application
 async def audit_log(
-    db: Session,
+    db: AsyncSession,
     user_id: str,
     entity: str,
     action: str,
