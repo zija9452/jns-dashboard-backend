@@ -1797,3 +1797,16 @@ postgres-1  | 2026-02-03 12:50:43.791 UTC [7167] FATAL:  role "neondb_owner" doe
 postgres-1  | 2026-02-03 12:50:53.879 UTC [7173] FATAL:  role "neondb_owner" does not exist
 postgres-1  | 2026-02-03 12:51:03.972 UTC [7180] FATAL:  role "neondb_owner" does not exist
 postgres-1  | 2026-02-03 12:51:13.441 UTC [7188] FATAL:  role "neondb_owner" does not exist
+postgres-1  | 2026-02-03 12:51:23.616 UTC [7196] FATAL:  role "neondb_owner" does not exist
+postgres-1  | 2026-02-03 12:51:33.738 UTC [7204] FATAL:  role "neondb_owner" does not exist
+postgres-1  | 2026-02-03 12:51:44.177 UTC [7211] FATAL:  role "neondb_owner" does not exist
+postgres-1  | 2026-02-03 12:51:54.257 UTC [7218] FATAL:  role "neondb_owner" does not exist
+postgres-1  | 2026-02-03 12:52:04.362 UTC [7225] FATAL:  role "neondb_owner" does not exist
+postgres-1  | 2026-02-03 12:52:14.469 UTC [7232] FATAL:  role "neondb_owner" does not exist
+postgres-1  | 2026-02-03 12:52:24.585 UTC [7239] FATAL:  role "neondb_owner" does not exist
+postgres-1  | 2026-02-03 12:52:34.715 UTC [7246] FATAL:  role "neondb_owner" does not exist
+postgres-1  | 2026-02-03 12:52:44.811 UTC [7253] FATAL:  role "neondb_owner" does not exist
+postgres-1  | 2026-02-03 12:52:57.421 UTC [7260] FATAL:  role "neondb_owner" does not exist
+postgres-1  | 2026-02-03 12:53:07.544 UTC [7267] FATAL:  role "neondb_owner" does not exist
+postgres-1  | 2026-02-03 12:53:18.762 UTC [7274] FATAL:  role "neondb_owner" does not exist
+postgres-1  | 2026-02-03 12:53:28.879 UTC [7281] FATAL:  role "neondb_owner" does not exist
