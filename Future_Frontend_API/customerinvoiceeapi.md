@@ -340,7 +340,7 @@ curl -X PUT http://localhost:8000/customer-invoice/UpdateCustomerOrders/uuid-str
 ```
 
 ### 11. Delete Customer Orders
-**POST** `/customer-invoice/DeleteCustomerOrders/{invoice_id}`
+**DELETE** `/customer-invoice/DeleteCustomerOrders/{invoice_id}`
 
 Deletes customer orders (invoice deletion) by ID.
 
@@ -357,7 +357,7 @@ Deletes customer orders (invoice deletion) by ID.
 
 #### Example Request:
 ```bash
-curl -X POST http://localhost:8000/customer-invoice/DeleteCustomerOrders/uuid-string \
+curl -X DELETE http://localhost:8000/customer-invoice/DeleteCustomerOrders/uuid-string \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
 ```
 
