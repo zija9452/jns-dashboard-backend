@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 import os
 from decimal import Decimal
 
-from src.routers import auth, users, products, customers, vendors, salesman, stock, expenses, invoices, custom_orders, refunds, admin, pos
+from src.routers import auth, users, products, customers, vendors, salesman, stock, expenses, invoices, custom_orders, customer_invoice, refunds, admin, pos
 from src.utils.error_handlers import setup_error_handlers
 from src.middleware.security import SecurityHeadersMiddleware
 from src.utils.metrics import MetricsMiddleware, start_metrics_server
@@ -110,6 +110,7 @@ app.include_router(stock.router, prefix="/stock", tags=["stock"])
 app.include_router(expenses.router, prefix="/expenses", tags=["expenses"])
 app.include_router(invoices.router, prefix="/invoices", tags=["invoices"])
 app.include_router(custom_orders.router, prefix="/custom-orders", tags=["custom-orders"])
+app.include_router(customer_invoice.router, prefix="/customer-invoice", tags=["customer-invoice"])
 app.include_router(refunds.router, prefix="/refunds", tags=["refunds"])
 app.include_router(pos.router, prefix="/pos", tags=["pos"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])

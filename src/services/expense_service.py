@@ -96,13 +96,25 @@ class ExpenseService:
         await db.commit()
         await db.refresh(db_expense)
 
+        # Convert Decimal values to float for JSON serialization
+        import json
+        from decimal import Decimal
+
+        # Create a serializable version of changes
+        serializable_changes = {}
+        for key, value in {**old_values, **update_data}.items():
+            if isinstance(value, Decimal):
+                serializable_changes[key] = float(value)
+            else:
+                serializable_changes[key] = value
+
         # Log the action
         await audit_log(
             db=db,
             user_id=str(db_expense.created_by),
             entity="Expense",
             action="UPDATE",
-            changes={**old_values, **update_data}
+            changes=serializable_changes
         )
 
         return db_expense

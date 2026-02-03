@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlmodel import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
 from uuid import UUID
 import uuid
@@ -14,12 +14,12 @@ from ..auth.rbac import admin_required, cashier_required, employee_required
 router = APIRouter()
 
 @router.get("/", response_model=List[ExpenseRead])
-def get_expenses(
+async def get_expenses(
     created_by: str = None,
     skip: int = 0,
     limit: int = 100,
     current_user: User = Depends(employee_required()),  # Employees and above can view expenses
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Get list of expenses with pagination
@@ -36,14 +36,14 @@ def get_expenses(
                 detail="Invalid user ID format"
             )
 
-    expenses = ExpenseService.get_expenses(db, created_by=created_by_uuid, skip=skip, limit=limit)
+    expenses = await ExpenseService.get_expenses(db, created_by=created_by_uuid, skip=skip, limit=limit)
     return expenses
 
 @router.post("/", response_model=ExpenseRead)
-def create_expense(
+async def create_expense(
     expense_create: ExpenseCreate,
     current_user: User = Depends(employee_required()),  # Employees and above can create expenses
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Create a new expense
@@ -53,13 +53,13 @@ def create_expense(
     if not expense_create.created_by:
         expense_create.created_by = current_user.id
 
-    return ExpenseService.create_expense(db, expense_create)
+    return await ExpenseService.create_expense(db, expense_create)
 
 @router.get("/{expense_id}", response_model=ExpenseRead)
-def get_expense(
+async def get_expense(
     expense_id: str,
     current_user: User = Depends(employee_required()),  # Employees and above can view expense details
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Get a specific expense by ID
@@ -73,7 +73,7 @@ def get_expense(
             detail="Invalid expense ID format"
         )
 
-    expense = ExpenseService.get_expense(db, expense_uuid)
+    expense = await ExpenseService.get_expense(db, expense_uuid)
 
     if not expense:
         raise HTTPException(
@@ -84,11 +84,11 @@ def get_expense(
     return expense
 
 @router.put("/{expense_id}", response_model=ExpenseRead)
-def update_expense(
+async def update_expense(
     expense_id: str,
     expense_update: ExpenseUpdate,
     current_user: User = Depends(admin_required()),  # Only admins can update expenses
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Update a specific expense by ID
@@ -102,7 +102,7 @@ def update_expense(
             detail="Invalid expense ID format"
         )
 
-    expense = ExpenseService.get_expense(db, expense_uuid)
+    expense = await ExpenseService.get_expense(db, expense_uuid)
 
     if not expense:
         raise HTTPException(
@@ -110,13 +110,13 @@ def update_expense(
             detail="Expense not found"
         )
 
-    return ExpenseService.update_expense(db, expense_uuid, expense_update)
+    return await ExpenseService.update_expense(db, expense_uuid, expense_update)
 
 @router.delete("/{expense_id}")
-def delete_expense(
+async def delete_expense(
     expense_id: str,
     current_user: User = Depends(admin_required()),  # Only admins can delete expenses
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Delete a specific expense by ID
@@ -130,7 +130,7 @@ def delete_expense(
             detail="Invalid expense ID format"
         )
 
-    success = ExpenseService.delete_expense(db, expense_uuid)
+    success = await ExpenseService.delete_expense(db, expense_uuid)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
