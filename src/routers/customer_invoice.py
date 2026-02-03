@@ -462,7 +462,7 @@ async def update_customer_orders(
         )
 
     # Find the existing invoice
-    statement = select(Invoice).where(Invoice.id == invoice_uuid)
+    statement = select(CustomerInvoice).where(CustomerInvoice.id == invoice_uuid)
     result = await db.execute(statement)
     invoice = result.scalar_one_or_none()
 
@@ -540,7 +540,7 @@ async def delete_customer_orders(
         )
 
     # Find the invoice to delete
-    statement = select(Invoice).where(Invoice.id == invoice_uuid)
+    statement = select(CustomerInvoice).where(CustomerInvoice.id == invoice_uuid)
     result = await db.execute(statement)
     invoice = result.scalar_one_or_none()
 
@@ -551,7 +551,7 @@ async def delete_customer_orders(
         )
 
     # Delete the invoice
-    delete_statement = delete(Invoice).where(Invoice.id == invoice_uuid)
+    delete_statement = delete(CustomerInvoice).where(CustomerInvoice.id == invoice_uuid)
     await db.execute(delete_statement)
     await db.commit()
 
