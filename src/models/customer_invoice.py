@@ -24,9 +24,14 @@ class CustomerInvoice(SQLModel, table=True):
     salesman_id: Optional[uuid.UUID] = Field(default=None, foreign_key="salesmen.id")
     items: str = Field()  # JSON string for line items (as per your JavaScript schema)
     totals: str = Field()  # JSON string for subtotal, tax, total, etc. (as per your JavaScript schema)
+    total_amount: Decimal = Field(sa_column=Column(Numeric(10, 2)))  # Total order amount
+    amount_paid: Decimal = Field(default=0.00, sa_column=Column(Numeric(10, 2)))  # Amount received so far
+    balance_due: Decimal = Field(default=0.00, sa_column=Column(Numeric(10, 2)))  # Remaining balance
+    payment_status: str = Field(default="unpaid")  # "unpaid", "partial", "paid"
+    payments_history: str = Field(default="[]")  # JSON array of payment records
     taxes: Decimal = Field(sa_column=Column(Numeric(10, 2)))
     discounts: Optional[Decimal] = Field(default=0.00, sa_column=Column(Numeric(10, 2)))
-    status: CustomerInvoiceStatus = Field(default=CustomerInvoiceStatus.ISSUED)
+    status: CustomerInvoiceStatus = Field(default=CustomerInvoiceStatus.ISSUED)  # DRAFT, ISSUED, PAID, CANCELLED
     payment_method: str = Field(default="cash")  # As per your JavaScript content
     notes: Optional[str] = Field(default=None)
     created_by: uuid.UUID = Field(foreign_key="users.id")
@@ -41,6 +46,11 @@ class CustomerInvoiceRead(SQLModel):
     salesman_id: Optional[uuid.UUID]
     items: str
     totals: str
+    total_amount: Decimal
+    amount_paid: Decimal
+    balance_due: Decimal
+    payment_status: str
+    payments_history: str
     taxes: Decimal
     discounts: Optional[Decimal]
     status: CustomerInvoiceStatus
@@ -56,6 +66,11 @@ class CustomerInvoiceCreate(SQLModel):
     salesman_id: Optional[uuid.UUID] = None
     items: str  # JSON string
     totals: str  # JSON string
+    total_amount: Optional[Decimal] = 0.00
+    amount_paid: Optional[Decimal] = 0.00
+    balance_due: Optional[Decimal] = 0.00
+    payment_status: Optional[str] = "unpaid"
+    payments_history: Optional[str] = "[]"
     taxes: Optional[Decimal] = 0.00
     discounts: Optional[Decimal] = 0.00
     status: Optional[CustomerInvoiceStatus] = CustomerInvoiceStatus.ISSUED
@@ -66,6 +81,11 @@ class CustomerInvoiceCreate(SQLModel):
 class CustomerInvoiceUpdate(SQLModel):
     items: Optional[str] = None
     totals: Optional[str] = None
+    total_amount: Optional[Decimal] = None
+    amount_paid: Optional[Decimal] = None
+    balance_due: Optional[Decimal] = None
+    payment_status: Optional[str] = None
+    payments_history: Optional[str] = None
     taxes: Optional[Decimal] = None
     discounts: Optional[Decimal] = None
     status: Optional[CustomerInvoiceStatus] = None

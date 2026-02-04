@@ -21,6 +21,7 @@ from src.models.invoice import Invoice
 from src.models.custom_order import CustomOrder
 from src.models.refund import Refund
 from src.models.audit_log import AuditLog
+from src.models.customer_invoice import CustomerInvoice
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
