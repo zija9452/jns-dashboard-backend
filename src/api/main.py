@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 import os
 from decimal import Decimal
 
-from src.routers import auth, users, products, customers, vendors, salesman, stock, expenses, invoices, custom_orders, customer_invoice, refunds, admin, pos
+from src.routers import auth, users, products, customers, vendors, salesman, stock, expenses, invoices, customer_invoice, refunds, admin, pos
 from src.utils.error_handlers import setup_error_handlers
 from src.middleware.security import SecurityHeadersMiddleware
 from src.utils.metrics import MetricsMiddleware, start_metrics_server
@@ -82,12 +82,15 @@ async def db_health():
     """Check database connectivity"""
     from sqlmodel import select
     from src.models.user import User
+    from src.models.customer_invoice import CustomerInvoice
 
     try:
         # Attempt to connect to the database and perform a simple query using async session
         from src.database.database import AsyncSessionLocal
         async with AsyncSessionLocal() as session:
+            # Check that we can query both user and customer invoice tables
             await session.execute(select(User).limit(1))
+            await session.execute(select(CustomerInvoice).limit(1))
         return {"status": "healthy", "service": "database"}
     except Exception as e:
         return {"status": "unhealthy", "service": "database", "error": str(e)}, 503
@@ -99,6 +102,24 @@ def readiness_check():
     # For example, checking if all required services are available
     return {"status": "ready", "service": "regal-pos-backend"}
 
+@app.get("/health/customer-invoice")
+async def customer_invoice_health():
+    """Check customer invoice functionality"""
+    from sqlmodel import select
+    from src.models.customer_invoice import CustomerInvoice
+
+    try:
+        from src.database.database import AsyncSessionLocal
+        async with AsyncSessionLocal() as session:
+            # Try to query the customer invoice table
+            stmt = select(CustomerInvoice).limit(1)
+            result = await session.execute(stmt)
+            # Just test that we can execute the query
+            _ = result.scalars().first()
+        return {"status": "healthy", "service": "customer-invoice"}
+    except Exception as e:
+        return {"status": "unhealthy", "service": "customer-invoice", "error": str(e)}, 503
+
 # Include routers
 app.include_router(auth.router, prefix="/auth", tags=["authentication"])
 app.include_router(users.router, prefix="/users", tags=["users"])
@@ -109,7 +130,6 @@ app.include_router(salesman.router, prefix="/salesman", tags=["salesman"])
 app.include_router(stock.router, prefix="/stock", tags=["stock"])
 app.include_router(expenses.router, prefix="/expenses", tags=["expenses"])
 app.include_router(invoices.router, prefix="/invoices", tags=["invoices"])
-app.include_router(custom_orders.router, prefix="/custom-orders", tags=["custom-orders"])
 app.include_router(customer_invoice.router, prefix="/customer-invoice", tags=["customer-invoice"])
 app.include_router(refunds.router, prefix="/refunds", tags=["refunds"])
 app.include_router(pos.router, prefix="/pos", tags=["pos"])

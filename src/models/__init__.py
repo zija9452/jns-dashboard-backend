@@ -7,6 +7,5 @@ from .salesman import Salesman
 from .stock_entry import StockEntry
 from .expense import Expense
 from .invoice import Invoice
-from .custom_order import CustomOrder
 from .refund import Refund
 from .audit_log import AuditLog

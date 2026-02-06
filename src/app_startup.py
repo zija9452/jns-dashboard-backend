@@ -10,7 +10,6 @@ from .models.salesman import Salesman
 from .models.stock_entry import StockEntry
 from .models.expense import Expense
 from .models.invoice import Invoice
-from .models.custom_order import CustomOrder
 from .models.refund import Refund
 from .models.audit_log import AuditLog
 from .auth.password import get_password_hash

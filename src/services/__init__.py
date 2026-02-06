@@ -6,5 +6,4 @@ from .salesman_service import SalesmanService
 from .stock_service import StockService
 from .expense_service import ExpenseService
 from .invoice_service import InvoiceService
-from .custom_order_service import CustomOrderService
 from .refund_service import RefundService

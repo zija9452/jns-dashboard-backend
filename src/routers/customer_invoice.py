@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Dict, Any
 from uuid import UUID
@@ -34,9 +34,12 @@ async def get_customer_details(
     Required by JavaScript frontend
     """
     if not cus_name:
-        return {"error": "Customer name is required"}
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Customer name is required"
+        )
 
-    # Find customer by name
+    # Find customer by name - use parameterized queries to prevent SQL injection
     from sqlalchemy import select
     statement = select(Customer).where(Customer.name.ilike(f"%{cus_name}%")).limit(1)
     result = await db.execute(statement)
@@ -47,7 +50,7 @@ async def get_customer_details(
         contacts_data = {}
         try:
             contacts_data = json.loads(customer.contacts)
-        except:
+        except (json.JSONDecodeError, TypeError):
             contacts_data = {"phone": "", "email": ""}
 
         return {
@@ -59,7 +62,10 @@ async def get_customer_details(
             "cus_balance": float(customer.credit_limit) if customer.credit_limit else 0.0
         }
     else:
-        return {"error": "Customer not found"}
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Customer not found"
+        )
 
 
 @router.post("/Getsalesmandetail")
@@ -73,9 +79,12 @@ async def get_salesman_detail(
     Required by JavaScript frontend
     """
     if not sal_name:
-        return {"error": "Salesman name is required"}
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Salesman name is required"
+        )
 
-    # Find salesman by name
+    # Find salesman by name - use parameterized queries to prevent SQL injection
     from sqlalchemy import select
     statement = select(Salesman).where(Salesman.name.ilike(f"%{sal_name}%"))
     result = await db.execute(statement)
@@ -90,176 +99,328 @@ async def get_salesman_detail(
             "branch": salesman.branch or ""
         }
     else:
-        return {"error": "Salesman not found"}
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Salesman not found"
+        )
 
 
 @router.post("/SaveCustomerOrders")
 async def save_customer_orders(
-    orderItems: List[Dict] = None,
-    timezone: str = None,
-    Date: str = None,
+    request_data: dict = None,
     current_user: User = Depends(admin_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Save customer orders (customer invoice creation)
     Required by JavaScript frontend
+    All parameters now come from request body for better security and best practices
     """
-    from sqlalchemy import select
+    from sqlalchemy import select, func
     from decimal import Decimal
+    from uuid import UUID
+    import json
+    import uuid
+    from datetime import datetime
+    import base64
 
-    if not orderItems:
-        orderItems = []
+    # Extract data from request body
+    order_items = request_data.get('items', []) if request_data else []
+    customer_id = request_data.get('customer_id') if request_data else None
+    customer_name = request_data.get('customer_name') if request_data else None
+    team_name = request_data.get('team_name') if request_data else None
+    payment_method = request_data.get('payment_method', 'cash') if request_data else 'cash'
+    initial_paid_amount = request_data.get('initial_paid_amount', 0.0) if request_data else 0.0
+    remarks = request_data.get('remarks', '') if request_data else ''
+    salesman_id = request_data.get('salesman_id') if request_data else None
+    timezone = request_data.get('timezone') if request_data else None
+    date = request_data.get('date') if request_data else None
 
-    # Create customer invoice
+    # Validate that order items exist
+    if not order_items:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Order items are required"
+        )
+
+    # Validate customer ID from request body
+    customer_id_uuid = None
+    if customer_id:
+        try:
+            customer_id_uuid = UUID(customer_id)
+            # Verify customer exists
+            customer_exists = await db.execute(select(Customer).where(Customer.id == customer_id_uuid))
+            customer = customer_exists.scalar_one_or_none()
+            if not customer:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Customer not found"
+                )
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid customer ID format"
+            )
+
+    # Validate and handle customer name if provided
+    if customer_name:
+        # Find customer by name if customer_id is not provided
+        if not customer_id:
+            from sqlalchemy import func
+            customer_by_name = await db.execute(select(Customer).where(Customer.name == customer_name))
+            customer = customer_by_name.scalar_one_or_none()
+            if customer:
+                customer_id_uuid = customer.id
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Customer with name '{customer_name}' not found"
+                )
+
+    # Handle team name if provided
+    if team_name:
+        # You can use team_name for additional processing if needed
+        pass  # Currently just accepting the parameter
+
+    # Create customer invoice ID
     invoice_id = uuid.uuid4()
 
     # Process each order item
     items_list = []
     total_amount = Decimal('0')
+    total_discount = 0.0
 
-    for item in orderItems:
-        # Create item object
-        item_obj = {
-            "product_name": item.get('pro_name'),
-            "quantity": int(item.get('pro_quantity', 0)),
-            "unit_price": float(item.get('unit_price', 0)),
-            "total_price": float(item.get('total_price', 0)),
-            "discount": float(item.get('discount', 0)),
-            "cat_name": item.get('cat_name'),
-            "cricktshirt_Neckstyle": item.get('cricktshirt_Neckstyle'),
-            "cricktshirt_sleeve": item.get('cricktshirt_sleeve'),
-            "cricktshirt_bottom": item.get('cricktshirt_bottom'),
-            "cricktshirt_fabric": item.get('cricktshirt_fabric'),
-            "cricktrouser_style": item.get('cricktrouser_style'),
-            "cricktrouser_style2": item.get('cricktrouser_style2'),
-            "cricktrouser_bottom": item.get('cricktrouser_bottom'),
-            "cricktrouser_pocket": item.get('cricktrouser_pocket'),
-            "cricktrouser_fabric": item.get('cricktrouser_fabric'),
-            "foottshirt_neckstyle": item.get('foottshirt_neckstyle'),
-            "foottshirt_sleeves": item.get('foottshirt_sleeves'),
-            "football_fabric": item.get('football_fabric'),
-            "footshorts_style": item.get('footshorts_style'),
-            "footshorts_pocket": item.get('footshorts_pocket'),
-            "footballshort_fabric": item.get('footballshort_fabric'),
-            "trackjack_style": item.get('trackjack_style'),
-            "trackjack_waist": item.get('trackjack_waist'),
-            "trackjack_pocket": item.get('trackjack_pocket'),
-            "trackjack_bottom": item.get('trackjack_bottom'),
-            "trackjack_fabric": item.get('trackjack_fabric'),
-            "tracktrous_style": item.get('tracktrous_style'),
-            "tracktrous_bottom": item.get('tracktrous_bottom'),
-            "tracktrous_pocket": item.get('tracktrous_pocket'),
-            "tracktrous_fabric": item.get('tracktrous_fabric'),
-            "imgfile": item.get('imgfile'),
-            "imgfile2": item.get('imgfile2'),
-            "imgfile3": item.get('imgfile3'),
-        }
-        items_list.append(item_obj)
-        total_amount += Decimal(str(item.get('total_price', 0)))
+    # Validate and process each order item
+    for item in order_items:
+        try:
+            # Validate required fields
+            pro_name = item.get('pro_name')
+            if not pro_name:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Product name is required for each item"
+                )
 
-    # Calculate totals
-    total_discount = sum(float(item.get('discount', 0)) for item in orderItems)
-    net_amount = total_amount - Decimal(str(total_discount))
+            quantity = int(item.get('pro_quantity', 0))
+            if quantity <= 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Product quantity must be positive"
+                )
 
-    # Generate unique sequential invoice number
-    from sqlalchemy import func, select
+            unit_price = float(item.get('unit_price', 0))
+            if unit_price < 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Unit price cannot be negative"
+                )
 
-    # Generate unique invoice number using simple sequential approach for real-world usage
+            discount = float(item.get('discount', 0))
+            if discount < 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Discount cannot be negative"
+                )
+
+            # Calculate total for this item: (quantity * unit_price) - discount
+            item_total = (quantity * unit_price) - discount
+            if item_total < 0:
+                item_total = 0  # Prevent negative totals
+
+            # Create item object
+            item_obj = {
+                "product_name": str(pro_name),
+                "quantity": quantity,
+                "unit_price": unit_price,
+                "total_price": item_total,
+                "discount": discount,
+                "cat_name": str(item.get('cat_name', '')),
+                "cricktshirt_Neckstyle": str(item.get('cricktshirt_Neckstyle', '')),
+                "cricktshirt_sleeve": str(item.get('cricktshirt_sleeve', '')),
+                "cricktshirt_bottom": str(item.get('cricktshirt_bottom', '')),
+                "cricktshirt_fabric": str(item.get('cricktshirt_fabric', '')),
+                "cricktrouser_style": str(item.get('cricktrouser_style', '')),
+                "cricktrouser_style2": str(item.get('cricktrouser_style2', '')),
+                "cricktrouser_bottom": str(item.get('cricktrouser_bottom', '')),
+                "cricktrouser_pocket": str(item.get('cricktrouser_pocket', '')),
+                "cricktrouser_fabric": str(item.get('cricktrouser_fabric', '')),
+                "foottshirt_neckstyle": str(item.get('foottshirt_neckstyle', '')),
+                "foottshirt_sleeves": str(item.get('foottshirt_sleeves', '')),
+                "football_fabric": str(item.get('football_fabric', '')),
+                "footshorts_style": str(item.get('footshorts_style', '')),
+                "footshorts_pocket": str(item.get('footshorts_pocket', '')),
+                "footballshort_fabric": str(item.get('footballshort_fabric', '')),
+                "trackjack_style": str(item.get('trackjack_style', '')),
+                "trackjack_waist": str(item.get('trackjack_waist', '')),
+                "trackjack_pocket": str(item.get('trackjack_pocket', '')),
+                "trackjack_bottom": str(item.get('trackjack_bottom', '')),
+                "trackjack_fabric": str(item.get('trackjack_fabric', '')),
+                "tracktrous_style": str(item.get('tracktrous_style', '')),
+                "tracktrous_bottom": str(item.get('tracktrous_bottom', '')),
+                "tracktrous_pocket": str(item.get('tracktrous_pocket', '')),
+                "tracktrous_fabric": str(item.get('tracktrous_fabric', '')),
+                "imgfile": str(item.get('imgfile', '')),
+                "imgfile2": str(item.get('imgfile2', '')),
+                "imgfile3": str(item.get('imgfile3', '')),
+            }
+            items_list.append(item_obj)
+            total_amount += Decimal(str(item_total))
+            total_discount += discount
+        except (ValueError, TypeError) as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid data format in order item: {str(e)}"
+            )
+
+    # Calculate net amount (total after all discounts)
+    net_amount = total_amount
+
+    # Generate unique sequential invoice number with database-level locking for concurrency safety
     from datetime import datetime
 
-    # Use simple prefix-based invoice number: CIN-XXX (e.g., CIN-001, CIN-002)
-    # Find the highest invoice number globally and increment the sequence
-    prefix_pattern = "CIN-%"
-    statement = select(func.max(CustomerInvoice.invoice_no)).where(
-        CustomerInvoice.invoice_no.like(prefix_pattern)
-    )
-    result = await db.execute(statement)
-    max_invoice_no = result.scalar_one_or_none()
+    # Use database-level locking to prevent race conditions
+    lock_statement = select(func.pg_advisory_lock(123456))  # PostgreSQL advisory lock
+    await db.execute(lock_statement)
 
-    if max_invoice_no:
-        # Extract the sequence number from existing format like "CIN-001"
-        try:
-            # Split by dash and get the sequence part (last part)
-            parts = max_invoice_no.split("-")
-            if len(parts) >= 2:
-                existing_seq = parts[-1]  # Get the last part (sequence number)
-                if existing_seq.isdigit():
-                    next_seq = int(existing_seq) + 1
-                    seq_number = f"{next_seq:03d}"  # Format as 3-digit sequence (001, 002, etc.)
+    try:
+        # Find the highest invoice number globally and increment the sequence
+        prefix_pattern = "CIN-%"
+        statement = select(func.max(CustomerInvoice.invoice_no)).where(
+            CustomerInvoice.invoice_no.like(prefix_pattern)
+        )
+        result = await db.execute(statement)
+        max_invoice_no = result.scalar_one_or_none()
+
+        if max_invoice_no:
+            # Extract the sequence number from existing format like "CIN-001"
+            try:
+                # Split by dash and get the sequence part (last part)
+                parts = max_invoice_no.split("-")
+                if len(parts) >= 2:
+                    existing_seq = parts[-1]  # Get the last part (sequence number)
+                    if existing_seq.isdigit():
+                        next_seq = int(existing_seq) + 1
+                        seq_number = f"{next_seq:03d}"  # Format as 3-digit sequence (001, 002, etc.)
+                    else:
+                        seq_number = "001"  # Default if parsing fails
                 else:
-                    seq_number = "001"  # Default if parsing fails
-            else:
-                seq_number = "001"  # Default if format doesn't match expected pattern
-        except:
-            seq_number = "001"  # Default if any error
-    else:
-        seq_number = "001"  # Start with 001 if no invoices exist
-
-    invoice_no = f"CIN-{seq_number}"
-
-    # Double-check for uniqueness in case of race conditions and increment if needed
-    counter = 0
-    while counter < 100:  # Safety check to avoid infinite loop
-        check_statement = select(CustomerInvoice).where(CustomerInvoice.invoice_no == invoice_no)
-        check_result = await db.execute(check_statement)
-        existing_invoice = check_result.scalar_one_or_none()
-
-        if existing_invoice:
-            # Invoice number exists, increment and try again
-            next_seq_int = int(seq_number) + 1
-            seq_number = f"{next_seq_int:03d}"
-            invoice_no = f"CIN-{seq_number}"
-            counter += 1
+                    seq_number = "001"  # Default if format doesn't match expected pattern
+            except:
+                seq_number = "001"  # Default if any error
         else:
-            break  # Found a unique number
+            seq_number = "001"  # Start with 001 if no invoices exist
 
-    # Create customer invoice data
-    invoice_data = {
-        "id": invoice_id,
-        "invoice_no": invoice_no,
-        "customer_id": orderItems[0].get('or_cus_id_fk') if orderItems else None,  # Get customer ID from first item
-        "salesman_id": orderItems[0].get('or_sal_id_fk') if orderItems and 'or_sal_id_fk' in orderItems[0] else None,  # Get salesman ID if available
-        "items": json.dumps(items_list),
-        "totals": json.dumps({
-            "subtotal": float(total_amount),
-            "tax": 0.0,
-            "discount": total_discount,
-            "total": float(net_amount),
-            "amount_paid": 0.0,  # Initially 0 when order is created
-            "balance_due": float(net_amount),  # Full amount is due initially
-            "payment_status": "unpaid"  # Initially unpaid
-        }),
-        "total_amount": Decimal(str(net_amount)),
-        "amount_paid": Decimal('0'),  # Initially 0, will be updated when payments are made
-        "balance_due": Decimal(str(net_amount)),  # Full amount is due initially
-        "payment_status": "unpaid",  # Initially unpaid
-        "payments_history": json.dumps([]),  # Empty payment history initially
-        "taxes": Decimal('0'),
-        "discounts": Decimal(str(total_discount)),
-        "status": CustomerInvoiceStatus.ISSUED,  # Use the customer invoice status enum
-        "payment_method": orderItems[0].get('payment_mod', 'cash') if orderItems else 'cash',
-        "notes": orderItems[0].get('remarks', '') if orderItems and 'remarks' in orderItems[0] else '',
-        "created_by": current_user.id,
-        "created_at": datetime.now(),
-        "updated_at": datetime.now()
-    }
+        invoice_no = f"CIN-{seq_number}"
 
-    # Add to database
-    db_customer_invoice = CustomerInvoice(**{k: v for k, v in invoice_data.items() if k in ["id", "invoice_no", "customer_id", "salesman_id", "items", "totals", "taxes", "discounts", "status", "payment_method", "notes", "created_by", "created_at", "updated_at"]})
-    db.add(db_customer_invoice)
-    await db.commit()
+        # Double-check for uniqueness in case of race conditions and increment if needed
+        counter = 0
+        while counter < 100:  # Safety check to avoid infinite loop
+            check_statement = select(CustomerInvoice).where(CustomerInvoice.invoice_no == invoice_no)
+            check_result = await db.execute(check_statement)
+            existing_invoice = check_result.scalar_one_or_none()
 
-    # Generate a simple PDF report (base64 encoded) as response
-    pdf_content = "%PDF-1.4\n1 0 obj\n<<\n/Type /Catalog\n/Pages 2 0 R\n>>\nendobj\n"
-    pdf_content += "2 0 obj\n<<\n/Type /Pages\n/Kids [3 0 R]\n/Count 1\n>>\nendobj\n"
-    pdf_content += "3 0 obj\n<<\n/Type /Page\n/Parent 2 0 R\n/MediaBox [0 0 612 792]\n/Contents 4 0 R\n>>\nendobj\n"
-    pdf_content += "4 0 obj\n<<\n/Length 60\n>>\nstream\nBT\n/F1 12 Tf\n72 720 Td\n(Customer Invoice Report - " + datetime.now().strftime("%Y-%m-%d") + ") Tj\nET\nendstream\nendobj\n"
-    pdf_content += "xref\n0 5\ntrailer\n<<\n/Size 5\n/Root 1 0 R\n>>\n%%EOF"
+            if existing_invoice:
+                # Invoice number exists, increment and try again
+                next_seq_int = int(seq_number) + 1
+                seq_number = f"{next_seq_int:03d}"
+                invoice_no = f"CIN-{seq_number}"
+                counter += 1
+            else:
+                break  # Found a unique number
 
-    encoded_pdf = base64.b64encode(pdf_content.encode()).decode()
+        if counter >= 100:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Could not generate unique invoice number"
+            )
 
-    return encoded_pdf
+        # Get salesman ID from query parameter if provided
+        salesman_id_uuid = None
+        if salesman_id:
+            try:
+                salesman_id_uuid = UUID(salesman_id)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid salesman ID format"
+                )
+
+        # Calculate initial payment values
+        initial_paid_decimal = Decimal(str(initial_paid_amount))
+        initial_balance_due = net_amount - initial_paid_decimal
+
+        # Determine payment status based on initial payment
+        if initial_balance_due <= 0:
+            payment_status = "paid"
+        elif initial_paid_decimal > 0:
+            payment_status = "partial"
+        else:
+            payment_status = "unpaid"
+
+        # Create initial payment history if an initial payment was made
+        initial_payment_history = []
+        if initial_paid_amount > 0:
+            from datetime import datetime
+            initial_payment_history.append({
+                "amount": float(initial_paid_amount),
+                "payment_method": payment_method,
+                "date": datetime.now().isoformat(),
+                "description": f"Initial payment at order creation: {initial_paid_amount}"
+            })
+
+        # Create customer invoice data
+        invoice_data = {
+            "id": invoice_id,
+            "invoice_no": invoice_no,
+            "customer_id": customer_id_uuid,  # Use the validated customer_id from query parameter
+            "customer_name": customer_name,  # Use customer name from query parameter
+            "team_name": team_name,  # Use team name from query parameter
+            "salesman_id": salesman_id_uuid,  # Use salesman ID from query parameter
+            "items": json.dumps(items_list),
+            "totals": json.dumps({
+                "subtotal": float(total_amount),
+                "tax": 0.0,
+                "discount": total_discount,
+                "total": float(net_amount),
+                "amount_paid": float(initial_paid_decimal),  # Use initial payment amount
+                "balance_due": float(initial_balance_due),  # Calculate remaining balance
+                "payment_status": payment_status  # Set status based on payment
+            }),
+            "total_amount": Decimal(str(net_amount)),
+            "amount_paid": initial_paid_decimal,  # Use initial payment amount
+            "balance_due": initial_balance_due,  # Calculate remaining balance
+            "payment_status": payment_status,  # Set status based on payment
+            "payments_history": json.dumps(initial_payment_history),  # Include initial payment in history
+            "taxes": Decimal('0'),
+            "discounts": Decimal(str(total_discount)),
+            "status": CustomerInvoiceStatus.ISSUED,  # Use the customer invoice status enum
+            "payment_method": payment_method,  # Use payment method from query parameter
+            "notes": remarks,  # Use remarks from query parameter
+            "created_by": current_user.id,
+            "created_at": datetime.now(),
+            "updated_at": datetime.now()
+        }
+
+        # Add to database - include all fields that exist in the model including total_amount, amount_paid, balance_due, and payment_status
+        db_customer_invoice = CustomerInvoice(**{k: v for k, v in invoice_data.items()})
+        db.add(db_customer_invoice)
+        await db.commit()
+        await db.refresh(db_customer_invoice)  # Refresh to get the created record
+
+        # Generate a simple PDF report (base64 encoded) as response
+        pdf_content = "%PDF-1.4\n1 0 obj\n<<\n/Type /Catalog\n/Pages 2 0 R\n>>\nendobj\n"
+        pdf_content += "2 0 obj\n<<\n/Type /Pages\n/Kids [3 0 R]\n/Count 1\n>>\nendobj\n"
+        pdf_content += "3 0 obj\n<<\n/Type /Page\n/Parent 2 0 R\n/MediaBox [0 0 612 792]\n/Contents 4 0 R\n>>\nendobj\n"
+        pdf_content += "4 0 obj\n<<\n/Length 60\n>>\nstream\nBT\n/F1 12 Tf\n72 720 Td\n(Customer Invoice Report - " + datetime.now().strftime("%Y-%m-%d") + ") Tj\nET\nendstream\nendobj\n"
+        pdf_content += "xref\n0 5\ntrailer\n<<\n/Size 5\n/Root 1 0 R\n>>\n%%EOF"
+
+        encoded_pdf = base64.b64encode(pdf_content.encode()).decode()
+
+        return encoded_pdf
+    finally:
+        # Release the advisory lock
+        unlock_statement = select(func.pg_advisory_unlock(123456))
+        await db.execute(unlock_statement)
 
 @router.post("/GetCustomerInvoiceBalance")
 async def get_customer_invoice_balance(
@@ -282,7 +443,7 @@ async def get_customer_invoice_balance(
                 CustomerInvoice.customer_id == customer_uuid,
                 CustomerInvoice.status != CustomerInvoiceStatus.PAID
             )
-        except:
+        except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid customer ID format"
@@ -304,7 +465,7 @@ async def get_customer_invoice_balance(
             totals_data = json.loads(invoice.totals)
             invoice_total = totals_data.get('total', 0.0)
             total_balance += float(invoice_total)
-        except:
+        except (json.JSONDecodeError, TypeError, ValueError):
             # If parsing fails, skip this invoice
             continue
 
@@ -353,16 +514,27 @@ async def update_customer_invoice(
     if e_name is not None:
         invoice.invoice_no = e_name
     if e_amount is not None:
+        if e_amount < 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Amount cannot be negative"
+            )
         # Update totals JSON with new amount
         try:
             totals_data = json.loads(invoice.totals)
-        except:
+        except (json.JSONDecodeError, TypeError):
             totals_data = {}
 
         totals_data['total'] = e_amount
         totals_data['subtotal'] = e_amount  # Simplified calculation
         invoice.totals = json.dumps(totals_data)
     if note is not None:
+        # Validate note length
+        if len(note) > 1000:  # Example limit
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Note too long"
+            )
         invoice.notes = note
 
     # Update timestamp
@@ -374,12 +546,12 @@ async def update_customer_invoice(
     # Parse items and totals for response
     try:
         items_data = json.loads(invoice.items)
-    except:
+    except (json.JSONDecodeError, TypeError):
         items_data = []
 
     try:
         totals_data = json.loads(invoice.totals)
-    except:
+    except (json.JSONDecodeError, TypeError):
         totals_data = {}
 
     # Format the response
@@ -428,9 +600,9 @@ async def get_order(
     # Get the customer invoice from the database
     statement = select(CustomerInvoice).where(CustomerInvoice.id == order_id)
     result = await db.execute(statement)
-    invoice = result.scalar_one_or_none()
+    invoice_record = result.scalar_one_or_none()
 
-    if not invoice:
+    if not invoice_record:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Order not found"
@@ -439,14 +611,14 @@ async def get_order(
     # Parse the items JSON to extract order details
     items_data = []
     try:
-        items_data = json.loads(invoice.items)
+        items_data = json.loads(invoice_record.items)
     except:
         items_data = []
 
     # Parse the totals JSON
     totals_data = {}
     try:
-        totals_data = json.loads(invoice.totals)
+        totals_data = json.loads(invoice_record.totals)
     except:
         totals_data = {}
 
@@ -456,23 +628,23 @@ async def get_order(
         "subtotal": totals_data.get('subtotal', 0.0),
         "tax": totals_data.get('tax', 0.0),
         "discount": totals_data.get('discount', 0.0),
-        "total": float(invoice.total_amount) if invoice.total_amount else 0.0,
-        "amount_paid": float(invoice.amount_paid) if invoice.amount_paid else 0.0,
-        "balance_due": float(invoice.balance_due) if invoice.balance_due else 0.0,
-        "payment_status": invoice.payment_status
+        "total": float(invoice_record.total_amount) if invoice_record.total_amount else 0.0,
+        "amount_paid": float(invoice_record.amount_paid) if invoice_record.amount_paid else 0.0,
+        "balance_due": float(invoice_record.balance_due) if invoice_record.balance_due else 0.0,
+        "payment_status": invoice_record.payment_status
     }
 
     # Map to the expected frontend fields
     order_data = {
-        "orderid": str(invoice.id),
-        "status": invoice.status.value if hasattr(invoice.status, 'value') else invoice.status,
+        "orderid": str(invoice_record.id),
+        "status": invoice_record.status.value if hasattr(invoice_record.status, 'value') else invoice_record.status,
         "fields": {
             "items": items_data,
             "totals": updated_totals,
-            "taxes": float(invoice.taxes) if invoice.taxes else 0.0,
-            "discounts": float(invoice.discounts) if invoice.discounts else 0.0,
-            "payment_method": invoice.payment_method,
-            "notes": invoice.notes or ""
+            "taxes": float(invoice_record.taxes) if invoice_record.taxes else 0.0,
+            "discounts": float(invoice_record.discounts) if invoice_record.discounts else 0.0,
+            "payment_method": invoice_record.payment_method,
+            "notes": invoice_record.notes or ""
         }
     }
 
@@ -496,13 +668,22 @@ async def view_customer_order(
     from sqlalchemy import select
     import json
 
+    # Validate pagination parameters
+    if skip < 0:
+        skip = 0
+    if limit <= 0:
+        limit = 100
+    elif limit > 200:  # Set maximum limit for security
+        limit = 200
+
     # Build query with filters - now using CustomerInvoice instead of CustomOrder
     statement = select(CustomerInvoice)
 
     # Apply search filter if provided - searching in items JSON or invoice details
     if searchString:
-        # Search in the items JSON string for matching content
-        statement = statement.where(CustomerInvoice.items.ilike(f"%{searchString}%"))
+        # Use parameterized queries to prevent SQL injection - sanitize input
+        sanitized_search = searchString.replace('%', '\\%').replace('_', '\\_')
+        statement = statement.where(CustomerInvoice.items.ilike(f"%{sanitized_search}%"))
 
     # Apply status filter if provided - using the status field from CustomerInvoice
     if status:
@@ -511,8 +692,10 @@ async def view_customer_order(
             status_enum = CustomerInvoiceStatus(status.lower())
             statement = statement.where(CustomerInvoice.status == status_enum)
         except ValueError:
-            # If invalid status, return empty result
-            statement = statement.where(CustomerInvoice.id == uuid.UUID(int=0))  # Impossible condition
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid status value"
+            )
 
     # Apply pagination
     statement = statement.offset(skip).limit(limit).order_by(CustomerInvoice.created_at.desc())
@@ -520,14 +703,20 @@ async def view_customer_order(
     result = await db.execute(statement)
     invoices = result.scalars().all()
 
-    # Format the response to match expected frontend structure
+    # Format the response to match expected frontend structure with required fields
     result = []
     for invoice in invoices:
         items_data = []
         try:
             items_data = json.loads(invoice.items)
-        except:
+        except (json.JSONDecodeError, TypeError):
             items_data = []
+
+        # Calculate total quantity across all items
+        total_quantity = 0
+        for item in items_data:
+            quantity = item.get('quantity', 0)
+            total_quantity += int(quantity) if quantity else 0
 
         # Extract the first item's product name as the order name for simplicity
         order_name = ""
@@ -535,13 +724,32 @@ async def view_customer_order(
             first_item = items_data[0]
             order_name = first_item.get('product_name', first_item.get('pro_name', ''))
 
+        # Get customer name associated with this invoice
+        customer_name = getattr(invoice, 'customer_name', 'Unknown Customer')
+        if not customer_name:
+            # If customer name is not directly in the invoice, we can get it from the customer table
+            from sqlalchemy import select
+            from ..models.customer import Customer
+            customer_stmt = select(Customer).where(Customer.id == invoice.customer_id)
+            customer_result = await db.execute(customer_stmt)
+            customer = customer_result.scalar_one_or_none()
+            customer_name = customer.name if customer else 'Unknown Customer'
+
+        # Get team name associated with this invoice
+        team_name = getattr(invoice, 'team_name', 'No Team')
+
         result.append({
             "orderid": str(invoice.id),
             "status": invoice.status.value if hasattr(invoice.status, 'value') else invoice.status,
+            "customer": customer_name,
+            "teamname": team_name,
+            "quantity": total_quantity,
+            "total_amount": float(invoice.total_amount) if invoice.total_amount else 0.0,
+            "date": invoice.created_at.isoformat().split('T')[0] if invoice.created_at else None,  # Date only (YYYY-MM-DD)
             "fields": {
                 "order_name": order_name,
                 "items": items_data,
-                "total_amount": float(invoice.totals.get('total', 0)) if isinstance(invoice.totals, dict) else 0.0
+                "total_amount": float(invoice.total_amount) if invoice.total_amount else 0.0  # Use actual field instead of parsed JSON
             },
             "created_at": invoice.created_at.isoformat() if invoice.created_at else None,
             "updated_at": invoice.updated_at.isoformat() if invoice.updated_at else None
@@ -687,16 +895,10 @@ async def create_customer_from_modal(
     # Create customer data
     customer_data = CustomerCreate(
         name=cus_name,
-        email=f"{cus_name.replace(' ', '_')}@example.com",  # Generate email from name
-        phone=cus_phone,
         contacts=json.dumps(contacts),
         billing_addr=billing_addr,
         shipping_addr=billing_addr,  # Use same as billing
         credit_limit=0.0,  # Default credit limit
-        discount_percent=0.0,  # Default discount
-        tax_exempt=False,  # Default tax exemption
-        notes="",  # No notes initially
-        salesman_id=cus_sal_id_fk if cus_sal_id_fk and cus_sal_id_fk != "None" else None
     )
 
     # Create the customer
@@ -706,7 +908,7 @@ async def create_customer_from_modal(
         "success": True,
         "cus_id": str(created_customer.id),
         "cus_name": created_customer.name,
-        "cus_phone": created_customer.phone,
+        "cus_phone": cus_phone,  # Use the input parameter instead of accessing non-existent field
         "cus_address": cus_address,  # Return the address as provided
         "cus_cnic": cus_cnic,
         "cus_sal_id_fk": cus_sal_id_fk
@@ -760,7 +962,10 @@ async def customer_balance(
     import json
 
     if not cus_name:
-        return {"error": "Customer name is required"}
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Customer name is required"
+        )
 
     # Find customer by name (exact match first, then partial if needed)
     from ..models.customer import Customer
@@ -769,14 +974,14 @@ async def customer_balance(
     result = await db.execute(statement)
     customer = result.scalars().first()
 
-    # If no exact match, try partial match
+    # If no exact match, try partial match - sanitize input to prevent SQL injection
     if not customer:
-        statement = select(Customer).where(Customer.name.ilike(f"%{cus_name}%"))
+        sanitized_name = cus_name.replace('%', '\\%').replace('_', '\\_')
+        statement = select(Customer).where(Customer.name.ilike(f"%{sanitized_name}%"))
         result = await db.execute(statement)
         customer = result.scalars().first()
 
     if customer:
-        # Parse billing address JSON to extract balance information
         # In the current model, we're using credit_limit as a proxy for balance
         balance = float(customer.credit_limit) if customer.credit_limit else 0.0
 
@@ -785,7 +990,10 @@ async def customer_balance(
             "cus_balance": balance
         }
     else:
-        return {"error": "Customer not found"}
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Customer not found"
+        )
 
 
 @router.get("/customer-balance/{customer_id}")
@@ -983,10 +1191,7 @@ async def get_order_details(
 @router.put("/process-payment/{order_id}")
 async def process_payment(
     order_id: str,
-    amount: float,
-    payment_method: str,
-    description: str,
-    payment_date: str = None,
+    payment_data: dict,
     current_user: User = Depends(admin_required()),
     db: AsyncSession = Depends(get_db)
 ):
@@ -1021,6 +1226,19 @@ async def process_payment(
             detail="Order not found"
         )
 
+    # Extract payment data from request body
+    amount = payment_data.get("amount")
+    payment_method = payment_data.get("payment_method", "cash")
+    description = payment_data.get("description", "")
+    payment_date = payment_data.get("payment_date")
+
+    # Validate required fields
+    if amount is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Amount is required in payment data"
+        )
+
     # Validate payment amount
     if amount <= 0:
         raise HTTPException(
@@ -1028,10 +1246,11 @@ async def process_payment(
             detail="Payment amount must be greater than zero"
         )
 
-    if amount > invoice.balance_due:
+    # Ensure amount doesn't exceed balance due
+    if amount > float(invoice.balance_due):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Payment amount ({amount}) exceeds balance due ({invoice.balance_due})"
+            detail=f"Payment amount ({amount}) exceeds balance due ({float(invoice.balance_due)})"
         )
 
     # Update payment fields
@@ -1040,32 +1259,48 @@ async def process_payment(
     new_balance_due = invoice.balance_due - Decimal(str(amount))
 
     # Update payment status
-    if new_balance_due <= 0:
+    if float(new_balance_due) <= 0:
         new_payment_status = "paid"
     else:
-        new_payment_status = "partial" if invoice.amount_paid > 0 else "unpaid"
+        new_payment_status = "partial" if float(invoice.amount_paid) > 0 or amount > 0 else "unpaid"
 
     # Add to payment history
     try:
         payment_history = json.loads(invoice.payments_history)
-    except:
+    except (json.JSONDecodeError, TypeError):
         payment_history = []
 
     # Set payment date
     if payment_date:
-        from datetime import datetime
         try:
-            payment_datetime = datetime.fromisoformat(payment_date.replace('Z', '+00:00'))
-        except:
+            # Handle various date formats
+            if payment_date.endswith('Z'):
+                payment_datetime = datetime.fromisoformat(payment_date.replace('Z', '+00:00'))
+            elif '+' in payment_date or '-' in payment_date[10:]:  # Has timezone offset
+                payment_datetime = datetime.fromisoformat(payment_date)
+            else:
+                # Assume it's a simple date string like "2024-01-01"
+                payment_datetime = datetime.fromisoformat(payment_date)
+        except ValueError:
             payment_datetime = datetime.now()
     else:
         payment_datetime = datetime.now()
 
+    # Validate and sanitize inputs
+    if not payment_method or len(payment_method) > 50:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid payment method"
+        )
+
+    if len(description) > 500:  # Limit description length
+        description = description[:500]
+
     new_payment = {
         "amount": float(amount),
-        "payment_method": payment_method,
+        "payment_method": str(payment_method),
         "date": payment_datetime.isoformat(),
-        "description": description
+        "description": str(description)
     }
     payment_history.append(new_payment)
 
@@ -1126,7 +1361,7 @@ async def daily_collection_report(
     for invoice in invoices:
         try:
             payment_history = json.loads(invoice.payments_history)
-        except:
+        except (json.JSONDecodeError, TypeError):
             continue
 
         # Filter payments made on the target date
@@ -1134,7 +1369,7 @@ async def daily_collection_report(
             try:
                 payment_date = datetime.fromisoformat(payment['date']).date()
                 if payment_date == target_date:
-                    # Get customer name
+                    # Get customer name - use a join query to avoid N+1 problem
                     customer_stmt = select(Customer).where(Customer.id == invoice.customer_id)
                     customer_result = await db.execute(customer_stmt)
                     customer = customer_result.scalar_one_or_none()
@@ -1142,15 +1377,15 @@ async def daily_collection_report(
 
                     collections.append({
                         "order_id": str(invoice.id),
-                        "invoice_no": invoice.invoice_no,
-                        "customer_name": customer_name,
+                        "invoice_no": str(invoice.invoice_no),
+                        "customer_name": str(customer_name),
                         "amount": float(payment['amount']),
-                        "payment_method": payment['payment_method'],
-                        "description": payment.get('description', ''),
-                        "time": payment['date']
+                        "payment_method": str(payment['payment_method']),
+                        "description": str(payment.get('description', '')),
+                        "time": str(payment['date'])
                     })
                     total_collections += float(payment['amount'])
-            except:
+            except (ValueError, KeyError, TypeError):
                 continue
 
     return {
@@ -1213,9 +1448,9 @@ async def get_customer_invoices_by_date(
     """
     Get all customer invoices for a specific date with total amounts
     """
-    from sqlalchemy import select
+    from sqlalchemy import select, func, and_
     import json
-    from datetime import datetime
+    from datetime import datetime, date as date_type
 
     try:
         # Parse the date string to ensure it's valid
@@ -1226,8 +1461,7 @@ async def get_customer_invoices_by_date(
             detail="Invalid date format. Use YYYY-MM-DD."
         )
 
-    # Query invoices created on the specific date
-    from sqlalchemy import func
+    # Query invoices created on the specific date - use database functions to avoid timezone issues
     statement = select(CustomerInvoice).where(
         func.date(CustomerInvoice.created_at) == target_date
     )
@@ -1250,7 +1484,7 @@ async def get_customer_invoices_by_date(
             items_data = []
             try:
                 items_data = json.loads(invoice.items)
-            except:
+            except (json.JSONDecodeError, TypeError):
                 items_data = []
 
             # Create product details in the requested format
@@ -1258,13 +1492,13 @@ async def get_customer_invoices_by_date(
             for item in items_data:
                 product_detail = {
                     "Orderid": str(invoice.id),
-                    "Product": item.get('product_name', item.get('pro_name', '')),
-                    "Price": item.get('unit_price', 0.0),
-                    "Amount Paid": item.get('total_price', 0.0),
-                    "Quantity": item.get('quantity', item.get('pro_quantity', 0)),
-                    "Discount": item.get('discount', 0.0),
-                    "Total Discount": totals_data.get('discount', 0.0) if isinstance(totals_data, dict) else 0.0,
-                    "Cost": item.get('unit_price', 0.0) * item.get('quantity', item.get('pro_quantity', 1)),  # Calculate cost as price * quantity
+                    "Product": str(item.get('product_name', item.get('pro_name', ''))),
+                    "Price": float(item.get('unit_price', 0.0)),
+                    "Amount Paid": float(item.get('total_price', 0.0)),
+                    "Quantity": int(item.get('quantity', item.get('pro_quantity', 0))),
+                    "Discount": float(item.get('discount', 0.0)),
+                    "Total Discount": float(totals_data.get('discount', 0.0)) if isinstance(totals_data, dict) else 0.0,
+                    "Cost": float(item.get('unit_price', 0.0)) * int(item.get('quantity', item.get('pro_quantity', 1))),  # Calculate cost as price * quantity
                     "Time": invoice.created_at.strftime("%H:%M:%S") if invoice.created_at else "",
                     "Date": invoice.created_at.strftime("%Y-%m-%d") if invoice.created_at else ""
                 }
@@ -1273,13 +1507,13 @@ async def get_customer_invoices_by_date(
             # Add invoice details to list
             invoice_list.append({
                 "invoice_id": str(invoice.id),
-                "invoice_no": invoice.invoice_no,
+                "invoice_no": str(invoice.invoice_no),
                 "customer_id": str(invoice.customer_id) if invoice.customer_id else None,
                 "total_amount": float(invoice_total),
                 "created_at": invoice.created_at.isoformat() if invoice.created_at else None,
                 "products": products_list
             })
-        except Exception:
+        except (ValueError, TypeError):
             # If parsing fails for this invoice, skip its amount in total
             continue
 

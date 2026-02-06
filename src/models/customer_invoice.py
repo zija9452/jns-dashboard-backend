@@ -19,24 +19,26 @@ class CustomerInvoice(SQLModel, table=True):
     __tablename__ = "customer_invoices"
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    invoice_no: str = Field(unique=True)  # Auto-generated invoice number
-    customer_id: uuid.UUID = Field(foreign_key="customers.id")
-    salesman_id: Optional[uuid.UUID] = Field(default=None, foreign_key="salesmen.id")
+    invoice_no: str = Field(unique=True, index=True)  # Auto-generated invoice number with index
+    customer_id: uuid.UUID = Field(foreign_key="customers.id", index=True)
+    customer_name: Optional[str] = Field(default=None, index=True)  # Customer name
+    team_name: Optional[str] = Field(default=None, index=True)  # Team name
+    salesman_id: Optional[uuid.UUID] = Field(default=None, foreign_key="salesmen.id", index=True)
     items: str = Field()  # JSON string for line items (as per your JavaScript schema)
     totals: str = Field()  # JSON string for subtotal, tax, total, etc. (as per your JavaScript schema)
-    total_amount: Decimal = Field(sa_column=Column(Numeric(10, 2)))  # Total order amount
+    total_amount: Decimal = Field(sa_column=Column(Numeric(10, 2), index=True))  # Total order amount with index
     amount_paid: Decimal = Field(default=0.00, sa_column=Column(Numeric(10, 2)))  # Amount received so far
-    balance_due: Decimal = Field(default=0.00, sa_column=Column(Numeric(10, 2)))  # Remaining balance
-    payment_status: str = Field(default="unpaid")  # "unpaid", "partial", "paid"
+    balance_due: Decimal = Field(default=0.00, sa_column=Column(Numeric(10, 2), index=True))  # Remaining balance with index
+    payment_status: str = Field(default="unpaid", index=True)  # "unpaid", "partial", "paid" with index
     payments_history: str = Field(default="[]")  # JSON array of payment records
     taxes: Decimal = Field(sa_column=Column(Numeric(10, 2)))
     discounts: Optional[Decimal] = Field(default=0.00, sa_column=Column(Numeric(10, 2)))
-    status: CustomerInvoiceStatus = Field(default=CustomerInvoiceStatus.ISSUED)  # DRAFT, ISSUED, PAID, CANCELLED
-    payment_method: str = Field(default="cash")  # As per your JavaScript content
+    status: CustomerInvoiceStatus = Field(default=CustomerInvoiceStatus.ISSUED, index=True)  # DRAFT, ISSUED, PAID, CANCELLED with index
+    payment_method: str = Field(default="cash", index=True)  # As per your JavaScript content with index
     notes: Optional[str] = Field(default=None)
-    created_by: uuid.UUID = Field(foreign_key="users.id")
-    created_at: datetime = Field(default_factory=datetime.now)
-    updated_at: datetime = Field(default_factory=datetime.now)
+    created_by: uuid.UUID = Field(foreign_key="users.id", index=True)
+    created_at: datetime = Field(default_factory=datetime.now, index=True)
+    updated_at: datetime = Field(default_factory=datetime.now, index=True)
 
 
 class CustomerInvoiceRead(SQLModel):
