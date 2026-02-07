@@ -85,6 +85,22 @@ async def create_walkin_invoice(
                 detail="Discount cannot be negative"
             )
 
+        # Verify product exists in the database
+        product_result = await db.execute(select(Product).where(Product.name == pro_name))
+        product = product_result.scalar_one_or_none()
+        if not product:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Product '{pro_name}' not found in inventory"
+            )
+
+        # Check if sufficient inventory is available
+        if product.stock_level < quantity:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Insufficient stock for product '{pro_name}'. Available: {product.stock_level}, Requested: {quantity}"
+            )
+
         # Calculate total for this item (before discount)
         item_total_before_discount = quantity * unit_price
         # Calculate discount for this item
@@ -97,6 +113,7 @@ async def create_walkin_invoice(
         # Create item object
         item_obj = {
             "product_name": str(pro_name),
+            "product_id": str(product.id),  # Include product ID for reference
             "quantity": quantity,
             "unit_price": unit_price,
             "total_price": item_total_before_discount,  # Price before discount
@@ -135,16 +152,11 @@ async def create_walkin_invoice(
         total_discount += item_discount
 
         # Update product inventory - decrease stock by the sold quantity
-        product_result = await db.execute(select(Product).where(Product.name == pro_name))
-        product = product_result.scalar_one_or_none()
-
-        if product:
-            # Decrease stock level by the sold amount
-            new_stock_level = product.stock_level - quantity
-            if new_stock_level < 0:
-                new_stock_level = 0  # Don't allow negative stock
-            product.stock_level = new_stock_level
-            await db.commit()
+        new_stock_level = product.stock_level - quantity
+        if new_stock_level < 0:
+            new_stock_level = 0  # Don't allow negative stock
+        product.stock_level = new_stock_level
+        await db.commit()
 
     # For immediate payment invoices, amount paid equals total amount
     amount_paid = total_amount
