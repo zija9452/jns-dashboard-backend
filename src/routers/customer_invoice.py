@@ -187,8 +187,9 @@ async def save_customer_orders(
 
     # Process each order item
     items_list = []
-    total_amount = Decimal('0')
-    total_discount = 0.0
+    total_subtotal = Decimal('0')  # Total before discounts
+    total_discount = 0.0  # Total discount amount
+    total_amount = Decimal('0')  # Total after discounts
 
     # Validate and process each order item
     for item in order_items:
@@ -222,8 +223,10 @@ async def save_customer_orders(
                     detail="Discount cannot be negative"
                 )
 
-            # Calculate total for this item: (quantity * unit_price) - discount
-            item_total = (quantity * unit_price) - discount
+            # Calculate total for this item (before discount)
+            item_subtotal = quantity * unit_price
+            # Calculate final price after discount
+            item_total = item_subtotal
             if item_total < 0:
                 item_total = 0  # Prevent negative totals
 
@@ -232,8 +235,9 @@ async def save_customer_orders(
                 "product_name": str(pro_name),
                 "quantity": quantity,
                 "unit_price": unit_price,
-                "total_price": item_total,
+                "subtotal": item_subtotal,  # Price before discount
                 "discount": discount,
+                "total_price": item_total,  # Price after discount
                 "cat_name": str(item.get('cat_name', '')),
                 "cricktshirt_Neckstyle": str(item.get('cricktshirt_Neckstyle', '')),
                 "cricktshirt_sleeve": str(item.get('cricktshirt_sleeve', '')),
@@ -264,7 +268,7 @@ async def save_customer_orders(
                 "imgfile3": str(item.get('imgfile3', '')),
             }
             items_list.append(item_obj)
-            total_amount += Decimal(str(item_total))
+            total_amount += Decimal(str(item_subtotal))  # Add original price before discount
             total_discount += discount
         except (ValueError, TypeError) as e:
             raise HTTPException(
@@ -300,15 +304,15 @@ async def save_customer_orders(
                     existing_seq = parts[-1]  # Get the last part (sequence number)
                     if existing_seq.isdigit():
                         next_seq = int(existing_seq) + 1
-                        seq_number = f"{next_seq:03d}"  # Format as 3-digit sequence (001, 002, etc.)
+                        seq_number = f"{next_seq:04d}"  # Format as 3-digit sequence (001, 002, etc.)
                     else:
-                        seq_number = "001"  # Default if parsing fails
+                        seq_number = "0001"  # Default if parsing fails
                 else:
-                    seq_number = "001"  # Default if format doesn't match expected pattern
+                    seq_number = "0001"  # Default if format doesn't match expected pattern
             except:
-                seq_number = "001"  # Default if any error
+                seq_number = "0001"  # Default if any error
         else:
-            seq_number = "001"  # Start with 001 if no invoices exist
+            seq_number = "0001"  # Start with 001 if no invoices exist
 
         invoice_no = f"CIN-{seq_number}"
 
@@ -368,6 +372,9 @@ async def save_customer_orders(
                 "description": f"Initial payment at order creation: {initial_paid_amount}"
             })
 
+        # Calculate the actual amount paid after discount is applied
+        calculated_amount_paid = total_amount - Decimal(str(total_discount))
+        
         # Create customer invoice data
         invoice_data = {
             "id": invoice_id,
@@ -378,21 +385,21 @@ async def save_customer_orders(
             "salesman_id": salesman_id_uuid,  # Use salesman ID from query parameter
             "items": json.dumps(items_list),
             "totals": json.dumps({
-                "subtotal": float(total_amount),
+                "subtotal": float(total_amount),  # Original total before discounts
                 "tax": 0.0,
                 "discount": total_discount,
-                "total": float(net_amount),
-                "amount_paid": float(initial_paid_decimal),  # Use initial payment amount
+                "total": float(total_amount),  # Original total before discount
+                "amount_paid": float(calculated_amount_paid),  # Amount actually paid (after discount)
                 "balance_due": float(initial_balance_due),  # Calculate remaining balance
                 "payment_status": payment_status  # Set status based on payment
             }),
-            "total_amount": Decimal(str(net_amount)),
-            "amount_paid": initial_paid_decimal,  # Use initial payment amount
+            "total_amount": Decimal(str(total_amount)),  # Original total before discount
+            "amount_paid": calculated_amount_paid,  # Amount actually paid (after discount)
             "balance_due": initial_balance_due,  # Calculate remaining balance
             "payment_status": payment_status,  # Set status based on payment
             "payments_history": json.dumps(initial_payment_history),  # Include initial payment in history
             "taxes": Decimal('0'),
-            "discounts": Decimal(str(total_discount)),
+            "discounts": Decimal(str(total_discount)),  # Total discount amount
             "status": CustomerInvoiceStatus.ISSUED,  # Use the customer invoice status enum
             "payment_method": payment_method,  # Use payment method from query parameter
             "notes": remarks,  # Use remarks from query parameter

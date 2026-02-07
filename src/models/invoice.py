@@ -17,13 +17,14 @@ class Invoice(SQLModel, table=True):
     __tablename__ = "invoices"
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    invoice_no: str = Field(unique=True, index=True)  # Auto-generated invoice number with index
-    customer_id: Optional[uuid.UUID] = Field(default=None, foreign_key="customers.id", index=True)  # For walk-in customers, this can be null
-    salesman_id: Optional[uuid.UUID] = Field(default=None, foreign_key="salesmen.id", index=True)  # Salesman who processed the sale
+    invoice_no: str = Field(unique=True, index=True)  # Auto-generated invoice number with index (format: WIV-001, WIV-002, etc.)
+    customer_name: str = Field(default="Walk-in Customer", index=True)  # Name of walk-in customer (default: "Walk-in Customer")
+    # NOTE: No customer_id for walk-in invoices since they are from walk-in customers without accounts
+    # NOTE: No salesman_id for walk-in invoices since they are direct sales
     items: str = Field()  # JSON string for line items
     totals: str = Field()  # JSON string for subtotal, tax, total, etc.
     total_amount: Decimal = Field(sa_column=Column(Numeric(10, 2), index=True))  # Total order amount with index
-    amount_paid: Decimal = Field(default=0.00, sa_column=Column(Numeric(10, 2)))  # Amount received (will equal total for immediate payment)
+    amount_paid: Decimal = Field(default=0.00, sa_column=Column(Numeric(10, 2)))  # Amount received (equals total for immediate payment)
     balance_due: Decimal = Field(default=0.00, sa_column=Column(Numeric(10, 2), index=True))  # Balance due (0 for immediate payment with index)
     payment_status: str = Field(default="paid", index=True)  # Immediate payment will be "paid" instantly with index
     payments_history: str = Field(default="[]")  # JSON array of payment records
@@ -40,7 +41,7 @@ class InvoiceRead(SQLModel):
     id: uuid.UUID
     invoice_no: str
     customer_id: Optional[uuid.UUID]
-    salesman_id: Optional[uuid.UUID]
+    # NOTE: No salesman_id for walk-in invoices since they are direct sales
     items: str
     totals: str
     total_amount: Decimal
@@ -58,8 +59,9 @@ class InvoiceRead(SQLModel):
     updated_at: datetime
 
 class InvoiceCreate(SQLModel):
-    customer_id: Optional[uuid.UUID] = None  # Can be None for walk-in customers
-    salesman_id: Optional[uuid.UUID] = None
+    customer_name: str = "Walk-in Customer"  # Name of walk-in customer (default: "Walk-in Customer")
+    # NOTE: No customer_id for walk-in invoices since they are from walk-in customers without accounts
+    # NOTE: No salesman_id for walk-in invoices since they are direct sales
     items: str  # JSON string
     totals: str  # JSON string
     total_amount: Decimal
@@ -74,6 +76,8 @@ class InvoiceCreate(SQLModel):
     notes: Optional[str] = None
 
 class InvoiceUpdate(SQLModel):
+    customer_name: Optional[str] = None  # Name of walk-in customer
+    # NOTE: No customer_id for walk-in invoices since they are from walk-in customers without accounts
     items: Optional[str] = None
     totals: Optional[str] = None
     total_amount: Optional[Decimal] = None

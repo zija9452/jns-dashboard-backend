@@ -1,14 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Dict, Optional
-from uuid import UUID
 import uuid
 import json
 import base64
-from datetime import datetime
+from datetime import datetime, date
 from decimal import Decimal
 from sqlalchemy import select, func
-from sqlalchemy.exc import IntegrityError
+import logging
 
 from ..database.database import get_db
 from ..models.refund import Refund, RefundRead, RefundCreate, RefundUpdate
@@ -21,22 +20,39 @@ from ..auth.rbac import admin_required
 router = APIRouter()
 
 
-@router.post("/refunds")
-async def create_refund(
-    refund_data: RefundCreate,
+@router.post("/refunds/walkin-invoice")
+async def create_walkin_invoice_refund(
+    request_data: dict,
     current_user: User = Depends(admin_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Create a new refund for an existing invoice
+    Create a refund for a walk-in invoice
     When a refund is processed, the refunded products are added back to inventory
     """
-    from sqlalchemy import select
-    from decimal import Decimal
+    # Extract data from request body
+    invoice_id = request_data.get('invoice_id')
+    refunded_items = request_data.get('refunded_items', [])
+    refund_amount = request_data.get('amount', 0.0)
+    refund_reason = request_data.get('reason', '')
+    customer_id = request_data.get('customer_id')  # Optional
+
+    # Validate required fields
+    if not invoice_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invoice ID is required"
+        )
+
+    if not refunded_items:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Refunded items are required"
+        )
 
     # Validate invoice exists
     try:
-        invoice_uuid = UUID(refund_data.invoice_id)
+        invoice_uuid = uuid.UUID(invoice_id)
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -53,9 +69,9 @@ async def create_refund(
 
     # Validate customer exists if provided
     customer_id_uuid = None
-    if refund_data.customer_id:
+    if customer_id:
         try:
-            customer_id_uuid = UUID(refund_data.customer_id)
+            customer_id_uuid = uuid.UUID(customer_id)
             customer_result = await db.execute(select(Customer).where(Customer.id == customer_id_uuid))
             customer = customer_result.scalar_one_or_none()
             if not customer:
@@ -70,10 +86,10 @@ async def create_refund(
             )
 
     # Validate refund amount doesn't exceed amount paid
-    if refund_data.amount > float(invoice.amount_paid):
+    if Decimal(str(refund_amount)) > invoice.amount_paid:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Refund amount ({refund_data.amount}) exceeds amount paid ({float(invoice.amount_paid)})"
+            detail=f"Refund amount ({refund_amount}) exceeds amount paid ({float(invoice.amount_paid)})"
         )
 
     # Parse original invoice items to validate refund items
@@ -84,7 +100,7 @@ async def create_refund(
         original_items = []
 
     # Process each refunded item and update inventory
-    for refund_item in refund_data.refunded_items:
+    for refund_item in refunded_items:
         product_name = refund_item.get('product_name')
         quantity_returned = int(refund_item.get('quantity_returned', 0))
 
@@ -109,20 +125,17 @@ async def create_refund(
         product = product_result.scalar_one_or_none()
 
         if product:
-            # Increase stock quantity by the returned amount
-            new_stock_quantity = product.stock_quantity + quantity_returned
-            product.stock_quantity = new_stock_quantity
-            db.add(product)
+            # Increase stock level by the returned amount
+            product.stock_level += quantity_returned
+            await db.commit()
 
     # Generate unique refund number with database-level locking for concurrency safety
-    from sqlalchemy import func
-
     # Use database advisory lock to prevent race conditions
-    lock_result = await db.execute(select(func.pg_advisory_lock(123458)))
+    lock_result = await db.execute(select(func.pg_advisory_lock(123460)))
 
     try:
         # Find the highest refund number globally and increment the sequence
-        prefix_pattern = "REF-%"
+        prefix_pattern = "WRF-"  # Walk-in Refund prefix
         statement = select(func.max(Refund.refund_no)).where(
             Refund.refund_no.like(prefix_pattern)
         )
@@ -130,7 +143,7 @@ async def create_refund(
         max_refund_no = result.scalar_one_or_none()
 
         if max_refund_no:
-            # Extract the sequence number from existing format like "REF-001"
+            # Extract the sequence number from existing format like "WRF-001"
             try:
                 parts = max_refund_no.split("-")
                 if len(parts) >= 2:
@@ -147,7 +160,7 @@ async def create_refund(
         else:
             seq_number = "001"  # Start with 001 if no refunds exist
 
-        refund_no = f"REF-{seq_number}"
+        refund_no = f"WRF-{seq_number}"
 
         # Double-check for uniqueness in case of race conditions and increment if needed
         counter = 0
@@ -160,7 +173,7 @@ async def create_refund(
                 # Refund number exists, increment and try again
                 next_seq_int = int(seq_number) + 1
                 seq_number = f"{next_seq_int:03d}"
-                refund_no = f"REF-{seq_number}"
+                refund_no = f"WRF-{seq_number}"
                 counter += 1
             else:
                 break  # Found a unique number
@@ -176,9 +189,9 @@ async def create_refund(
             refund_no=refund_no,
             invoice_id=invoice_uuid,
             customer_id=customer_id_uuid,
-            items=json.dumps(refund_data.refunded_items),
-            amount=Decimal(str(refund_data.amount)),
-            reason=refund_data.reason,
+            items=json.dumps(refunded_items),
+            amount=Decimal(str(refund_amount)),
+            reason=refund_reason,
             processed_by=current_user.id
         )
 
@@ -189,8 +202,8 @@ async def create_refund(
 
         # Update the original invoice's payment status and amounts
         # Calculate new amounts after refund
-        remaining_amount_paid = invoice.amount_paid - Decimal(str(refund_data.amount))
-        new_balance_due = invoice.balance_due + Decimal(str(refund_data.amount))  # Add refunded amount back to balance due
+        remaining_amount_paid = invoice.amount_paid - Decimal(str(refund_amount))
+        new_balance_due = invoice.balance_due + Decimal(str(refund_amount))  # Add refunded amount back to balance due
 
         # Update payment status based on remaining amount
         if float(remaining_amount_paid) <= 0 and float(invoice.total_amount) > 0:
@@ -209,35 +222,81 @@ async def create_refund(
         invoice.amount_paid = remaining_amount_paid
         invoice.balance_due = new_balance_due
         invoice.updated_at = datetime.now()
-
         await db.commit()
 
-        # Generate a simple PDF report as response
-        pdf_content = "%PDF-1.4\n1 0 obj\n<<\n/Type /Catalog\n/Pages 2 0 R\n>>\nendobj\n"
-        pdf_content += "2 0 obj\n<<\n/Type /Pages\n/Kids [3 0 R]\n/Count 1\n>>\nendobj\n"
-        pdf_content += "3 0 obj\n<<\n/Type /Page\n/Parent 2 0 R\n/MediaBox [0 0 612 792]\n/Contents 4 0 R\n>>\nendobj\n"
-        pdf_content += "4 0 obj\n<<\n/Length 60\n>>\nstream\nBT\n/F1 12 Tf\n72 720 Td\n(Refund Receipt - " + refund_no + ") Tj\nET\nendstream\nendobj\n"
-        pdf_content += "xref\n0 5\ntrailer\n<<\n/Size 5\n/Root 1 0 R\n>>\n%%EOF"
+        # Generate a PDF receipt as response
+        pdf_content = f"""%PDF-1.4
+1 0 obj
+<<
+/Type /Catalog
+/Pages 2 0 R
+>>
+endobj
+2 0 obj
+<<
+/Type /Pages
+/Kids [3 0 R]
+/Count 1
+>>
+endobj
+3 0 obj
+<<
+/Type /Page
+/Parent 2 0 R
+/MediaBox [0 0 612 792]
+/Contents 4 0 R
+>>
+endobj
+4 0 obj
+<<
+/Length 200
+>>
+stream
+BT
+/F1 16 Tf
+72 750 Td
+(Refund Receipt - {refund_no}) Tj
+T* 15 -15 Td
+(Invoice No: {invoice.invoice_no}) Tj
+T* 15 -15 Td
+(Date: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}) Tj
+T* 15 -15 Td
+(Refund Amount: ${refund_amount:.2f}) Tj
+T* 15 -15 Td
+(Reason: {refund_reason}) Tj
+T* 15 -15 Td
+(Processed by: {current_user.username or current_user.id}) Tj
+ET
+endstream
+endobj
+xref
+0 5
+trailer
+<<
+/Size 5
+/Root 1 0 R
+>>
+%%EOF"""
 
         encoded_pdf = base64.b64encode(pdf_content.encode()).decode()
 
         return encoded_pdf
     finally:
         # Release the advisory lock
-        unlock_result = await db.execute(select(func.pg_advisory_unlock(123458)))
+        unlock_result = await db.execute(select(func.pg_advisory_unlock(123460)))
 
 
-@router.get("/refunds/{refund_id}")
-async def get_refund(
+@router.get("/refunds/walkin-invoice/{refund_id}")
+async def get_walkin_invoice_refund(
     refund_id: str,
     current_user: User = Depends(admin_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get specific refund by ID
+    Get specific walk-in invoice refund by ID
     """
     try:
-        refund_uuid = UUID(refund_id)
+        refund_uuid = uuid.UUID(refund_id)
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -274,91 +333,66 @@ async def get_refund(
     }
 
 
-@router.put("/refunds/{refund_id}")
-async def update_refund(
-    refund_id: str,
-    refund_update: RefundUpdate,
+@router.get("/refunds/walkin-invoice/daily/{date_str}")
+async def get_daily_walkin_invoice_refunds(
+    date_str: str,
     current_user: User = Depends(admin_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Update existing refund
+    Get all walk-in invoice refunds processed on a specific date with totals
     """
     try:
-        refund_uuid = UUID(refund_id)
+        target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid refund ID format"
+            detail="Invalid date format. Use YYYY-MM-DD."
         )
 
-    statement = select(Refund).where(Refund.id == refund_uuid)
+    # Query refunds created on the specific date
+    statement = select(Refund).where(
+        func.date(Refund.created_at) == target_date
+    )
+
     result = await db.execute(statement)
-    refund = result.scalar_one_or_none()
+    refunds = result.scalars().all()
 
-    if not refund:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Refund not found"
-        )
+    # Calculate total refund amounts
+    total_refund_amount = 0.0
+    refund_count = len(refunds)
 
-    # Update fields if provided
-    update_data = refund_update.dict(exclude_unset=True)
-    for field, value in update_data.items():
-        if hasattr(refund, field):
-            setattr(refund, field, value)
+    refund_list = []
+    for refund in refunds:
+        try:
+            items_data = json.loads(refund.items)
+        except:
+            items_data = []
 
-    # Update timestamp
-    refund.updated_at = datetime.now()
+        refund_list.append({
+            "refund_id": str(refund.id),
+            "refund_no": refund.refund_no,
+            "invoice_id": str(refund.invoice_id),
+            "customer_id": str(refund.customer_id) if refund.customer_id else None,
+            "refunded_items": items_data,
+            "refund_amount": float(refund.amount),
+            "refund_reason": refund.reason,
+            "processed_by": str(refund.processed_by),
+            "created_at": refund.created_at.isoformat()
+        })
 
-    await db.commit()
-    await db.refresh(refund)
+        total_refund_amount += float(refund.amount)
 
     return {
-        "success": True,
-        "message": "Refund updated successfully",
-        "refund_id": str(refund.id)
+        "date": date_str,
+        "total_refunds": refund_count,
+        "total_refund_amount": total_refund_amount,
+        "refunds": refund_list
     }
 
 
-@router.delete("/refunds/{refund_id}")
-async def delete_refund(
-    refund_id: str,
-    current_user: User = Depends(admin_required()),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Delete refund by ID
-    """
-    try:
-        refund_uuid = UUID(refund_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid refund ID format"
-        )
-
-    statement = select(Refund).where(Refund.id == refund_uuid)
-    result = await db.execute(statement)
-    refund = result.scalar_one_or_none()
-
-    if not refund:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Refund not found"
-        )
-
-    await db.delete(refund)
-    await db.commit()
-
-    return {
-        "success": True,
-        "message": "Refund deleted successfully"
-    }
-
-
-@router.get("/refunds")
-async def get_refunds(
+@router.get("/refunds/walkin-invoice")
+async def get_walkin_invoice_refunds(
     limit: int = Query(100, ge=1, le=200),
     skip: int = Query(0, ge=0),
     customer_id: str = Query(None),
@@ -368,14 +402,14 @@ async def get_refunds(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get list of refunds with optional filtering
+    Get list of walk-in invoice refunds with optional filtering
     """
     statement = select(Refund)
 
     # Apply filters
     if customer_id:
         try:
-            customer_uuid = UUID(customer_id)
+            customer_uuid = uuid.UUID(customer_id)
             statement = statement.where(Refund.customer_id == customer_uuid)
         except ValueError:
             raise HTTPException(
@@ -385,7 +419,7 @@ async def get_refunds(
 
     if invoice_id:
         try:
-            invoice_uuid = UUID(invoice_id)
+            invoice_uuid = uuid.UUID(invoice_id)
             statement = statement.where(Refund.invoice_id == invoice_uuid)
         except ValueError:
             raise HTTPException(
@@ -432,58 +466,51 @@ async def get_refunds(
     return refund_list
 
 
-@router.get("/refunds/daily-refunds/{date}")
-async def get_daily_refunds(
-    date: str,
+@router.get("/refunds/walkin-invoice/invoice/{invoice_id}")
+async def get_refunds_for_walkin_invoice(
+    invoice_id: str,
     current_user: User = Depends(admin_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get all refunds processed on a specific date with totals
+    Get all refunds for a specific walk-in invoice
     """
     try:
-        target_date = datetime.strptime(date, "%Y-%m-%d").date()
+        invoice_uuid = uuid.UUID(invoice_id)
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid date format. Use YYYY-MM-DD."
+            detail="Invalid invoice ID format"
         )
 
-    # Query refunds created on the specific date
-    statement = select(Refund).where(
-        func.date(Refund.created_at) == target_date
-    )
-
+    statement = select(Refund).where(Refund.invoice_id == invoice_uuid).order_by(Refund.created_at.desc())
     result = await db.execute(statement)
     refunds = result.scalars().all()
 
-    # Calculate total refund amounts
-    total_refund_amount = 0.0
-    refund_count = len(refunds)
-
     refund_list = []
-    for refund in refunds:
+    total_refund_amount = 0.0
+
+    for rf in refunds:
         try:
-            items_data = json.loads(refund.items)
+            items_data = json.loads(rf.items)
         except:
             items_data = []
 
         refund_list.append({
-            "refund_id": str(refund.id),
-            "refund_no": refund.refund_no,
-            "invoice_id": str(refund.invoice_id),
-            "customer_id": str(refund.customer_id) if refund.customer_id else None,
+            "refund_id": str(rf.id),
+            "refund_no": rf.refund_no,
             "refunded_items": items_data,
-            "refund_amount": float(refund.amount),
-            "refund_reason": refund.reason,
-            "created_at": refund.created_at.isoformat()
+            "refund_amount": float(rf.amount),
+            "refund_reason": rf.reason,
+            "processed_by": str(rf.processed_by),
+            "created_at": rf.created_at.isoformat()
         })
 
-        total_refund_amount += float(refund.amount)
+        total_refund_amount += float(rf.amount)
 
     return {
-        "date": date,
-        "total_refunds": refund_count,
+        "invoice_id": invoice_id,
+        "refunds": refund_list,
         "total_refund_amount": total_refund_amount,
-        "refunds": refund_list
+        "refund_count": len(refund_list)
     }

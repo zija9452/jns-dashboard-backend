@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 import os
 from decimal import Decimal
 
-from src.routers import auth, users, products, customers, vendors, salesman, stock, expenses, invoices, customer_invoice, refunds, admin, pos
+from src.routers import auth, users, products, customers, vendors, salesman, stock, expenses, customer_invoice, refunds, admin, pos, walkin_invoice, walkin_refund
 from src.utils.error_handlers import setup_error_handlers
 from src.middleware.security import SecurityHeadersMiddleware
 from src.utils.metrics import MetricsMiddleware, start_metrics_server
@@ -129,11 +129,12 @@ app.include_router(vendors.router, prefix="/vendors", tags=["vendors"])
 app.include_router(salesman.router, prefix="/salesman", tags=["salesman"])
 app.include_router(stock.router, prefix="/stock", tags=["stock"])
 app.include_router(expenses.router, prefix="/expenses", tags=["expenses"])
-app.include_router(invoices.router, prefix="/invoices", tags=["invoices"])
 app.include_router(customer_invoice.router, prefix="/customer-invoice", tags=["customer-invoice"])
 app.include_router(refunds.router, prefix="/refunds", tags=["refunds"])
 app.include_router(pos.router, prefix="/pos", tags=["pos"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
+app.include_router(walkin_invoice.router, prefix="/walkin-invoice", tags=["walkin-invoice"])
+app.include_router(walkin_refund.router, prefix="/walkin-refund", tags=["walkin-refund"])
 
 if __name__ == "__main__":
     import uvicorn
