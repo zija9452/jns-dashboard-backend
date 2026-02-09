@@ -26,7 +26,7 @@ Use the returned `access_token` in the Authorization header:
 
 **Description**: Create a refund for a walk-in invoice. When a refund is processed, the refunded products are added back to inventory.
 
-**Authentication**: Admin role required
+**Authentication**: Admin role required (admin and cashier can access)
 
 **Request Body**:
 ```json
@@ -71,7 +71,7 @@ curl -X POST http://localhost:8000/walkin-refund/refunds/walkin-invoice \
 
 **Description**: Get list of walk-in invoice refunds with optional filtering.
 
-**Authentication**: Admin role required
+**Authentication**: Admin role required (admin and cashier can access)
 
 **Query Parameters** (optional):
 - `limit`: Maximum number of records to return (default 100, max 200)
@@ -197,7 +197,7 @@ curl -X GET http://localhost:8000/walkin-refund/refunds/walkin-invoice/daily/202
 
 **Description**: Get all refunds for a specific walk-in invoice.
 
-**Authentication**: Admin role required
+**Authentication**: Admin role required (admin and cashier can access)
 
 **Path Parameter**:
 - `{invoice_id}`: UUID of the invoice
@@ -233,6 +233,73 @@ curl -X GET http://localhost:8000/walkin-refund/refunds/walkin-invoice/invoice/u
 }
 ```
 
+### 6. Update Walk-in Invoice Refund
+
+**Endpoint**: `PUT /walkin-refund/refunds/walkin-invoice/{refund_id}`
+
+**Description**: Update a specific walk-in invoice refund. Allows updating refund details including date and amount.
+
+**Authentication**: Admin role required (admin and cashier can access)
+
+**Path Parameter**:
+- `{refund_id}`: UUID of the refund to update
+
+**Request Body**:
+```json
+{
+  "items": "string (optional) - JSON string for refunded items",
+  "amount": "decimal (optional) - Updated refund amount",
+  "reason": "string (optional) - Updated reason for refund",
+  "created_at": "datetime (optional) - Updated date of refund"
+}
+```
+
+**Example**:
+```bash
+curl -X PUT http://localhost:8000/walkin-refund/refunds/walkin-invoice/uuid-string \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "reason": "Updated reason: Customer returned damaged product",
+    "created_at": "2026-02-08T11:20:41.289250"
+  }'
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "message": "Refund updated successfully",
+  "refund_id": "string"
+}
+```
+
+### 7. Delete Walk-in Invoice Refund
+
+**Endpoint**: `DELETE /walkin-refund/refunds/walkin-invoice/{refund_id}`
+
+**Description**: Delete a specific walk-in invoice refund. Also restores the inventory quantities that were refunded.
+
+**Authentication**: Admin role required (admin and cashier can access)
+
+**Path Parameter**:
+- `{refund_id}`: UUID of the refund to delete
+
+**Example**:
+```bash
+curl -X DELETE http://localhost:8000/walkin-refund/refunds/walkin-invoice/uuid-string \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "message": "Refund deleted successfully",
+  "refund_id": "string"
+}
+```
+
 ## Error Handling
 
 All endpoints return standardized error responses:
@@ -259,12 +326,13 @@ Common error types:
 
 ## Security Notes
 
-- All endpoints require appropriate role-based access control (admin required)
+- All endpoints require appropriate role-based access control (admin and cashier can access)
 - Refund data is protected by role-based access control
 - Inventory updates are synchronized with refunds (products returned to stock)
 - Refund amounts are validated against original invoice amounts
 - Unique refund numbers are generated with database-level locking
 - Original invoice payment status is updated when refunds are processed
+- Both admin and cashier roles have access to refund operations for walk-in invoices
 
 ## Production Ready Features
 
@@ -273,9 +341,12 @@ Common error types:
 - Proper error handling and logging
 - Database transaction safety
 - JWT token-based authentication
-- Role-based access control
+- Role-based access control (both admin and cashier roles can access refund endpoints)
 - Input sanitization and validation
+- Complete CRUD operations for refunds (Create, Read, Update, Delete)
 - Inventory management with automatic stock restoration on refunds
 - PDF receipt generation for all refunds
 - Concurrency-safe operations with advisory locks
 - Payment status updates synchronized with refunds
+- Date and amount modification capabilities for refunds
+- Full audit trail for all refund operations

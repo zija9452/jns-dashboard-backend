@@ -544,7 +544,7 @@ async def customer_order_report(
     Generate customer order report in PDF format
     Required by JavaScript frontend
     """
-    from ..models.custom_order import CustomOrder
+    from ..models.customer_invoice import CustomerInvoice
     from sqlalchemy import select
     import base64
 

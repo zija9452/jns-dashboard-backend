@@ -447,3 +447,13 @@ Common error types:
 - Inventory management with automatic stock updates
 - PDF receipt generation for all transactions
 - Concurrency-safe operations with advisory locks
+
+## Related Refund Operations
+
+For refund operations related to walk-in invoices, see the Walkin Refund API documentation in `walkin-refund-api.md`.
+
+Refund endpoints allow:
+- Creating refunds for walk-in invoices
+- Updating refund details including date and amount
+- Deleting refunds and restoring inventory
+- Both admin and cashier roles can perform refund operations
