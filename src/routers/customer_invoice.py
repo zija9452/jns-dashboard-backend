@@ -15,7 +15,7 @@ from ..models.customer_invoice import CustomerInvoice, CustomerInvoiceCreate, Cu
 from ..models.invoice import Invoice
 from ..models.product import Product
 from ..auth.auth import get_current_user
-from ..auth.rbac import admin_required, employee_required
+from ..auth.rbac import cashier_required, employee_required
 from ..services.customer_service import CustomerService
 from ..services.salesman_service import SalesmanService
 from ..models.customer import CustomerCreate
@@ -25,14 +25,15 @@ router = APIRouter()
 
 @router.post("/GetCustomerDetails")
 async def get_customer_details(
-    cus_name: str = None,
-    current_user: User = Depends(admin_required()),
+    request_data: dict,
+    current_user: User = Depends(cashier_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Get customer details by name
     Required by JavaScript frontend
     """
+    cus_name = request_data.get('cus_name')
     if not cus_name:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -70,14 +71,15 @@ async def get_customer_details(
 
 @router.post("/Getsalesmandetail")
 async def get_salesman_detail(
-    sal_name: str = None,
-    current_user: User = Depends(admin_required()),
+    request_data: dict,
+    current_user: User = Depends(cashier_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Get salesman details by name
     Required by JavaScript frontend
     """
+    sal_name = request_data.get('sal_name')
     if not sal_name:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -108,7 +110,7 @@ async def get_salesman_detail(
 @router.post("/SaveCustomerOrders")
 async def save_customer_orders(
     request_data: dict = None,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(cashier_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -432,7 +434,7 @@ async def save_customer_orders(
 @router.post("/GetCustomerInvoiceBalance")
 async def get_customer_invoice_balance(
     customer_id: str = None,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(cashier_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -487,7 +489,7 @@ async def update_customer_invoice(
     e_name: str = None,
     e_amount: float = None,
     note: str = None,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(cashier_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -584,7 +586,7 @@ async def update_customer_invoice(
 @router.get("/Getorder/{id}")
 async def get_order(
     id: str,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(cashier_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -664,7 +666,7 @@ async def view_customer_order(
     status: str = None,
     skip: int = 0,
     limit: int = 100,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(cashier_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -770,7 +772,7 @@ async def customer_order_report(
     orderid: str = None,
     timezone: str = None,
     printoption: str = None,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(cashier_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -825,7 +827,7 @@ async def customer_order_report(
 @router.post("/Deletecustomorder/{id}")
 async def delete_custom_order_endpoint(
     id: str,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(cashier_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -869,12 +871,8 @@ async def delete_custom_order_endpoint(
 
 @router.post("/Customers")
 async def create_customer_from_modal(
-    cus_name: str,
-    cus_phone: str,
-    cus_address: str,
-    cus_cnic: str,
-    cus_sal_id_fk: str = None,
-    current_user: User = Depends(admin_required()),
+    request_data: dict,
+    current_user: User = Depends(cashier_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -884,6 +882,35 @@ async def create_customer_from_modal(
     from ..services.customer_service import CustomerService
     from ..models.customer import CustomerCreate
     import json
+
+    # Extract data from request body
+    cus_name = request_data.get('cus_name')
+    cus_phone = request_data.get('cus_phone')
+    cus_address = request_data.get('cus_address')
+    cus_cnic = request_data.get('cus_cnic')
+    cus_sal_id_fk = request_data.get('cus_sal_id_fk')
+
+    # Validate required fields
+    if not cus_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Customer name is required"
+        )
+    if not cus_phone:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Customer phone is required"
+        )
+    if not cus_address:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Customer address is required"
+        )
+    if not cus_cnic:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Customer CNIC is required"
+        )
 
     # Create contact information
     contacts = {
@@ -924,14 +951,15 @@ async def create_customer_from_modal(
 
 @router.post("/GetSalesmanDetails")
 async def get_salesman_details(
-    sal_name: str = None,
-    current_user: User = Depends(admin_required()),
+    request_data: dict,
+    current_user: User = Depends(cashier_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Get salesman details by name
     Required by JavaScript frontend
     """
+    sal_name = request_data.get('sal_name')
     if not sal_name:
         return {"error": "Salesman name is required"}
 
@@ -957,8 +985,8 @@ async def get_salesman_details(
 
 @router.post("/customerbalance")
 async def customer_balance(
-    cus_name: str = None,
-    current_user: User = Depends(admin_required()),
+    request_data: dict,
+    current_user: User = Depends(cashier_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -968,6 +996,7 @@ async def customer_balance(
     from sqlalchemy import select
     import json
 
+    cus_name = request_data.get('cus_name')
     if not cus_name:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1006,7 +1035,7 @@ async def customer_balance(
 @router.get("/customer-balance/{customer_id}")
 async def get_customer_balance(
     customer_id: str,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(cashier_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1077,7 +1106,7 @@ async def get_customer_balance(
 @router.get("/customer-orders/{customer_id}")
 async def get_customer_orders(
     customer_id: str,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(cashier_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1130,7 +1159,7 @@ async def get_customer_orders(
 @router.get("/order-details/{order_id}")
 async def get_order_details(
     order_id: str,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(cashier_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1199,7 +1228,7 @@ async def get_order_details(
 async def process_payment(
     order_id: str,
     payment_data: dict,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(cashier_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1337,7 +1366,7 @@ async def process_payment(
 @router.get("/daily-collection-report/{date}")
 async def daily_collection_report(
     date: str,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(cashier_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1406,7 +1435,7 @@ async def daily_collection_report(
 @router.get("/payment-history/{order_id}")
 async def get_payment_history(
     order_id: str,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(cashier_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1449,7 +1478,7 @@ async def get_payment_history(
 @router.get("/customerinvoicesbydate")
 async def get_customer_invoices_by_date(
     date: str,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(cashier_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """

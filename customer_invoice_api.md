@@ -25,15 +25,23 @@ Use the returned `access_token` in the Authorization header:
 
 **Description**: Get customer details by name for JavaScript frontend compatibility.
 
-**Authentication**: Admin role required
+**Authentication**: Cashier role required (admin and cashier can access)
 
-**Query Parameters**:
-- `cus_name`: Customer name to search for
+**Request Body**:
+```json
+{
+  "cus_name": "string (required)"
+}
+```
 
 **Example**:
 ```bash
-curl -X POST "http://localhost:8000/customer-invoice/GetCustomerDetails?cus_name=John%20Doe" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+curl -X POST "http://localhost:8000/customer-invoice/GetCustomerDetails" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
+  -d '{
+    "cus_name": "John Doe"
+  }'
 ```
 
 **Response**:
@@ -53,15 +61,23 @@ curl -X POST "http://localhost:8000/customer-invoice/GetCustomerDetails?cus_name
 
 **Description**: Get salesman details by name for JavaScript frontend compatibility.
 
-**Authentication**: Admin role required
+**Authentication**: Cashier role required (admin and cashier can access)
 
-**Query Parameters**:
-- `sal_name`: Salesman name to search for
+**Request Body**:
+```json
+{
+  "sal_name": "string (required)"
+}
+```
 
 **Example**:
 ```bash
-curl -X POST "http://localhost:8000/customer-invoice/Getsalesmandetail?sal_name=Jane" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+curl -X POST "http://localhost:8000/customer-invoice/Getsalesmandetail" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
+  -d '{
+    "sal_name": "Jane"
+  }'
 ```
 
 **Response**:
@@ -213,15 +229,23 @@ Updated payment information including new balance and payment history.
 
 **Description**: Get customer balance by name.
 
-**Authentication**: Admin role required
+**Authentication**: Cashier role required (admin and cashier can access)
 
-**Query Parameters**:
-- `cus_name`: Customer name to get balance for
+**Request Body**:
+```json
+{
+  "cus_name": "string (required)"
+}
+```
 
 **Example**:
 ```bash
-curl -X POST "http://localhost:8000/customer-invoice/customerbalance?cus_name=John%20Doe" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+curl -X POST "http://localhost:8000/customer-invoice/customerbalance" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
+  -d '{
+    "cus_name": "John Doe"
+  }'
 ```
 
 **Response**:
@@ -332,19 +356,31 @@ All payments collected on the specified date with totals and details.
 
 **Description**: Create a new customer for JavaScript frontend compatibility.
 
-**Authentication**: Admin role required
+**Authentication**: Cashier role required (admin and cashier can access)
 
-**Query Parameters**:
-- `cus_name`: Customer name (required)
-- `cus_phone`: Customer phone (required)
-- `cus_address`: Customer address (required)
-- `cus_cnic`: Customer CNIC (required)
-- `cus_sal_id_fk`: Salesman ID (optional)
+**Request Body**:
+```json
+{
+  "cus_name": "string (required)",
+  "cus_phone": "string (required)",
+  "cus_address": "string (required)",
+  "cus_cnic": "string (required)",
+  "cus_sal_id_fk": "string (optional)"
+}
+```
 
 **Example**:
 ```bash
-curl -X POST "http://localhost:8000/customer-invoice/Customers?cus_name=Jane%20Smith&cus_phone=0987654321&cus_address=456%20Elm%20St&cus_cnic=0987654321098&cus_sal_id_fk=uuid-string" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+curl -X POST "http://localhost:8000/customer-invoice/Customers" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
+  -d '{
+    "cus_name": "Jane Smith",
+    "cus_phone": "0987654321",
+    "cus_address": "456 Elm St",
+    "cus_cnic": "0987654321098",
+    "cus_sal_id_fk": "uuid-string"
+  }'
 ```
 
 **Response**:
@@ -436,15 +472,23 @@ Deletion confirmation.
 
 **Description**: Alternative endpoint to get salesman details by name.
 
-**Authentication**: Admin role required
+**Authentication**: Cashier role required (admin and cashier can access)
 
-**Query Parameters** (optional):
-- `sal_name`: Salesman name to search for
+**Request Body**:
+```json
+{
+  "sal_name": "string (optional)"
+}
+```
 
 **Example**:
 ```bash
-curl -X POST "http://localhost:8000/customer-invoice/GetSalesmanDetails?sal_name=Jane" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+curl -X POST "http://localhost:8000/customer-invoice/GetSalesmanDetails" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
+  -d '{
+    "sal_name": "Jane"
+  }'
 ```
 
 **Response**:

@@ -129,103 +129,46 @@ async def create_walkin_invoice_refund(
             product.stock_level += quantity_returned
             await db.commit()
 
-    # Generate unique refund number with database-level locking for concurrency safety
-    # Use database advisory lock to prevent race conditions
-    lock_result = await db.execute(select(func.pg_advisory_lock(123460)))
+    # Create refund object
+    refund_obj = Refund(
+        invoice_id=invoice_uuid,
+        items=json.dumps(refunded_items),
+        amount=Decimal(str(refund_amount)),
+        reason=refund_reason,
+        processed_by=current_user.id
+    )
 
-    try:
-        # Find the highest refund number globally and increment the sequence
-        prefix_pattern = "WRF-"  # Walk-in Refund prefix
-        statement = select(func.max(Refund.refund_no)).where(
-            Refund.refund_no.like(prefix_pattern)
-        )
-        result = await db.execute(statement)
-        max_refund_no = result.scalar_one_or_none()
+    # Add to database
+    db.add(refund_obj)
+    await db.commit()
+    await db.refresh(refund_obj)
 
-        if max_refund_no:
-            # Extract the sequence number from existing format like "WRF-001"
-            try:
-                parts = max_refund_no.split("-")
-                if len(parts) >= 2:
-                    existing_seq = parts[-1]  # Get the last part (sequence number)
-                    if existing_seq.isdigit():
-                        next_seq = int(existing_seq) + 1
-                        seq_number = f"{next_seq:03d}"  # Format as 3-digit sequence (001, 002, etc.)
-                    else:
-                        seq_number = "001"  # Default if parsing fails
-                else:
-                    seq_number = "001"  # Default if format doesn't match expected pattern
-            except:
-                seq_number = "001"  # Default if any error
+    # Update the original invoice's payment status and amounts
+    # Calculate new amounts after refund
+    remaining_amount_paid = invoice.amount_paid - Decimal(str(refund_amount))
+    new_balance_due = invoice.balance_due + Decimal(str(refund_amount))  # Add refunded amount back to balance due
+
+    # Update payment status based on remaining amount
+    if float(remaining_amount_paid) <= 0 and float(invoice.total_amount) > 0:
+        # If all paid amount is refunded but there was still a balance, status goes back to unpaid
+        if float(new_balance_due) > 0:
+            invoice.payment_status = "unpaid"
         else:
-            seq_number = "001"  # Start with 001 if no refunds exist
+            invoice.payment_status = "refunded"
+    elif remaining_amount_paid > 0:
+        # Partial payment remains after refund
+        invoice.payment_status = "partial"
+    else:
+        invoice.payment_status = "paid"  # If there was no payment to refund
 
-        refund_no = f"WRF-{seq_number}"
+    # Update invoice amounts
+    invoice.amount_paid = remaining_amount_paid
+    invoice.balance_due = new_balance_due
+    invoice.updated_at = datetime.now()
+    await db.commit()
 
-        # Double-check for uniqueness in case of race conditions and increment if needed
-        counter = 0
-        while counter < 100:  # Safety check to avoid infinite loop
-            check_statement = select(Refund).where(Refund.refund_no == refund_no)
-            check_result = await db.execute(check_statement)
-            existing_refund = check_result.scalar_one_or_none()
-
-            if existing_refund:
-                # Refund number exists, increment and try again
-                next_seq_int = int(seq_number) + 1
-                seq_number = f"{next_seq_int:03d}"
-                refund_no = f"WRF-{seq_number}"
-                counter += 1
-            else:
-                break  # Found a unique number
-
-        if counter >= 100:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Could not generate unique refund number"
-            )
-
-        # Create refund object
-        refund_obj = Refund(
-            refund_no=refund_no,
-            invoice_id=invoice_uuid,
-            customer_id=customer_id_uuid,
-            items=json.dumps(refunded_items),
-            amount=Decimal(str(refund_amount)),
-            reason=refund_reason,
-            processed_by=current_user.id
-        )
-
-        # Add to database
-        db.add(refund_obj)
-        await db.commit()
-        await db.refresh(refund_obj)
-
-        # Update the original invoice's payment status and amounts
-        # Calculate new amounts after refund
-        remaining_amount_paid = invoice.amount_paid - Decimal(str(refund_amount))
-        new_balance_due = invoice.balance_due + Decimal(str(refund_amount))  # Add refunded amount back to balance due
-
-        # Update payment status based on remaining amount
-        if float(remaining_amount_paid) <= 0 and float(invoice.total_amount) > 0:
-            # If all paid amount is refunded but there was still a balance, status goes back to unpaid
-            if float(new_balance_due) > 0:
-                invoice.payment_status = "unpaid"
-            else:
-                invoice.payment_status = "refunded"
-        elif remaining_amount_paid > 0:
-            # Partial payment remains after refund
-            invoice.payment_status = "partial"
-        else:
-            invoice.payment_status = "paid"  # If there was no payment to refund
-
-        # Update invoice amounts
-        invoice.amount_paid = remaining_amount_paid
-        invoice.balance_due = new_balance_due
-        invoice.updated_at = datetime.now()
-        await db.commit()
-
-        # Generate a PDF receipt as response
-        pdf_content = f"""%PDF-1.4
+    # Generate a PDF receipt as response
+    pdf_content = f"""%PDF-1.4
 1 0 obj
 <<
 /Type /Catalog
@@ -255,7 +198,7 @@ stream
 BT
 /F1 16 Tf
 72 750 Td
-(Refund Receipt - {refund_no}) Tj
+(Refund Receipt - {str(refund_obj.id)}) Tj
 T* 15 -15 Td
 (Invoice No: {invoice.invoice_no}) Tj
 T* 15 -15 Td
@@ -278,12 +221,9 @@ trailer
 >>
 %%EOF"""
 
-        encoded_pdf = base64.b64encode(pdf_content.encode()).decode()
+    encoded_pdf = base64.b64encode(pdf_content.encode()).decode()
 
-        return encoded_pdf
-    finally:
-        # Release the advisory lock
-        unlock_result = await db.execute(select(func.pg_advisory_unlock(123460)))
+    return encoded_pdf
 
 
 @router.get("/refunds/walkin-invoice/{refund_id}")
@@ -321,9 +261,7 @@ async def get_walkin_invoice_refund(
 
     return {
         "refund_id": str(refund.id),
-        "refund_no": refund.refund_no,
         "invoice_id": str(refund.invoice_id),
-        "customer_id": str(refund.customer_id) if refund.customer_id else None,
         "refunded_items": refunded_items,
         "refund_amount": float(refund.amount),
         "refund_reason": refund.reason,
@@ -371,9 +309,7 @@ async def get_daily_walkin_invoice_refunds(
 
         refund_list.append({
             "refund_id": str(refund.id),
-            "refund_no": refund.refund_no,
             "invoice_id": str(refund.invoice_id),
-            "customer_id": str(refund.customer_id) if refund.customer_id else None,
             "refunded_items": items_data,
             "refund_amount": float(refund.amount),
             "refund_reason": refund.reason,
@@ -452,9 +388,7 @@ async def get_walkin_invoice_refunds(
 
         refund_list.append({
             "refund_id": str(rf.id),
-            "refund_no": rf.refund_no,
             "invoice_id": str(rf.invoice_id),
-            "customer_id": str(rf.customer_id) if rf.customer_id else None,
             "refunded_items": items_data,
             "refund_amount": float(rf.amount),
             "refund_reason": rf.reason,
@@ -498,7 +432,7 @@ async def get_refunds_for_walkin_invoice(
 
         refund_list.append({
             "refund_id": str(rf.id),
-            "refund_no": rf.refund_no,
+            "invoice_id": str(rf.invoice_id),
             "refunded_items": items_data,
             "refund_amount": float(rf.amount),
             "refund_reason": rf.reason,
@@ -513,4 +447,126 @@ async def get_refunds_for_walkin_invoice(
         "refunds": refund_list,
         "total_refund_amount": total_refund_amount,
         "refund_count": len(refund_list)
+    }
+
+
+@router.put("/refunds/walkin-invoice/{refund_id}")
+async def update_walkin_invoice_refund(
+    refund_id: str,
+    refund_update: RefundUpdate,
+    current_user: User = Depends(admin_required()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Update a specific walk-in invoice refund
+    Allows updating refund details including date and amount
+    """
+    from uuid import UUID
+    from sqlalchemy import select
+    from ..models.refund import Refund
+    
+    try:
+        refund_uuid = UUID(refund_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid refund ID format"
+        )
+
+    # Get the existing refund
+    statement = select(Refund).where(Refund.id == refund_uuid)
+    result = await db.execute(statement)
+    refund = result.scalar_one_or_none()
+
+    if not refund:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Refund not found"
+        )
+
+    # Update fields if provided
+    update_data = refund_update.dict(exclude_unset=True)
+    for field, value in update_data.items():
+        if hasattr(refund, field):
+            setattr(refund, field, value)
+
+    # Update the timestamp
+    refund.updated_at = datetime.now()
+
+    await db.commit()
+    await db.refresh(refund)
+
+    return {
+        "success": True,
+        "message": "Refund updated successfully",
+        "refund_id": str(refund.id)
+    }
+
+
+@router.delete("/refunds/walkin-invoice/{refund_id}")
+async def delete_walkin_invoice_refund(
+    refund_id: str,
+    current_user: User = Depends(admin_required()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Delete a specific walk-in invoice refund
+    Also restores the inventory quantities that were refunded
+    """
+    from uuid import UUID
+    from sqlalchemy import select
+    from ..models.refund import Refund
+    from ..models.product import Product
+    
+    try:
+        refund_uuid = UUID(refund_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid refund ID format"
+        )
+
+    # Get the existing refund
+    statement = select(Refund).where(Refund.id == refund_uuid)
+    result = await db.execute(statement)
+    refund = result.scalar_one_or_none()
+
+    if not refund:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Refund not found"
+        )
+
+    # Parse refunded items to restore inventory
+    try:
+        refunded_items = json.loads(refund.items)
+        for item in refunded_items:
+            product_name = item.get('product_name')
+            quantity_returned = item.get('quantity_returned', 0)
+            
+            if product_name and quantity_returned:
+                # Find and update the product
+                product_result = await db.execute(
+                    select(Product).where(Product.name == product_name)
+                )
+                product = product_result.scalar_one_or_none()
+
+                if product:
+                    # Reduce stock level by the refunded amount (since refund meant adding back to stock)
+                    # If we're deleting the refund, we need to remove those items from stock again
+                    product.stock_level -= quantity_returned
+                    if product.stock_level < 0:
+                        product.stock_level = 0  # Don't allow negative stock
+    except Exception as e:
+        # If there's an error parsing items or updating inventory, continue with deletion
+        pass
+
+    # Delete the refund
+    await db.delete(refund)
+    await db.commit()
+
+    return {
+        "success": True,
+        "message": "Refund deleted successfully",
+        "refund_id": str(refund.id)
     }

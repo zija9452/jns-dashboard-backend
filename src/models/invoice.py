@@ -40,7 +40,8 @@ class Invoice(SQLModel, table=True):
 class InvoiceRead(SQLModel):
     id: uuid.UUID
     invoice_no: str
-    customer_id: Optional[uuid.UUID]
+    customer_name: str  # Name of walk-in customer
+    # NOTE: No customer_id for walk-in invoices since they are from walk-in customers without accounts
     # NOTE: No salesman_id for walk-in invoices since they are direct sales
     items: str
     totals: str

@@ -17,6 +17,7 @@ class Refund(SQLModel, table=True):
     reason: str  # Text field for reason
     processed_by: uuid.UUID = Field(foreign_key="users.id")
     created_at: datetime = Field(default_factory=lambda: datetime.now())
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(), index=True)  # Last updated with index
 
 class RefundRead(SQLModel):
     id: uuid.UUID
@@ -26,6 +27,7 @@ class RefundRead(SQLModel):
     reason: str
     processed_by: uuid.UUID
     created_at: datetime
+    updated_at: datetime
 
 class RefundCreate(SQLModel):
     invoice_id: uuid.UUID
@@ -38,3 +40,5 @@ class RefundUpdate(SQLModel):
     items: Optional[str] = None
     amount: Optional[Decimal] = None
     reason: Optional[str] = None
+    created_at: Optional[datetime] = None  # Allow updating the date of the refund
+    updated_at: Optional[datetime] = None

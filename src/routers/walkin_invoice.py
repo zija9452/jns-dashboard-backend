@@ -15,14 +15,14 @@ from ..models.product import Product
 from ..models.customer import Customer
 from ..models.salesman import Salesman
 from ..models.user import User
-from ..auth.rbac import admin_required
+from ..auth.rbac import cashier_required
 
 router = APIRouter()
 
 @router.post("/walkin-invoices")
 async def create_walkin_invoice(
     request_data: dict,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(cashier_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -119,33 +119,6 @@ async def create_walkin_invoice(
             "total_price": item_total_before_discount,  # Price before discount
             "discount": item_discount,
             "cat_name": str(item.get('cat_name', '')),
-            "cricktshirt_Neckstyle": str(item.get('cricktshirt_Neckstyle', '')),
-            "cricktshirt_sleeve": str(item.get('cricktshirt_sleeve', '')),
-            "cricktshirt_bottom": str(item.get('cricktshirt_bottom', '')),
-            "cricktshirt_fabric": str(item.get('cricktshirt_fabric', '')),
-            "cricktrouser_style": str(item.get('cricktrouser_style', '')),
-            "cricktrouser_style2": str(item.get('cricktrouser_style2', '')),
-            "cricktrouser_bottom": str(item.get('cricktrouser_bottom', '')),
-            "cricktrouser_pocket": str(item.get('cricktrouser_pocket', '')),
-            "cricktrouser_fabric": str(item.get('cricktrouser_fabric', '')),
-            "foottshirt_neckstyle": str(item.get('foottshirt_neckstyle', '')),
-            "foottshirt_sleeves": str(item.get('foottshirt_sleeves', '')),
-            "football_fabric": str(item.get('football_fabric', '')),
-            "footshorts_style": str(item.get('footshorts_style', '')),
-            "footshorts_pocket": str(item.get('footshorts_pocket', '')),
-            "footballshort_fabric": str(item.get('footballshort_fabric', '')),
-            "trackjack_style": str(item.get('trackjack_style', '')),
-            "trackjack_waist": str(item.get('trackjack_waist', '')),
-            "trackjack_pocket": str(item.get('trackjack_pocket', '')),
-            "trackjack_bottom": str(item.get('trackjack_bottom', '')),
-            "trackjack_fabric": str(item.get('trackjack_fabric', '')),
-            "tracktrous_style": str(item.get('tracktrous_style', '')),
-            "tracktrous_bottom": str(item.get('tracktrous_bottom', '')),
-            "tracktrous_pocket": str(item.get('tracktrous_pocket', '')),
-            "tracktrous_fabric": str(item.get('tracktrous_fabric', '')),
-            "imgfile": str(item.get('imgfile', '')),
-            "imgfile2": str(item.get('imgfile2', '')),
-            "imgfile3": str(item.get('imgfile3', ''))
         }
         items_list.append(item_obj)
         total_amount += Decimal(str(item_total_before_discount))
@@ -323,7 +296,7 @@ trailer
 @router.get("/walkin-invoices/{invoice_id}")
 async def get_walkin_invoice(
     invoice_id: str,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(cashier_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -386,7 +359,7 @@ async def get_walkin_invoice(
 async def update_walkin_invoice(
     invoice_id: str,
     invoice_update: InvoiceUpdate,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(cashier_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -432,7 +405,7 @@ async def update_walkin_invoice(
 @router.delete("/walkin-invoices/{invoice_id}")
 async def delete_walkin_invoice(
     invoice_id: str,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(cashier_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -492,7 +465,7 @@ async def get_walkin_invoices(
     customer_id: str = Query(None),
     status: str = Query(None),
     date: str = Query(None),
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(cashier_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -565,7 +538,7 @@ async def get_walkin_invoices(
 @router.get("/walkin-invoices/{invoice_id}/receipt")
 async def get_walkin_invoice_receipt(
     invoice_id: str,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(cashier_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -662,7 +635,7 @@ trailer
 @router.get("/walkin-invoices/date/{date_str}")
 async def get_walkin_invoices_by_date(
     date_str: str,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(cashier_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -746,7 +719,7 @@ async def get_products_for_sales(
     search_term: str = Query(None),
     barcode: str = Query(None),
     limit: int = Query(50, ge=1, le=100),
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(cashier_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -799,7 +772,7 @@ async def get_products_for_sales(
 @router.get("/invoices-by-order-id/{order_id}")
 async def get_invoice_by_order_id(
     order_id: str,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(cashier_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -861,7 +834,7 @@ async def get_invoice_by_order_id(
 @router.get("/daily-invoice-report/{date_str}")
 async def get_daily_invoice_report(
     date_str: str,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(cashier_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """
