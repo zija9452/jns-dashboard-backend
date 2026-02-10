@@ -1,18 +1,23 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Response
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from datetime import timedelta, datetime
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from sqlmodel import select
 from pydantic import BaseModel
 import uuid
 from jose import jwt
 from passlib.context import CryptContext
+import hashlib
 
 from ..database.database import get_db
 from ..models.user import User
 from ..config.settings import settings
 from ..middleware.security import session_manager
+from ..utils.session import create_session, invalidate_session
+from ..services.biometric_service import BiometricService
+from ..auth.session_auth import get_current_user_from_session
 
 # Configuration from settings
 SECRET_KEY = settings.access_token_secret_key
@@ -62,31 +67,65 @@ class RefreshResponse(BaseModel):
     token_type: str = "bearer"
     expires_in: int
 
-@router.post("/login", response_model=TokenResponse)
-async def login(form_data: OAuth2PasswordRequestForm = Depends(), response: Response = None, db: AsyncSession = Depends(get_db)):
+class BiometricLoginRequest(BaseModel):
+    thumb_data: str
+    company_id: str
+
+@router.post("/traditional-login", response_model=TokenResponse)
+async def traditional_login(
+    response: Response,
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: AsyncSession = Depends(get_db),
+    request: Request = None
+):
     """
-    Authenticate user and return JWT tokens
-    Sets access_token as cookie and returns tokens in response body
+    Traditional login for admin/cashier users
     """
+    from sqlalchemy import select
     from ..auth.auth import authenticate_user
 
+    # Re-fetch user with role joined to avoid lazy loading issues
     user = await authenticate_user(form_data.username, form_data.password, db)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
+            detail="Incorrect username or password"
+        )
+
+    # Re-query user with role joined to avoid lazy loading issues in async context
+    statement = select(User).options(selectinload(User.role)).where(User.id == user.id)
+    result = await db.execute(statement)
+    user_with_role = result.scalar_one_or_none()
+    
+    if not user_with_role:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found"
+        )
+
+    # Check if user has biometric enabled - if so, password login should be disabled
+    if user_with_role.is_biometric_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Biometric authentication required. Password login disabled."
+        )
+
+    # Check if user is employee (should not use password login in biometric-enabled system)
+    if user_with_role.role.name == "employee" and user_with_role.is_biometric_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Employee users must use biometric authentication"
         )
 
     # Create access token
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_data = {"sub": user.username, "user_id": str(user.id)}
+    access_data = {"sub": user_with_role.username, "user_id": str(user_with_role.id)}
     access_token = create_access_token(data=access_data, expires_delta=access_token_expires)
 
     # Create refresh token
     from ..auth.auth import create_refresh_token
     refresh_token_expires = timedelta(days=30)  # 30 days
-    refresh_data = {"user_id": str(user.id)}
+    refresh_data = {"user_id": str(user_with_role.id)}
     refresh_token = create_refresh_token(data=refresh_data, expires_delta=refresh_token_expires)
 
     # Store refresh token (placeholder - would implement actual storage)
@@ -107,6 +146,86 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), response: Resp
         "refresh_token": refresh_token,
         "token_type": "bearer",
         "expires_in": 1800
+    }
+
+
+@router.post("/session-login")
+async def session_login(
+    response: Response,
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: AsyncSession = Depends(get_db),
+    request: Request = None
+):
+    """
+    Session-based login for admin/cashier users (traditional login)
+    """
+    from sqlalchemy import select
+    from ..auth.auth import authenticate_user
+    
+    # Re-fetch user with role loaded to avoid lazy loading issues in async context
+    user = await authenticate_user(form_data.username, form_data.password, db)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password"
+        )
+
+    # Re-query user with role joined to avoid lazy loading issues
+    statement = select(User).options(selectinload(User.role)).where(User.id == user.id)
+    result = await db.execute(statement)
+    user_with_role = result.scalar_one_or_none()
+    
+    if not user_with_role:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found"
+        )
+
+    # Check if user has biometric enabled - if so, password login should be disabled
+    if user_with_role.is_biometric_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Biometric authentication required. Password login disabled."
+        )
+
+    # Check if user is employee (should not use password login in biometric-enabled system)
+    if user_with_role.role.name == "employee" and user_with_role.is_biometric_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Employee users must use biometric authentication"
+        )
+
+    # Create session
+    ip_address = request.client.host if request else None
+    user_agent = request.headers.get("user-agent") if request else None
+
+    session = await create_session(
+        user_id=str(user_with_role.id),
+        db=db,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        company_id=str(user_with_role.company_id) if user_with_role.company_id else None,
+        biometric_verified=False  # Traditional login
+    )
+
+    # Set session cookie
+    response.set_cookie(
+        key="session_token",
+        value=session.session_token,
+        httponly=True,
+        secure=True,  # Set to False in development
+        samesite="lax",
+        max_age=86400  # 24 hours
+    )
+
+    return {
+        "message": "Login successful",
+        "user": {
+            "id": str(user_with_role.id),
+            "username": user_with_role.username,
+            "role": user_with_role.role.name,
+            "company_id": str(user_with_role.company_id) if user_with_role.company_id else None
+        }
     }
 
 @router.post("/refresh", response_model=RefreshResponse)
@@ -169,11 +288,110 @@ async def refresh_token_endpoint(refresh_request: RefreshRequest, response: Resp
         "expires_in": 1800  # 30 minutes in seconds
     }
 
-@router.post("/logout")
-def logout(response: Response):
+
+@router.post("/biometric/thumb-login")
+async def biometric_thumb_login(
+    request: Request,
+    response: Response,
+    thumb_data: str,  # Thumb scan data from device
+    company_id: str,  # Company ID from device or form
+    db: AsyncSession = Depends(get_db)
+):
     """
-    Revoke refresh token and logout user
-    Clears the access token cookie
+    Biometric login for employee users only
+    """
+    # Verify biometric data
+    user = await BiometricService.verify_employee_biometric(
+        thumb_data=thumb_data,
+        company_id=company_id,
+        db=db
+    )
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid thumb scan or company mismatch"
+        )
+
+    if user.role.name != "employee":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Biometric authentication only available for employee users"
+        )
+
+    # Create session with biometric verification flag
+    ip_address = request.client.host
+    user_agent = request.headers.get("user-agent")
+
+    session = await create_session(
+        user_id=str(user.id),
+        db=db,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        company_id=company_id,
+        biometric_verified=True  # Biometric login
+    )
+
+    # Set session cookie
+    response.set_cookie(
+        key="session_token",
+        value=session.session_token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=86400
+    )
+
+    return {
+        "message": "Biometric login successful",
+        "user": {
+            "id": str(user.id),
+            "username": user.username,
+            "role": user.role.name,
+            "company_id": str(user.company_id)
+        }
+    }
+
+@router.post("/logout")
+async def logout(
+    response: Response,
+    current_user: User = Depends(get_current_user_from_session),  # Using session-based auth
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Logout user and invalidate session
+    """
+    session_token = response.request.cookies.get("session_token")
+
+    if session_token:
+        await invalidate_session(session_token, db)
+
+    # Clear session cookie
+    response.set_cookie(
+        key="session_token",
+        value="",
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        expires=0
+    )
+
+    # Also clear the old JWT cookie for backward compatibility
+    response.set_cookie(
+        key="access_token",
+        value="",
+        httponly=True,
+        max_age=0,
+        expires=0
+    )
+
+    return {"message": "Logged out successfully"}
+
+
+@router.post("/jwt-logout")
+def jwt_logout(response: Response):
+    """
+    Legacy JWT logout - clears the access token cookie
     """
     # Clear the access token cookie
     response.set_cookie(

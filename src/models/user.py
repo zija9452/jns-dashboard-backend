@@ -28,6 +28,10 @@ class User(UserBase, table=True):
     address: Optional[str] = Field(default=None, max_length=200)  # Address field
     cnic: Optional[str] = Field(default=None, max_length=20)  # CNIC field
     branch: Optional[str] = Field(default=None, max_length=50)  # Branch field
+    company_id: Optional[uuid.UUID] = Field(default=None, foreign_key="companies.id")  # Company association
+    biometric_hash: Optional[str] = Field(default=None, max_length=255)  # For employee biometric data
+    is_biometric_enabled: bool = Field(default=False)  # Whether biometric auth is enabled
+    biometric_device_id: Optional[str] = Field(default=None, max_length=255)  # For device registration
     meta: Optional[str] = Field(default=None)  # JSON string for additional extensibility
     created_at: datetime = Field(default_factory=lambda: datetime.now())
     updated_at: datetime = Field(default_factory=lambda: datetime.now(), nullable=False)
@@ -45,6 +49,8 @@ class UserRead(SQLModel):
     address: Optional[str] = None
     cnic: Optional[str] = None
     branch: Optional[str] = None
+    company_id: Optional[uuid.UUID] = None
+    is_biometric_enabled: bool = False
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -55,6 +61,8 @@ class UserCreate(UserBase):
     address: Optional[str] = None
     cnic: Optional[str] = None
     branch: Optional[str] = None
+    company_id: Optional[uuid.UUID] = None
+    is_biometric_enabled: bool = False
     meta: Optional[str] = None
 
 class UserUpdate(SQLModel):

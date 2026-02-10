@@ -7,7 +7,7 @@ This document provides comprehensive documentation for all expense-related endpo
 All expense endpoints require authentication with a valid JWT access token. Obtain a token by logging in:
 
 ```bash
-curl -X POST http://localhost:8000/auth/login \
+curl -X POST http://localhost:8000/auth/traditional-login \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "username=admin&password=admin123"
 ```

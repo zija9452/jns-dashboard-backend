@@ -1,10 +1,18 @@
 from datetime import datetime
+from decimal import Decimal
 from typing import Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 import json
 from ..models.audit_log import AuditLog
 from ..models.user import User
+
+
+class DecimalEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return float(obj)
+        return super().default(obj)
 
 class AuditLogger:
     """
@@ -35,7 +43,7 @@ class AuditLogger:
             entity=entity,
             action=action,
             user_id=user_id,
-            changes=json.dumps(changes) if changes else "{}",
+            changes=json.dumps(changes, cls=DecimalEncoder) if changes else "{}",
             timestamp=datetime.utcnow()
         )
 

@@ -8,8 +8,7 @@ from ..database.database import get_db
 from ..models.product import Product, ProductCreate, ProductUpdate, ProductRead
 from ..models.user import User  # Import User at the top to avoid NameError
 from ..services.product_service import ProductService
-from ..auth.auth import get_current_user
-from ..auth.rbac import admin_required, cashier_required, employee_required
+from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session
 
 router = APIRouter()
 
@@ -17,12 +16,12 @@ router = APIRouter()
 async def get_products(
     skip: int = 0,
     limit: int = 100,
-    current_user: User = Depends(cashier_required()),  # Cashiers and above can view products
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # Admins and cashiers can view products
     db: AsyncSession = Depends(get_db)
 ):
     """
     Get list of products with pagination
-    Cashiers, employees, and admins can view products
+    Admins and cashiers can view products
     """
     products = await ProductService.get_products(db, skip=skip, limit=limit)
     return products
@@ -30,7 +29,7 @@ async def get_products(
 @router.post("/", response_model=ProductRead)
 async def create_product(
     product_create: ProductCreate,
-    current_user: User = Depends(employee_required()),  # Admins and employees can create products
+    current_user: User = Depends(employee_required_from_session()),  # Admins and employees can create products
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -47,114 +46,18 @@ async def create_product(
 
     return await ProductService.create_product(db, product_create, str(current_user.id))
 
-@router.get("/{product_id}", response_model=ProductRead)
-async def get_product(
-    product_id: str,
-    current_user: User = Depends(cashier_required()),  # Cashiers and above can view product details
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Get a specific product by ID
-    Cashiers, employees, and admins can view product details
-    """
-    try:
-        product_uuid = UUID(product_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid product ID format"
-        )
-
-    product = await ProductService.get_product(db, product_uuid)
-
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Product not found"
-        )
-
-    return product
-
-@router.put("/{product_id}", response_model=ProductRead)
-async def update_product(
-    product_id: str,
-    product_update: ProductUpdate,
-    current_user: User = Depends(employee_required()),  # Admins and employees can update products
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Update a specific product by ID
-    Requires admin or employee role
-    """
-    try:
-        product_uuid = UUID(product_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid product ID format"
-        )
-
-    product = await ProductService.get_product(db, product_uuid)
-
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Product not found"
-        )
-
-    return await ProductService.update_product(db, product_uuid, product_update, str(current_user.id))
-
-@router.delete("/{product_id}")
-async def delete_product(
-    product_id: str,
-    current_user: User = Depends(admin_required()),  # Only admins can delete products (more sensitive operation)
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Delete a specific product by ID
-    Requires admin role (sensitive operation)
-    """
-    try:
-        product_uuid = UUID(product_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid product ID format"
-        )
-
-    success = await ProductService.delete_product(db, product_uuid, str(current_user.id))
-    if not success:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Product not found"
-        )
-
-    return {"message": "Product deleted successfully"}
-
-# Import statement needed for User type hint
-from ..models.user import User
-
-# Endpoints required by the JavaScript frontend
-
+# Specific routes that should come before the generic /{product_id} route to avoid conflicts
 @router.get("/get-products/{id}")
 async def get_product_details(
-    id: str,
-    current_user: User = Depends(employee_required()),
+    id: UUID,
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Retrieve specific product details by ID
     Required by JavaScript frontend
     """
-    try:
-        product_id = UUID(id)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid product ID format"
-        )
-
-    product = await ProductService.get_product(db, product_id)
+    product = await ProductService.get_product(db, id)
     if not product:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -184,7 +87,7 @@ async def view_products(
     branches: str = None,
     skip: int = 0,
     limit: int = 100,
-    current_user: User = Depends(employee_required()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -231,24 +134,27 @@ async def view_products(
     return result
 
 @router.get("/get-max-pro-id")
-def get_max_pro_id(
-    current_user: User = Depends(employee_required()),
+async def get_max_pro_id(
+    current_user: User = Depends(employee_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Get the maximum product ID for barcode calculation
     Required by JavaScript frontend
     """
-    from sqlmodel import func
+    from sqlmodel import select
+    from sqlalchemy import desc
 
-    # Query to get the maximum ID in the products table
-    max_id_result = db.exec(func.max(Product.id)).first()
+    # Query to get the maximum ID in the products table ordered by creation date
+    # Since UUIDs don't support MAX function, we order by created_at and get the latest
+    result = await db.execute(select(Product).order_by(desc(Product.created_at)).limit(1))
+    max_product = result.scalar_one_or_none()
 
-    if max_id_result:
-        # Convert UUID to a numeric representation for the frontend
-        # Using the integer representation of the UUID
+    if max_product:
+        # Generate a simple numeric ID based on the number of products
+        # Or use a hash of the UUID converted to a number
         import uuid
-        max_uuid = max_id_result
+        max_uuid = max_product.id
         # Take the last 8 characters of the UUID as a simple numeric-like ID
         max_id_str = str(max_uuid)[-8:]
         # Convert to integer if possible, or use a default value
@@ -264,7 +170,7 @@ def get_max_pro_id(
 @router.post("/delete-product/{id}")
 async def delete_product_frontend(
     id: str,
-    current_user: User = Depends(admin_required()),  # Keep as admin only for security
+    current_user: User = Depends(admin_required_from_session()),  # Keep as admin only for security
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -279,7 +185,7 @@ async def delete_product_frontend(
             detail="Invalid product ID format"
         )
 
-    success = await ProductService.delete_product(db, product_id)
+    success = await ProductService.delete_product(db, product_id, str(current_user.id))
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -294,7 +200,7 @@ async def delete_product_frontend(
 @router.post("/delete-product-image/{id}")
 async def delete_product_image(
     id: str,
-    current_user: User = Depends(employee_required()),  # Allow employees to manage product images
+    current_user: User = Depends(employee_required_from_session()),  # Allow employees to manage product images
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -328,10 +234,97 @@ async def delete_product_image(
         "message": "Product image deleted successfully"
     }
 
+# Generic routes should come after specific routes to avoid conflicts
+@router.get("/{product_id}", response_model=ProductRead)
+async def get_product(
+    product_id: str,
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # Admins and cashiers can view product details
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get a specific product by ID
+    Admins and cashiers can view product details
+    """
+    try:
+        product_uuid = UUID(product_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid product ID format"
+        )
+
+    product = await ProductService.get_product(db, product_uuid)
+
+    if not product:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Product not found"
+        )
+
+    return product
+
+@router.put("/{product_id}", response_model=ProductRead)
+async def update_product(
+    product_id: str,
+    product_update: ProductUpdate,
+    current_user: User = Depends(employee_required_from_session()),  # Admins and employees can update products
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Update a specific product by ID
+    Requires admin or employee role
+    """
+    try:
+        product_uuid = UUID(product_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid product ID format"
+        )
+
+    product = await ProductService.get_product(db, product_uuid)
+
+    if not product:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Product not found"
+        )
+
+    return await ProductService.update_product(db, product_uuid, product_update, str(current_user.id))
+
+@router.delete("/{product_id}")
+async def delete_product(
+    product_id: str,
+    current_user: User = Depends(admin_required_from_session()),  # Only admins can delete products (more sensitive operation)
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Delete a specific product by ID
+    Requires admin role (sensitive operation)
+    """
+    try:
+        product_uuid = UUID(product_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid product ID format"
+        )
+
+    success = await ProductService.delete_product(db, product_uuid, str(current_user.id))
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Product not found"
+        )
+
+    return {"message": "Product deleted successfully"}
+
+# User import is already at the top of the file, removing duplicate
+
 @router.post("/brand")
-def create_brand(
+async def create_brand(
     brand: str = None,
-    current_user: User = Depends(employee_required()),  # Allow employees to create brands
+    current_user: User = Depends(employee_required_from_session()),  # Allow employees to create brands
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -353,9 +346,9 @@ def create_brand(
     }
 
 @router.post("/delete-brand")
-def delete_brand(
+async def delete_brand(
     brand: str = None,
-    current_user: User = Depends(employee_required()),  # Allow employees to delete brands
+    current_user: User = Depends(employee_required_from_session()),  # Allow employees to delete brands
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -378,7 +371,7 @@ def delete_brand(
 @router.post("/get-stock-detail")
 async def get_stock_detail(
     pro_name: str = None,
-    current_user: User = Depends(employee_required()),  # Allow employees to check stock details
+    current_user: User = Depends(employee_required_from_session()),  # Allow employees to check stock details
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -388,23 +381,25 @@ async def get_stock_detail(
     if not pro_name:
         return {"error": "Product not found"}
 
-    # Find product by name
-    from sqlalchemy import select
-    statement = select(Product).where(Product.name.ilike(f"%{pro_name}%"))
+    # Find product by name using case-insensitive search with ilike (PostgreSQL)
+    from sqlmodel import select
+    statement = select(Product).where(Product.name.ilike(f'%{pro_name}%'))
     result = await db.execute(statement)
-    product = result.scalar_one_or_none()
-
-    if product:
+    products = result.scalars().all()
+    
+    # Return the first matching product's stock level
+    if products:
+        product = products[0]  # Get the first match
         return {
             "quantity": product.stock_level
         }
     else:
         return {"error": "Product not found"}
 
-@router.get("/get-customer-vendor-by-branch")
-def get_customer_vendor_by_branch(
+@router.get("/get-categories-by-branch")
+async def get_categories_by_branch(
     branch: str = None,
-    current_user: User = Depends(employee_required()),  # Allow employees to get category info
+    current_user: User = Depends(employee_required_from_session()),  # Allow employees to get category info
     db: AsyncSession = Depends(get_db)
 ):
     """

@@ -1,22 +1,18 @@
-# Product API Documentation
+# Product API Documentation - Session-Based Authentication
 
-This document provides comprehensive documentation for all product-related endpoints in the Regal POS Backend, including curl commands for testing and integration.
+This document provides comprehensive documentation for all product-related endpoints in the Regal POS Backend with session-based authentication, including curl commands for testing and integration.
 
 ## Authentication
 
-All product endpoints require authentication with a valid JWT access token. Obtain a token by logging in:
+All product endpoints require session-based authentication. Obtain a session by logging in:
 
 ```bash
-curl -X POST http://localhost:8000/auth/login \
+curl -X POST http://localhost:8000/auth/session-login \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "username=admin&password=admin123"
 ```
 
-Use the returned `access_token` in the Authorization header:
-
-```bash
--H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
-```
+The login response will include a session cookie that will be automatically sent with subsequent requests when using the `-b` flag with curl or proper cookie handling in applications.
 
 ## Product Management Endpoints
 
@@ -24,9 +20,9 @@ Use the returned `access_token` in the Authorization header:
 
 **Endpoint**: `GET /products/`
 
-**Description**: Get list of products with pagination. Cashiers, employees, and admins can view products.
+**Description**: Get list of products with pagination. Admins and cashiers can view products.
 
-**Authentication**: Cashier role or higher required
+**Authentication**: Admin or cashier role required
 
 **Query Parameters** (optional):
 - `skip`: Number of records to skip (for pagination) - default 0
@@ -35,7 +31,7 @@ Use the returned `access_token` in the Authorization header:
 **Example**:
 ```bash
 curl -X GET "http://localhost:8000/products/?skip=0&limit=10" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -70,7 +66,7 @@ curl -X GET "http://localhost:8000/products/?skip=0&limit=10" \
 
 **Description**: Get a specific product by ID.
 
-**Authentication**: Cashier role or higher required
+**Authentication**: Admin or cashier role required
 
 **Parameters**:
 - `{id}`: UUID of the product
@@ -78,7 +74,7 @@ curl -X GET "http://localhost:8000/products/?skip=0&limit=10" \
 **Example**:
 ```bash
 curl -X GET http://localhost:8000/products/uuid-string \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -109,9 +105,9 @@ curl -X GET http://localhost:8000/products/uuid-string \
 
 **Endpoint**: `POST /products/`
 
-**Description**: Create a new product. Requires admin or employee role.
+**Description**: Create a new product. Requires employee role.
 
-**Authentication**: Employee role or higher required
+**Authentication**: Employee role required
 
 **Request Body**:
 ```json
@@ -138,7 +134,7 @@ curl -X GET http://localhost:8000/products/uuid-string \
 ```bash
 curl -X POST http://localhost:8000/products/ \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
+  -b cookies.txt \
   -d '{
     "sku": "NEW-PRODUCT-SKU",
     "name": "New Product Name",
@@ -179,9 +175,9 @@ curl -X POST http://localhost:8000/products/ \
 
 **Endpoint**: `PUT /products/{id}`
 
-**Description**: Update a specific product by ID. Requires admin or employee role.
+**Description**: Update a specific product by ID. Requires employee role.
 
-**Authentication**: Employee role or higher required
+**Authentication**: Employee role required
 
 **Parameters**:
 - `{id}`: UUID of the product to update
@@ -210,7 +206,7 @@ curl -X POST http://localhost:8000/products/ \
 ```bash
 curl -X PUT http://localhost:8000/products/uuid-string \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
+  -b cookies.txt \
   -d '{
     "name": "Updated Product Name",
     "unit_price": 109.99,
@@ -256,7 +252,7 @@ curl -X PUT http://localhost:8000/products/uuid-string \
 **Example**:
 ```bash
 curl -X DELETE http://localhost:8000/products/uuid-string \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -270,19 +266,19 @@ curl -X DELETE http://localhost:8000/products/uuid-string \
 
 ### 6. Get Product Details (Frontend Compatible)
 
-**Endpoint**: `GET /admin/GetProducts/{id}`
+**Endpoint**: `GET /products/get-products/{id}`
 
 **Description**: Retrieve specific product details by ID in frontend-compatible format.
 
-**Authentication**: Employee role or higher required
+**Authentication**: Admin, cashier, or employee role required
 
 **Parameters**:
 - `{id}`: UUID of the product
 
 **Example**:
 ```bash
-curl -X GET http://localhost:8000/admin/GetProducts/uuid-string \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+curl -X GET http://localhost:8000/products/get-products/uuid-string \
+  -b cookies.txt
 ```
 
 **Response**:
@@ -304,11 +300,11 @@ curl -X GET http://localhost:8000/admin/GetProducts/uuid-string \
 
 ### 7. View Products (Frontend Compatible)
 
-**Endpoint**: `GET /admin/Viewproduct`
+**Endpoint**: `GET /products/view-product`
 
 **Description**: View products with search and branch filtering in frontend-compatible format.
 
-**Authentication**: Employee role or higher required
+**Authentication**: Admin, cashier, or employee role required
 
 **Query Parameters** (optional):
 - `search_string`: Search term to filter products
@@ -318,8 +314,8 @@ curl -X GET http://localhost:8000/admin/GetProducts/uuid-string \
 
 **Example**:
 ```bash
-curl -X GET "http://localhost:8000/admin/Viewproduct?search_string=product&branches=Main%20Branch&limit=10" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+curl -X GET "http://localhost:8000/products/view-product?search_string=product&branches=Main%20Branch&limit=10" \
+  -b cookies.txt
 ```
 
 **Response**:
@@ -343,16 +339,16 @@ curl -X GET "http://localhost:8000/admin/Viewproduct?search_string=product&branc
 
 ### 8. Get Maximum Product ID
 
-**Endpoint**: `GET /admin/GetMaxProId`
+**Endpoint**: `GET /products/get-max-pro-id`
 
 **Description**: Get the maximum product ID for barcode calculation.
 
-**Authentication**: Employee role or higher required
+**Authentication**: Employee role required
 
 **Example**:
 ```bash
-curl -X GET http://localhost:8000/admin/GetMaxProId \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+curl -X GET http://localhost:8000/products/get-max-pro-id \
+  -b cookies.txt
 ```
 
 **Response**:
@@ -362,7 +358,7 @@ curl -X GET http://localhost:8000/admin/GetMaxProId \
 
 ### 9. Delete Product (Frontend Compatible)
 
-**Endpoint**: `POST /admin/Deleteproduct/{id}`
+**Endpoint**: `POST /products/delete-product/{id}`
 
 **Description**: Delete a product by ID (frontend-compatible endpoint).
 
@@ -373,8 +369,8 @@ curl -X GET http://localhost:8000/admin/GetMaxProId \
 
 **Example**:
 ```bash
-curl -X POST http://localhost:8000/admin/Deleteproduct/uuid-string \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+curl -X POST http://localhost:8000/products/delete-product/uuid-string \
+  -b cookies.txt
 ```
 
 **Response**:
@@ -387,19 +383,19 @@ curl -X POST http://localhost:8000/admin/Deleteproduct/uuid-string \
 
 ### 10. Delete Product Image
 
-**Endpoint**: `POST /admin/DeleteProductImage/{id}`
+**Endpoint**: `POST /products/delete-product-image/{id}`
 
 **Description**: Delete product image by product ID.
 
-**Authentication**: Employee role or higher required
+**Authentication**: Employee role required
 
 **Parameters**:
 - `{id}`: UUID of the product whose image to delete
 
 **Example**:
 ```bash
-curl -X POST http://localhost:8000/admin/DeleteProductImage/uuid-string \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+curl -X POST http://localhost:8000/products/delete-product-image/uuid-string \
+  -b cookies.txt
 ```
 
 **Response**:
@@ -412,19 +408,19 @@ curl -X POST http://localhost:8000/admin/DeleteProductImage/uuid-string \
 
 ### 11. Create Brand
 
-**Endpoint**: `POST /admin/brand`
+**Endpoint**: `POST /products/brand`
 
 **Description**: Add a new brand.
 
-**Authentication**: Employee role or higher required
+**Authentication**: Employee role required
 
 **Query Parameters**:
 - `brand`: Brand name to add
 
 **Example**:
 ```bash
-curl -X POST "http://localhost:8000/admin/brand?brand=NewBrand" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+curl -X POST "http://localhost:8000/products/brand?brand=NewBrand" \
+  -b cookies.txt
 ```
 
 **Response**:
@@ -438,19 +434,19 @@ curl -X POST "http://localhost:8000/admin/brand?brand=NewBrand" \
 
 ### 12. Delete Brand
 
-**Endpoint**: `POST /admin/Deletebrand`
+**Endpoint**: `POST /products/delete-brand`
 
 **Description**: Delete a brand.
 
-**Authentication**: Employee role or higher required
+**Authentication**: Employee role required
 
 **Query Parameters**:
 - `brand`: Brand name to delete
 
 **Example**:
 ```bash
-curl -X POST "http://localhost:8000/admin/Deletebrand?brand=OldBrand" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+curl -X POST "http://localhost:8000/products/delete-brand?brand=OldBrand" \
+  -b cookies.txt
 ```
 
 **Response**:
@@ -463,19 +459,19 @@ curl -X POST "http://localhost:8000/admin/Deletebrand?brand=OldBrand" \
 
 ### 13. Get Stock Detail
 
-**Endpoint**: `POST /admin/GetStockDetail`
+**Endpoint**: `POST /products/get-stock-detail`
 
 **Description**: Get stock details for a specific product.
 
-**Authentication**: Employee role or higher required
+**Authentication**: Employee role required
 
 **Query Parameters**:
 - `pro_name`: Product name to search for
 
 **Example**:
 ```bash
-curl -X POST "http://localhost:8000/admin/GetStockDetail?pro_name=ProductName" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+curl -X POST "http://localhost:8000/products/get-stock-detail?pro_name=ProductName" \
+  -b cookies.txt
 ```
 
 **Response**:
@@ -489,23 +485,23 @@ curl -X POST "http://localhost:8000/admin/GetStockDetail?pro_name=ProductName" \
 
 ### Create Operations
 - `POST /products/` - Create a new product
-- `POST /admin/brand` - Create a new brand
+- `POST /products/brand` - Create a new brand
 
 ### Read Operations
 - `GET /products/` - Get all products
 - `GET /products/{id}` - Get specific product
-- `GET /admin/GetProducts/{id}` - Get product in frontend format
-- `GET /admin/Viewproduct` - Get products in frontend format
-- `GET /admin/GetMaxProId` - Get maximum product ID
+- `GET /products/get-products/{id}` - Get product in frontend format
+- `GET /products/view-product` - Get products in frontend format
+- `GET /products/get-max-pro-id` - Get maximum product ID
 
 ### Update Operations
 - `PUT /products/{id}` - Update a product
 
 ### Delete Operations
 - `DELETE /products/{id}` - Delete a product (admin only)
-- `POST /admin/Deleteproduct/{id}` - Delete a product (frontend compatible, admin only)
-- `POST /admin/DeleteProductImage/{id}` - Delete product image
-- `POST /admin/Deletebrand` - Delete a brand
+- `POST /products/delete-product/{id}` - Delete a product (frontend compatible, admin only)
+- `POST /products/delete-product-image/{id}` - Delete product image
+- `POST /products/delete-brand` - Delete a brand
 
 ## Database Schema
 
@@ -555,11 +551,19 @@ All endpoints return standardized error responses:
 
 ## Security Notes
 
-- All endpoints require role-based authentication
+- All endpoints require role-based authentication using session cookies
 - Product data is protected by role-based access control
 - Audit logs are maintained for all product-related actions
 - Only admins can delete products for security reasons
 - Image management is available to employees and above
+
+## Session-Based Authentication Benefits
+
+- Server-side session control for better security
+- Instant logout capability across all devices
+- Full control over active sessions
+- Better compliance with audit trails and regulations
+- Protection against JWT token theft from client-side storage
 
 ## Production Ready Features
 
@@ -567,7 +571,7 @@ All endpoints return standardized error responses:
 - Pydantic v2 validation
 - Proper error handling and logging
 - Database transaction safety
-- JWT token-based authentication
+- Session-based authentication with cookie management
 - Role-based access control
 - Input sanitization and validation
 - Flexible attributes field for extensibility

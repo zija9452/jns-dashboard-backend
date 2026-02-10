@@ -100,9 +100,15 @@ class ProductService:
         for field, value in update_data.items():
             if value is not None:  # Only update non-None values
                 # Handle Decimal fields specifically to ensure proper type
-                if isinstance(value, (int, float)) and field in ['unit_price', 'cost_price', 'tax_rate', 'discount']:
-                    from decimal import Decimal
-                    setattr(db_product, field, Decimal(str(value)))
+                if field in ['unit_price', 'cost_price', 'tax_rate', 'discount']:
+                    if isinstance(value, (int, float)):
+                        from decimal import Decimal
+                        setattr(db_product, field, Decimal(str(value)))
+                    elif isinstance(value, str):
+                        from decimal import Decimal
+                        setattr(db_product, field, Decimal(value))
+                    else:
+                        setattr(db_product, field, value)
                 else:
                     setattr(db_product, field, value)
 
