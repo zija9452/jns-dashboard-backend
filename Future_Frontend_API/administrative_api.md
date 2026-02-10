@@ -1,22 +1,18 @@
 # Administrative API Documentation
 
-This document provides comprehensive documentation for all administrative endpoints in the Regal POS Backend, including curl commands for testing and integration.
+This document provides comprehensive documentation for all administrative endpoints in the Regal POS Backend with session-based authentication, including curl commands for testing and integration.
 
 ## Authentication
 
-All admin endpoints require authentication with a valid JWT access token. Obtain a token by logging in:
+All admin endpoints require session-based authentication. Obtain a session by logging in:
 
 ```bash
-curl -X POST http://localhost:8000/auth/traditional-login \
+curl -X POST http://localhost:8000/auth/session-login \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "username=admin&password=admin123"
 ```
 
-Use the returned `access_token` in the Authorization header:
-
-```bash
--H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
-```
+The login response will include a session cookie that will be automatically sent with subsequent requests when using the `-b` flag with curl or proper cookie handling in applications.
 
 ## Admin User Management Endpoints
 
@@ -34,7 +30,7 @@ Use the returned `access_token` in the Authorization header:
 **Example**:
 ```bash
 curl -X GET http://localhost:8000/admin/getadmin/8fc7528b-c3a2-4b36-a39a-68c13699de80 \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -71,7 +67,7 @@ curl -X GET http://localhost:8000/admin/getadmin/8fc7528b-c3a2-4b36-a39a-68c1369
 **Example**:
 ```bash
 curl -X POST "http://localhost:8000/admin/createadmin?ad_name=New%20Admin&ad_role=admin&ad_phone=1234567890&ad_address=New%20Address&ad_cnic=123456789&ad_branch=Main%20Branch" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -111,7 +107,7 @@ curl -X POST "http://localhost:8000/admin/createadmin?ad_name=New%20Admin&ad_rol
 **Example**:
 ```bash
 curl -X PUT "http://localhost:8000/admin/updateadmin/uuid-string?ad_name=Updated%20Name&ad_phone=0987654321" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -144,7 +140,7 @@ curl -X PUT "http://localhost:8000/admin/updateadmin/uuid-string?ad_name=Updated
 **Example**:
 ```bash
 curl -X POST http://localhost:8000/admin/deleteadmin/uuid-string \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -171,7 +167,7 @@ curl -X POST http://localhost:8000/admin/deleteadmin/uuid-string \
 **Example**:
 ```bash
 curl -X GET "http://localhost:8000/admin/viewadmins?search_string=admin&limit=10" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -207,7 +203,7 @@ curl -X GET "http://localhost:8000/admin/viewadmins?search_string=admin&limit=10
 **Example**:
 ```bash
 curl -X GET "http://localhost:8000/admin/viewsalesman?search_string=john&limit=10" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -239,7 +235,7 @@ curl -X GET "http://localhost:8000/admin/viewsalesman?search_string=john&limit=1
 **Example**:
 ```bash
 curl -X GET http://localhost:8000/admin/GetProducts/8fc7528b-c3a2-4b36-a39a-68c13699de80 \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -276,7 +272,7 @@ curl -X GET http://localhost:8000/admin/GetProducts/8fc7528b-c3a2-4b36-a39a-68c1
 **Example**:
 ```bash
 curl -X GET "http://localhost:8000/admin/Viewproduct?search_string=laptop&branches=Main%20Branch&limit=10" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -312,7 +308,7 @@ curl -X GET "http://localhost:8000/admin/Viewproduct?search_string=laptop&branch
 **Example**:
 ```bash
 curl -X POST http://localhost:8000/admin/Deleteproduct/8fc7528b-c3a2-4b36-a39a-68c13699de80 \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -337,7 +333,7 @@ curl -X POST http://localhost:8000/admin/Deleteproduct/8fc7528b-c3a2-4b36-a39a-6
 **Example**:
 ```bash
 curl -X POST http://localhost:8000/admin/DeleteProductImage/8fc7528b-c3a2-4b36-a39a-68c13699de80 \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -362,7 +358,7 @@ curl -X POST http://localhost:8000/admin/DeleteProductImage/8fc7528b-c3a2-4b36-a
 **Example**:
 ```bash
 curl -X POST "http://localhost:8000/admin/brand?brand=NewBrand" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -388,7 +384,7 @@ curl -X POST "http://localhost:8000/admin/brand?brand=NewBrand" \
 **Example**:
 ```bash
 curl -X POST "http://localhost:8000/admin/Deletebrand?brand=OldBrand" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -413,7 +409,7 @@ curl -X POST "http://localhost:8000/admin/Deletebrand?brand=OldBrand" \
 **Example**:
 ```bash
 curl -X POST "http://localhost:8000/admin/GetStockDetail?pro_name=Laptop" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -434,7 +430,7 @@ curl -X POST "http://localhost:8000/admin/GetStockDetail?pro_name=Laptop" \
 **Example**:
 ```bash
 curl -X GET http://localhost:8000/admin/GetMaxProId \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -458,7 +454,7 @@ curl -X GET http://localhost:8000/admin/GetMaxProId \
 **Example**:
 ```bash
 curl -X GET http://localhost:8000/admin/GetCustomer/8fc7528b-c3a2-4b36-a39a-68c13699de80 \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -493,7 +489,7 @@ curl -X GET http://localhost:8000/admin/GetCustomer/8fc7528b-c3a2-4b36-a39a-68c1
 **Example**:
 ```bash
 curl -X GET "http://localhost:8000/admin/Viewcustomer?search_string=john&branches=Main%20Branch&limit=10" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -526,7 +522,7 @@ curl -X GET "http://localhost:8000/admin/Viewcustomer?search_string=john&branche
 **Example**:
 ```bash
 curl -X POST http://localhost:8000/admin/Deletecustomer/8fc7528b-c3a2-4b36-a39a-68c13699de80 \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -551,7 +547,7 @@ curl -X POST http://localhost:8000/admin/Deletecustomer/8fc7528b-c3a2-4b36-a39a-
 **Example**:
 ```bash
 curl -X POST "http://localhost:8000/admin/Getcustomerbalance?branches=Main%20Branch" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -575,7 +571,7 @@ curl -X POST "http://localhost:8000/admin/Getcustomerbalance?branches=Main%20Bra
 **Example**:
 ```bash
 curl -X POST "http://localhost:8000/admin/Customerviewreport?timezone=UTC" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -599,7 +595,7 @@ base64-encoded-pdf-content
 **Example**:
 ```bash
 curl -X GET http://localhost:8000/admin/GetVendor/8fc7528b-c3a2-4b36-a39a-68c13699de80 \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -632,7 +628,7 @@ curl -X GET http://localhost:8000/admin/GetVendor/8fc7528b-c3a2-4b36-a39a-68c136
 **Example**:
 ```bash
 curl -X GET "http://localhost:8000/admin/Viewvendor?search_string=supplier&branches=Main%20Branch&limit=10" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -662,7 +658,7 @@ curl -X GET "http://localhost:8000/admin/Viewvendor?search_string=supplier&branc
 **Example**:
 ```bash
 curl -X POST http://localhost:8000/admin/Deletevendor/8fc7528b-c3a2-4b36-a39a-68c13699de80 \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -687,7 +683,7 @@ curl -X POST http://localhost:8000/admin/Deletevendor/8fc7528b-c3a2-4b36-a39a-68
 **Example**:
 ```bash
 curl -X POST "http://localhost:8000/admin/Getvendorbalance?branches=Main%20Branch" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -708,7 +704,7 @@ curl -X POST "http://localhost:8000/admin/Getvendorbalance?branches=Main%20Branc
 **Example**:
 ```bash
 curl -X POST http://localhost:8000/admin/Vendorviewreport \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -732,7 +728,7 @@ base64-encoded-pdf-content
 **Example**:
 ```bash
 curl -X GET http://localhost:8000/admin/GetSalesman/8fc7528b-c3a2-4b36-a39a-68c13699de80 \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -770,7 +766,7 @@ curl -X GET http://localhost:8000/admin/GetSalesman/8fc7528b-c3a2-4b36-a39a-68c1
 ```bash
 curl -X POST http://localhost:8000/admin/salesman \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
+  -b cookies.txt \
   -d '{
     "name": "John Doe",
     "code": "SM001",
@@ -821,7 +817,7 @@ curl -X POST http://localhost:8000/admin/salesman \
 ```bash
 curl -X PUT http://localhost:8000/admin/salesman/8fc7528b-c3a2-4b36-a39a-68c13699de80 \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
+  -b cookies.txt \
   -d '{
     "name": "Updated Name",
     "code": "SM002",
@@ -859,7 +855,7 @@ curl -X PUT http://localhost:8000/admin/salesman/8fc7528b-c3a2-4b36-a39a-68c1369
 **Example**:
 ```bash
 curl -X DELETE http://localhost:8000/admin/salesman/8fc7528b-c3a2-4b36-a39a-68c13699de80 \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -886,7 +882,7 @@ curl -X DELETE http://localhost:8000/admin/salesman/8fc7528b-c3a2-4b36-a39a-68c1
 **Example**:
 ```bash
 curl -X GET "http://localhost:8000/admin/GetCustomerVendorByBranch?branch=Main%20Branch" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -912,7 +908,7 @@ curl -X GET "http://localhost:8000/admin/GetCustomerVendorByBranch?branch=Main%2
 **Example**:
 ```bash
 curl -X GET http://localhost:8000/admin/ \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -949,7 +945,7 @@ curl -X GET http://localhost:8000/admin/ \
 **Example**:
 ```bash
 curl -X GET "http://localhost:8000/admin/reports?report_type=sales&start_date=2026-01-01&end_date=2026-01-31" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -979,7 +975,7 @@ curl -X GET "http://localhost:8000/admin/reports?report_type=sales&start_date=20
 **Example**:
 ```bash
 curl -X GET http://localhost:8000/admin/settings \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -1019,7 +1015,7 @@ curl -X GET http://localhost:8000/admin/settings \
 ```bash
 curl -X PUT http://localhost:8000/admin/settings \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
+  -b cookies.txt \
   -d '{
     "backup_schedule": "daily at 3 AM",
     "default_timezone": "US/Eastern"

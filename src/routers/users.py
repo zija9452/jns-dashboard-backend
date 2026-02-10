@@ -9,7 +9,7 @@ from ..models.user import User, UserCreate, UserUpdate, UserRead
 from ..models.role import Role
 from ..services.user_service import UserService
 from ..auth.auth import get_current_user
-from ..auth.rbac import admin_required
+from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, cashier_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session
 from ..auth.password import get_password_hash
 
 router = APIRouter()
@@ -18,7 +18,7 @@ router = APIRouter()
 async def get_users(
     skip: int = 0,
     limit: int = 100,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -31,7 +31,7 @@ async def get_users(
 @router.post("/", response_model=UserRead)
 async def create_user(
     user_create: UserCreate,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -161,7 +161,7 @@ async def update_user(
 @router.delete("/{user_id}")
 async def delete_user(
     user_id: str,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """

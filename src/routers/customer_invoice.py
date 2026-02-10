@@ -14,8 +14,7 @@ from ..models.salesman import Salesman
 from ..models.customer_invoice import CustomerInvoice, CustomerInvoiceCreate, CustomerInvoiceUpdate, CustomerInvoiceRead, CustomerInvoiceStatus
 from ..models.invoice import Invoice
 from ..models.product import Product
-from ..auth.auth import get_current_user
-from ..auth.rbac import cashier_required, employee_required
+from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, cashier_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session
 from ..services.customer_service import CustomerService
 from ..services.salesman_service import SalesmanService
 from ..models.customer import CustomerCreate
@@ -26,7 +25,7 @@ router = APIRouter()
 @router.post("/GetCustomerDetails")
 async def get_customer_details(
     request_data: dict,
-    current_user: User = Depends(cashier_required()),
+    current_user: User = Depends(cashier_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -72,7 +71,7 @@ async def get_customer_details(
 @router.post("/Getsalesmandetail")
 async def get_salesman_detail(
     request_data: dict,
-    current_user: User = Depends(cashier_required()),
+    current_user: User = Depends(cashier_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -110,7 +109,7 @@ async def get_salesman_detail(
 @router.post("/SaveCustomerOrders")
 async def save_customer_orders(
     request_data: dict = None,
-    current_user: User = Depends(cashier_required()),
+    current_user: User = Depends(employee_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -434,7 +433,7 @@ async def save_customer_orders(
 @router.post("/GetCustomerInvoiceBalance")
 async def get_customer_invoice_balance(
     customer_id: str = None,
-    current_user: User = Depends(cashier_required()),
+    current_user: User = Depends(cashier_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -489,7 +488,7 @@ async def update_customer_invoice(
     e_name: str = None,
     e_amount: float = None,
     note: str = None,
-    current_user: User = Depends(cashier_required()),
+    current_user: User = Depends(cashier_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -586,7 +585,7 @@ async def update_customer_invoice(
 @router.get("/Getorder/{id}")
 async def get_order(
     id: str,
-    current_user: User = Depends(cashier_required()),
+    current_user: User = Depends(cashier_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -666,7 +665,7 @@ async def view_customer_order(
     status: str = None,
     skip: int = 0,
     limit: int = 100,
-    current_user: User = Depends(cashier_required()),
+    current_user: User = Depends(cashier_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -772,7 +771,7 @@ async def customer_order_report(
     orderid: str = None,
     timezone: str = None,
     printoption: str = None,
-    current_user: User = Depends(cashier_required()),
+    current_user: User = Depends(cashier_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -827,7 +826,7 @@ async def customer_order_report(
 @router.post("/Deletecustomorder/{id}")
 async def delete_custom_order_endpoint(
     id: str,
-    current_user: User = Depends(cashier_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -872,7 +871,7 @@ async def delete_custom_order_endpoint(
 @router.post("/Customers")
 async def create_customer_from_modal(
     request_data: dict,
-    current_user: User = Depends(cashier_required()),
+    current_user: User = Depends(cashier_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -952,7 +951,7 @@ async def create_customer_from_modal(
 @router.post("/GetSalesmanDetails")
 async def get_salesman_details(
     request_data: dict,
-    current_user: User = Depends(cashier_required()),
+    current_user: User = Depends(cashier_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -986,7 +985,7 @@ async def get_salesman_details(
 @router.post("/customerbalance")
 async def customer_balance(
     request_data: dict,
-    current_user: User = Depends(cashier_required()),
+    current_user: User = Depends(cashier_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1035,7 +1034,7 @@ async def customer_balance(
 @router.get("/customer-balance/{customer_id}")
 async def get_customer_balance(
     customer_id: str,
-    current_user: User = Depends(cashier_required()),
+    current_user: User = Depends(cashier_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1106,7 +1105,7 @@ async def get_customer_balance(
 @router.get("/customer-orders/{customer_id}")
 async def get_customer_orders(
     customer_id: str,
-    current_user: User = Depends(cashier_required()),
+    current_user: User = Depends(cashier_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1159,7 +1158,7 @@ async def get_customer_orders(
 @router.get("/order-details/{order_id}")
 async def get_order_details(
     order_id: str,
-    current_user: User = Depends(cashier_required()),
+    current_user: User = Depends(cashier_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1228,7 +1227,7 @@ async def get_order_details(
 async def process_payment(
     order_id: str,
     payment_data: dict,
-    current_user: User = Depends(cashier_required()),
+    current_user: User = Depends(cashier_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1366,7 +1365,7 @@ async def process_payment(
 @router.get("/daily-collection-report/{date}")
 async def daily_collection_report(
     date: str,
-    current_user: User = Depends(cashier_required()),
+    current_user: User = Depends(cashier_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1435,7 +1434,7 @@ async def daily_collection_report(
 @router.get("/payment-history/{order_id}")
 async def get_payment_history(
     order_id: str,
-    current_user: User = Depends(cashier_required()),
+    current_user: User = Depends(cashier_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1478,7 +1477,7 @@ async def get_payment_history(
 @router.get("/customerinvoicesbydate")
 async def get_customer_invoices_by_date(
     date: str,
-    current_user: User = Depends(cashier_required()),
+    current_user: User = Depends(cashier_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """

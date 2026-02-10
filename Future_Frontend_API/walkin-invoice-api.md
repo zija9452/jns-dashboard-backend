@@ -1,22 +1,18 @@
 # Walk-in Invoice API Documentation
 
-This document provides comprehensive documentation for all walk-in invoice-related endpoints in the Regal POS Backend, including curl commands for testing and integration.
+This document provides comprehensive documentation for all walk-in invoice-related endpoints in the Regal POS Backend with session-based authentication, including curl commands for testing and integration.
 
 ## Authentication
 
-All walk-in invoice endpoints require authentication with a valid JWT access token. Obtain a token by logging in:
+All walk-in invoice endpoints require session-based authentication. Obtain a session by logging in:
 
 ```bash
-curl -X POST http://localhost:8000/auth/traditional-login \
+curl -X POST http://localhost:8000/auth/session-login \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "username=admin&password=admin123"
 ```
 
-Use the returned `access_token` in the Authorization header:
-
-```bash
--H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
-```
+The login response will include a session cookie that will be automatically sent with subsequent requests when using the `-b` flag with curl or proper cookie handling in applications.
 
 ## Walk-in Invoice Management Endpoints
 
@@ -50,8 +46,8 @@ Use the returned `access_token` in the Authorization header:
 **Example**:
 ```bash
 curl -X POST http://localhost:8000/walkin-invoice/walkin-invoices \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
   -H "Content-Type: application/json" \
+  -b cookies.txt \
   -d '{
     "items": [
       {
@@ -86,7 +82,7 @@ curl -X POST http://localhost:8000/walkin-invoice/walkin-invoices \
 **Example**:
 ```bash
 curl -X GET "http://localhost:8000/walkin-invoice/walkin-invoices?limit=10&skip=0" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -124,7 +120,7 @@ curl -X GET "http://localhost:8000/walkin-invoice/walkin-invoices?limit=10&skip=
 **Example**:
 ```bash
 curl -X GET http://localhost:8000/walkin-invoice/walkin-invoices/uuid-string \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -184,8 +180,8 @@ curl -X GET http://localhost:8000/walkin-invoice/walkin-invoices/uuid-string \
 **Example**:
 ```bash
 curl -X PUT http://localhost:8000/walkin-invoice/walkin-invoices/uuid-string \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
   -H "Content-Type: application/json" \
+  -b cookies.txt \
   -d '{
     "notes": "Updated walk-in invoice"
   }'
@@ -214,7 +210,7 @@ curl -X PUT http://localhost:8000/walkin-invoice/walkin-invoices/uuid-string \
 **Example**:
 ```bash
 curl -X DELETE http://localhost:8000/walkin-invoice/walkin-invoices/uuid-string \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -239,7 +235,7 @@ curl -X DELETE http://localhost:8000/walkin-invoice/walkin-invoices/uuid-string 
 **Example**:
 ```bash
 curl -X GET http://localhost:8000/walkin-invoice/walkin-invoices/uuid-string/receipt \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**: Base64 encoded PDF receipt
@@ -258,7 +254,7 @@ curl -X GET http://localhost:8000/walkin-invoice/walkin-invoices/uuid-string/rec
 **Example**:
 ```bash
 curl -X GET http://localhost:8000/walkin-invoice/walkin-invoices/date/2026-02-07 \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -309,7 +305,7 @@ curl -X GET http://localhost:8000/walkin-invoice/walkin-invoices/date/2026-02-07
 **Example**:
 ```bash
 curl -X GET "http://localhost:8000/walkin-invoice/products-for-sales?search_term=T-Shirt&limit=10" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -344,7 +340,7 @@ curl -X GET "http://localhost:8000/walkin-invoice/products-for-sales?search_term
 **Example**:
 ```bash
 curl -X GET http://localhost:8000/walkin-invoice/invoices-by-order-id/uuid-string \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**: Same as endpoint #3
@@ -363,7 +359,7 @@ curl -X GET http://localhost:8000/walkin-invoice/invoices-by-order-id/uuid-strin
 **Example**:
 ```bash
 curl -X GET http://localhost:8000/walkin-invoice/daily-invoice-report/2026-02-07 \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -429,11 +425,15 @@ Common error types:
 
 ## Security Notes
 
-- All endpoints require appropriate role-based access control (admin required)
+- All endpoints require appropriate role-based access control using session cookies
 - Invoice data is protected by role-based access control
 - Inventory updates are synchronized with sales and refunds
 - Payment methods and amounts are validated
 - Unique invoice numbers are generated with database-level locking
+- Session-based authentication with cookie management for enhanced security
+- Protection against JWT token theft from client-side storage
+- Instant logout capability across all devices
+- Full control over active sessions
 
 ## Production Ready Features
 
@@ -441,12 +441,15 @@ Common error types:
 - Pydantic v2 validation
 - Proper error handling and logging
 - Database transaction safety
-- JWT token-based authentication
+- Session-based authentication with cookie management
 - Role-based access control
 - Input sanitization and validation
 - Inventory management with automatic stock updates
 - PDF receipt generation for all transactions
 - Concurrency-safe operations with advisory locks
+- Server-side session control for better security
+- Instant logout capability across all devices
+- Better compliance with audit trails and regulations
 
 ## Related Refund Operations
 

@@ -1,41 +1,37 @@
 # Salesman API Documentation
 
-This document provides comprehensive documentation for all salesman-related endpoints in the Regal POS Backend, including curl commands for testing and integration.
+This document provides comprehensive documentation for all salesman-related endpoints in the Regal POS Backend with session-based authentication, including curl commands for testing and integration.
 
 ## Authentication
 
-All salesman endpoints require authentication with a valid JWT access token. Obtain a token by logging in:
+All salesman endpoints require session-based authentication. Obtain a session by logging in:
 
 ```bash
-curl -X POST http://localhost:8000/auth/traditional-login \
+curl -X POST http://localhost:8000/auth/session-login \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "username=admin&password=admin123"
 ```
 
-Use the returned `access_token` in the Authorization header:
-
-```bash
--H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
-```
+The login response will include a session cookie that will be automatically sent with subsequent requests when using the `-b` flag with curl or proper cookie handling in applications.
 
 ## Salesman Management Endpoints
 
 ### 1. Get All Salesmen
 
-**Endpoint**: `GET /salesman/`
+**Endpoint**: `GET /salesmen/`
 
-**Description**: Get list of all salesmen with pagination.
+**Description**: Get list of salesmen with pagination.
 
 **Authentication**: Employee role or higher required
 
 **Query Parameters** (optional):
-- `skip`: Number of records to skip (for pagination)
-- `limit`: Maximum number of records to return (default 100)
+- `skip`: Number of records to skip (for pagination) - default 0
+- `limit`: Maximum number of records to return (default 100, max 200) - default 100
 
 **Example**:
 ```bash
-curl -X GET "http://localhost:8000/salesman/?skip=0&limit=10" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+curl -X GET "http://localhost:8000/salesmen/?limit=10" \
+  -b cookies.txt
 ```
 
 **Response**:
@@ -44,20 +40,20 @@ curl -X GET "http://localhost:8000/salesman/?skip=0&limit=10" \
   {
     "id": "uuid-string",
     "name": "John Smith",
-    "code": "JS001",
-    "phone": "+1234567890",
-    "address": "123 Main St, City, Country",
+    "code": "SM001",
+    "phone": "1234567890",
+    "address": "123 Main St",
     "branch": "Main Branch",
-    "commission_rate": "5.00",
-    "created_at": "2026-02-02T07:04:18.497796",
-    "updated_at": "2026-02-02T07:04:18.497920"
+    "commission_rate": 0.05,
+    "created_at": "2026-01-31T11:00:00.000000",
+    "updated_at": "2026-01-31T11:00:00.000000"
   }
 ]
 ```
 
 ### 2. Create Salesman
 
-**Endpoint**: `POST /salesman/`
+**Endpoint**: `POST /salesmen/`
 
 **Description**: Create a new salesman.
 
@@ -66,27 +62,27 @@ curl -X GET "http://localhost:8000/salesman/?skip=0&limit=10" \
 **Request Body**:
 ```json
 {
-  "name": "string",
-  "code": "string",
-  "phone": "string",
-  "address": "string",
-  "branch": "string",
-  "commission_rate": "decimal"
+  "name": "string (required)",
+  "code": "string (required, unique)",
+  "phone": "string (optional)",
+  "address": "string (optional)",
+  "branch": "string (optional)",
+  "commission_rate": "decimal (optional, default 0.0)"
 }
 ```
 
 **Example**:
 ```bash
-curl -X POST http://localhost:8000/salesman/ \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
+curl -X POST http://localhost:8000/salesmen/ \
   -H "Content-Type: application/json" \
+  -b cookies.txt \
   -d '{
     "name": "John Smith",
-    "code": "JS001",
-    "phone": "+1234567890",
-    "address": "123 Main St, City, Country",
+    "code": "SM001",
+    "phone": "1234567890",
+    "address": "123 Main St",
     "branch": "Main Branch",
-    "commission_rate": 5.0
+    "commission_rate": 0.05
   }'
 ```
 
@@ -95,31 +91,31 @@ curl -X POST http://localhost:8000/salesman/ \
 {
   "id": "uuid-string",
   "name": "John Smith",
-  "code": "JS001",
-  "phone": "+1234567890",
-  "address": "123 Main St, City, Country",
+  "code": "SM001",
+  "phone": "1234567890",
+  "address": "123 Main St",
   "branch": "Main Branch",
-  "commission_rate": "5.00",
-  "created_at": "2026-02-02T07:04:18.497796",
-  "updated_at": "2026-02-02T07:04:18.497920"
+  "commission_rate": 0.05,
+  "created_at": "2026-01-31T11:00:00.000000",
+  "updated_at": "2026-01-31T11:00:00.000000"
 }
 ```
 
 ### 3. Get Salesman by ID
 
-**Endpoint**: `GET /salesman/{id}`
+**Endpoint**: `GET /salesmen/{salesman_id}`
 
-**Description**: Retrieve specific salesman details by ID.
+**Description**: Get a specific salesman by ID.
 
 **Authentication**: Employee role or higher required
 
 **Path Parameter**:
-- `{id}`: UUID of the salesman
+- `{salesman_id}`: UUID of the salesman
 
 **Example**:
 ```bash
-curl -X GET http://localhost:8000/salesman/uuid-string \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+curl -X GET http://localhost:8000/salesmen/uuid-string \
+  -b cookies.txt
 ```
 
 **Response**:
@@ -127,50 +123,47 @@ curl -X GET http://localhost:8000/salesman/uuid-string \
 {
   "id": "uuid-string",
   "name": "John Smith",
-  "code": "JS001",
-  "phone": "+1234567890",
-  "address": "123 Main St, City, Country",
+  "code": "SM001",
+  "phone": "1234567890",
+  "address": "123 Main St",
   "branch": "Main Branch",
-  "commission_rate": "5.00",
-  "created_at": "2026-02-02T07:04:18.497796",
-  "updated_at": "2026-02-02T07:04:18.497920"
+  "commission_rate": 0.05,
+  "created_at": "2026-01-31T11:00:00.000000",
+  "updated_at": "2026-01-31T11:00:00.000000"
 }
 ```
 
 ### 4. Update Salesman
 
-**Endpoint**: `PUT /salesman/{id}`
+**Endpoint**: `PUT /salesmen/{salesman_id}`
 
 **Description**: Update a specific salesman by ID.
 
 **Authentication**: Admin role required
 
 **Path Parameter**:
-- `{id}`: UUID of the salesman to update
+- `{salesman_id}`: UUID of the salesman to update
 
-**Request Body**:
+**Request Body** (all fields optional):
 ```json
 {
-  "name": "string",
-  "code": "string",
-  "phone": "string",
-  "address": "string",
-  "branch": "string",
-  "commission_rate": "decimal"
+  "name": "string (optional)",
+  "code": "string (optional, must be unique)",
+  "phone": "string (optional)",
+  "address": "string (optional)",
+  "branch": "string (optional)",
+  "commission_rate": "decimal (optional)"
 }
 ```
 
 **Example**:
 ```bash
-curl -X PUT http://localhost:8000/salesman/uuid-string \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
+curl -X PUT http://localhost:8000/salesmen/uuid-string \
   -H "Content-Type: application/json" \
+  -b cookies.txt \
   -d '{
-    "name": "John Updated",
-    "phone": "+0987654321",
-    "address": "456 Updated St, New City, Country",
-    "branch": "Downtown Branch",
-    "commission_rate": 6.0
+    "name": "Updated John Smith",
+    "phone": "0987654321"
   }'
 ```
 
@@ -178,32 +171,32 @@ curl -X PUT http://localhost:8000/salesman/uuid-string \
 ```json
 {
   "id": "uuid-string",
-  "name": "John Updated",
-  "code": "JS001",
-  "phone": "+0987654321",
-  "address": "456 Updated St, New City, Country",
-  "branch": "Downtown Branch",
-  "commission_rate": "6.00",
-  "created_at": "2026-02-02T07:04:18.497796",
-  "updated_at": "2026-02-02T07:05:18.497920"
+  "name": "Updated John Smith",
+  "code": "SM001",
+  "phone": "0987654321",
+  "address": "123 Main St",
+  "branch": "Main Branch",
+  "commission_rate": 0.05,
+  "created_at": "2026-01-31T11:00:00.000000",
+  "updated_at": "2026-01-31T11:01:00.000000"
 }
 ```
 
 ### 5. Delete Salesman
 
-**Endpoint**: `DELETE /salesman/{id}`
+**Endpoint**: `DELETE /salesmen/{salesman_id}`
 
-**Description**: Delete a salesman by ID.
+**Description**: Delete a specific salesman by ID.
 
 **Authentication**: Admin role required
 
 **Path Parameter**:
-- `{id}`: UUID of the salesman to delete
+- `{salesman_id}`: UUID of the salesman to delete
 
 **Example**:
 ```bash
-curl -X DELETE http://localhost:8000/salesman/uuid-string \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+curl -X DELETE http://localhost:8000/salesmen/uuid-string \
+  -b cookies.txt
 ```
 
 **Response**:
@@ -213,13 +206,13 @@ curl -X DELETE http://localhost:8000/salesman/uuid-string \
 }
 ```
 
-## Admin-Specific Salesman Endpoints (JavaScript Frontend Compatible)
+## Frontend-Compatible Salesman Endpoints (in Admin Router)
 
-### 6. Get Salesman by ID (Admin)
+### 6. Get Salesman Details (Frontend Compatible)
 
 **Endpoint**: `GET /admin/GetSalesman/{id}`
 
-**Description**: Retrieve specific salesman details by ID for JavaScript frontend compatibility.
+**Description**: Get specific salesman details by ID for JavaScript frontend compatibility.
 
 **Authentication**: Admin role required
 
@@ -228,8 +221,8 @@ curl -X DELETE http://localhost:8000/salesman/uuid-string \
 
 **Example**:
 ```bash
-curl -X GET http://localhost:8000/admin/GetSalesman/uuid-string \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+curl -X GET "http://localhost:8000/admin/GetSalesman/uuid-string" \
+  -b cookies.txt
 ```
 
 **Response**:
@@ -237,13 +230,13 @@ curl -X GET http://localhost:8000/admin/GetSalesman/uuid-string \
 {
   "sal_id": "uuid-string",
   "sal_name": "John Smith",
-  "sal_phone": "+1234567890",
-  "sal_address": "123 Main St, City, Country",
+  "sal_phone": "1234567890",
+  "sal_address": "123 Main St",
   "branch": "Main Branch"
 }
 ```
 
-### 7. View Salesmen (Admin)
+### 7. View Salesmen (Frontend Compatible)
 
 **Endpoint**: `GET /admin/viewsalesman`
 
@@ -259,7 +252,7 @@ curl -X GET http://localhost:8000/admin/GetSalesman/uuid-string \
 **Example**:
 ```bash
 curl -X GET "http://localhost:8000/admin/viewsalesman?search_string=John&limit=10" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -268,14 +261,14 @@ curl -X GET "http://localhost:8000/admin/viewsalesman?search_string=John&limit=1
   {
     "sal_id": "uuid-string",
     "sal_name": "John Smith",
-    "sal_phone": "+1234567890",
-    "sal_address": "123 Main St, City, Country",
+    "sal_phone": "1234567890",
+    "sal_address": "123 Main St",
     "branch": "Main Branch"
   }
 ]
 ```
 
-### 8. Create Salesman (Admin)
+### 8. Create Salesman (Admin Endpoint)
 
 **Endpoint**: `POST /admin/salesman`
 
@@ -286,27 +279,27 @@ curl -X GET "http://localhost:8000/admin/viewsalesman?search_string=John&limit=1
 **Request Body**:
 ```json
 {
-  "name": "string",
-  "code": "string",
-  "phone": "string",
-  "address": "string",
-  "branch": "string",
-  "commission_rate": "decimal"
+  "name": "string (required)",
+  "code": "string (required, unique)",
+  "phone": "string (optional)",
+  "address": "string (optional)",
+  "branch": "string (optional)",
+  "commission_rate": "decimal (optional, default 0.0)"
 }
 ```
 
 **Example**:
 ```bash
 curl -X POST http://localhost:8000/admin/salesman \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
   -H "Content-Type: application/json" \
+  -b cookies.txt \
   -d '{
     "name": "Jane Doe",
-    "code": "JD001",
-    "phone": "+1987654321",
-    "address": "456 Oak Ave, Town, Country",
-    "branch": "Downtown Branch",
-    "commission_rate": 7.5
+    "code": "SM002",
+    "phone": "0987654321",
+    "address": "456 Oak Ave",
+    "branch": "Secondary Branch",
+    "commission_rate": 0.07
   }'
 ```
 
@@ -315,15 +308,15 @@ curl -X POST http://localhost:8000/admin/salesman \
 {
   "sal_id": "uuid-string",
   "sal_name": "Jane Doe",
-  "sal_phone": "+1987654321",
-  "sal_address": "456 Oak Ave, Town, Country",
-  "branch": "Downtown Branch",
-  "code": "JD001",
-  "commission_rate": "7.50"
+  "sal_phone": "0987654321",
+  "sal_address": "456 Oak Ave",
+  "branch": "Secondary Branch",
+  "code": "SM002",
+  "commission_rate": "0.07"
 }
 ```
 
-### 9. Update Salesman (Admin)
+### 9. Update Salesman (Admin Endpoint)
 
 **Endpoint**: `PUT /admin/salesman/{id}`
 
@@ -334,29 +327,26 @@ curl -X POST http://localhost:8000/admin/salesman \
 **Path Parameter**:
 - `{id}`: UUID of the salesman to update
 
-**Request Body**:
+**Request Body** (all fields optional):
 ```json
 {
-  "name": "string",
-  "code": "string",
-  "phone": "string",
-  "address": "string",
-  "branch": "string",
-  "commission_rate": "decimal"
+  "name": "string (optional)",
+  "code": "string (optional, must be unique)",
+  "phone": "string (optional)",
+  "address": "string (optional)",
+  "branch": "string (optional)",
+  "commission_rate": "decimal (optional)"
 }
 ```
 
 **Example**:
 ```bash
 curl -X PUT http://localhost:8000/admin/salesman/uuid-string \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
   -H "Content-Type: application/json" \
+  -b cookies.txt \
   -d '{
-    "name": "Jane Updated",
-    "phone": "+1111111111",
-    "address": "789 Updated Ave, New Town, Country",
-    "branch": "Uptown Branch",
-    "commission_rate": 8.0
+    "name": "Updated Jane Doe",
+    "phone": "1111111111"
   }'
 ```
 
@@ -364,20 +354,20 @@ curl -X PUT http://localhost:8000/admin/salesman/uuid-string \
 ```json
 {
   "sal_id": "uuid-string",
-  "sal_name": "Jane Updated",
-  "sal_phone": "+1111111111",
-  "sal_address": "789 Updated Ave, New Town, Country",
-  "branch": "Uptown Branch",
-  "code": "JD001",
-  "commission_rate": "8.00"
+  "sal_name": "Updated Jane Doe",
+  "sal_phone": "1111111111",
+  "sal_address": "456 Oak Ave",
+  "branch": "Secondary Branch",
+  "code": "SM002",
+  "commission_rate": "0.07"
 }
 ```
 
-### 10. Delete Salesman (Admin)
+### 10. Delete Salesman (Admin Endpoint)
 
 **Endpoint**: `DELETE /admin/salesman/{id}`
 
-**Description**: Delete a salesman by ID via admin endpoint for JavaScript frontend compatibility.
+**Description**: Delete a specific salesman by ID via admin endpoint for JavaScript frontend compatibility.
 
 **Authentication**: Admin role required
 
@@ -387,13 +377,12 @@ curl -X PUT http://localhost:8000/admin/salesman/uuid-string \
 **Example**:
 ```bash
 curl -X DELETE http://localhost:8000/admin/salesman/uuid-string \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
 ```json
 {
-  "success": true,
   "message": "Salesman deleted successfully"
 }
 ```
@@ -409,24 +398,31 @@ All endpoints return standardized error responses:
     "message": "Human-readable error message",
     "status_code": 400,
     "path": "/endpoint/path",
-    "timestamp": "2026-02-02T07:00:00.000000"
+    "timestamp": "2026-01-31T11:00:00.000000"
   }
 }
 ```
 
 Common error types:
 - `400 Bad Request`: Invalid input parameters or format
-- `401 Unauthorized`: Missing or invalid authentication token
+- `401 Unauthorized`: Missing or invalid session cookie
 - `403 Forbidden`: Insufficient permissions for the requested action
 - `404 Not Found`: Requested resource not found
-- `409 Conflict`: Resource conflict (e.g., duplicate code)
+- `409 Conflict`: Salesman code already exists
+- `422 Unprocessable Entity`: Validation error in request body
+- `500 Internal Server Error`: Unexpected server error
 
 ## Security Notes
 
-- All endpoints require appropriate role-based access control
+- All endpoints require appropriate role-based access control using session cookies
 - Salesman data is protected by role-based access control
-- Audit logs are maintained for all salesman-related actions
-- Commission rates are sensitive data accessible only to authorized users
+- Only admins can create, update, or delete salesmen
+- Employees and above can view salesman information
+- Code uniqueness is enforced at the database level
+- Session-based authentication with cookie management for enhanced security
+- Protection against JWT token theft from client-side storage
+- Instant logout capability across all devices
+- Full control over active sessions
 
 ## Production Ready Features
 
@@ -434,6 +430,24 @@ Common error types:
 - Pydantic v2 validation
 - Proper error handling and logging
 - Database transaction safety
-- JWT token-based authentication
+- Session-based authentication with cookie management
 - Role-based access control
 - Input sanitization and validation
+- Code uniqueness validation
+- Comprehensive API documentation
+- Server-side session control for better security
+- Instant logout capability across all devices
+- Better compliance with audit trails and regulations
+
+## Best Practices
+
+- Always use unique codes for salesmen to prevent conflicts
+- Regularly review salesman assignments and commissions
+- Maintain accurate contact information for all salesmen
+- Use proper role-based access control for different operations
+- Monitor API usage and access patterns
+- Implement proper error handling in client applications
+- Follow RESTful API design principles
+- Use HTTPS in production environments
+- Regular backup of salesman data
+- Audit logs for all modifications

@@ -8,8 +8,7 @@ from ..database.database import get_db
 from ..models.user import User  # Import User at the top to avoid NameError
 from ..models.expense import Expense, ExpenseCreate, ExpenseUpdate, ExpenseRead
 from ..services.expense_service import ExpenseService
-from ..auth.auth import get_current_user
-from ..auth.rbac import admin_required, cashier_required, employee_required
+from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, cashier_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session
 
 router = APIRouter()
 
@@ -18,7 +17,7 @@ async def get_expenses(
     created_by: str = None,
     skip: int = 0,
     limit: int = 100,
-    current_user: User = Depends(employee_required()),  # Employees and above can view expenses
+    current_user: User = Depends(cashier_required_from_session()),  # Employees and above can view expenses
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -42,7 +41,7 @@ async def get_expenses(
 @router.post("/", response_model=ExpenseRead)
 async def create_expense(
     expense_create: ExpenseCreate,
-    current_user: User = Depends(employee_required()),  # Employees and above can create expenses
+    current_user: User = Depends(cashier_required_from_session()),  # Employees and above can create expenses
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -58,7 +57,7 @@ async def create_expense(
 @router.get("/{expense_id}", response_model=ExpenseRead)
 async def get_expense(
     expense_id: str,
-    current_user: User = Depends(employee_required()),  # Employees and above can view expense details
+    current_user: User = Depends(cashier_required_from_session()),  # Employees and above can view expense details
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -87,7 +86,7 @@ async def get_expense(
 async def update_expense(
     expense_id: str,
     expense_update: ExpenseUpdate,
-    current_user: User = Depends(admin_required()),  # Only admins can update expenses
+    current_user: User = Depends(cashier_required_from_session()),  # Only admins can update expenses
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -115,7 +114,7 @@ async def update_expense(
 @router.delete("/{expense_id}")
 async def delete_expense(
     expense_id: str,
-    current_user: User = Depends(admin_required()),  # Only admins can delete expenses
+    current_user: User = Depends(cashier_required_from_session()),  # Only admins can delete expenses
     db: AsyncSession = Depends(get_db)
 ):
     """

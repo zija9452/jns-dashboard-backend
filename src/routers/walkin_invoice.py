@@ -15,14 +15,14 @@ from ..models.product import Product
 from ..models.customer import Customer
 from ..models.salesman import Salesman
 from ..models.user import User
-from ..auth.rbac import cashier_required
+from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, cashier_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session
 
 router = APIRouter()
 
 @router.post("/walkin-invoices")
 async def create_walkin_invoice(
     request_data: dict,
-    current_user: User = Depends(cashier_required()),
+    current_user: User = Depends(cashier_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -296,7 +296,7 @@ trailer
 @router.get("/walkin-invoices/{invoice_id}")
 async def get_walkin_invoice(
     invoice_id: str,
-    current_user: User = Depends(cashier_required()),
+    current_user: User = Depends(cashier_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -359,7 +359,7 @@ async def get_walkin_invoice(
 async def update_walkin_invoice(
     invoice_id: str,
     invoice_update: InvoiceUpdate,
-    current_user: User = Depends(cashier_required()),
+    current_user: User = Depends(cashier_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -405,7 +405,7 @@ async def update_walkin_invoice(
 @router.delete("/walkin-invoices/{invoice_id}")
 async def delete_walkin_invoice(
     invoice_id: str,
-    current_user: User = Depends(cashier_required()),
+    current_user: User = Depends(cashier_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -465,7 +465,7 @@ async def get_walkin_invoices(
     customer_id: str = Query(None),
     status: str = Query(None),
     date: str = Query(None),
-    current_user: User = Depends(cashier_required()),
+    current_user: User = Depends(cashier_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -538,7 +538,7 @@ async def get_walkin_invoices(
 @router.get("/walkin-invoices/{invoice_id}/receipt")
 async def get_walkin_invoice_receipt(
     invoice_id: str,
-    current_user: User = Depends(cashier_required()),
+    current_user: User = Depends(cashier_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -635,7 +635,7 @@ trailer
 @router.get("/walkin-invoices/date/{date_str}")
 async def get_walkin_invoices_by_date(
     date_str: str,
-    current_user: User = Depends(cashier_required()),
+    current_user: User = Depends(cashier_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -719,7 +719,7 @@ async def get_products_for_sales(
     search_term: str = Query(None),
     barcode: str = Query(None),
     limit: int = Query(50, ge=1, le=100),
-    current_user: User = Depends(cashier_required()),
+    current_user: User = Depends(cashier_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -772,7 +772,7 @@ async def get_products_for_sales(
 @router.get("/invoices-by-order-id/{order_id}")
 async def get_invoice_by_order_id(
     order_id: str,
-    current_user: User = Depends(cashier_required()),
+    current_user: User = Depends(cashier_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -834,7 +834,7 @@ async def get_invoice_by_order_id(
 @router.get("/daily-invoice-report/{date_str}")
 async def get_daily_invoice_report(
     date_str: str,
-    current_user: User = Depends(cashier_required()),
+    current_user: User = Depends(cashier_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """

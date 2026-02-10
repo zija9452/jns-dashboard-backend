@@ -1,22 +1,18 @@
 # Walk-in Refund API Documentation
 
-This document provides comprehensive documentation for all walk-in invoice refund-related endpoints in the Regal POS Backend, including curl commands for testing and integration.
+This document provides comprehensive documentation for all walk-in invoice refund-related endpoints in the Regal POS Backend with session-based authentication, including curl commands for testing and integration.
 
 ## Authentication
 
-All walk-in refund endpoints require authentication with a valid JWT access token. Obtain a token by logging in:
+All walk-in refund endpoints require session-based authentication. Obtain a session by logging in:
 
 ```bash
-curl -X POST http://localhost:8000/auth/traditional-login \
+curl -X POST http://localhost:8000/auth/session-login \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "username=admin&password=admin123"
 ```
 
-Use the returned `access_token` in the Authorization header:
-
-```bash
--H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
-```
+The login response will include a session cookie that will be automatically sent with subsequent requests when using the `-b` flag with curl or proper cookie handling in applications.
 
 ## Walk-in Refund Management Endpoints
 
@@ -47,8 +43,8 @@ Use the returned `access_token` in the Authorization header:
 **Example**:
 ```bash
 curl -X POST http://localhost:8000/walkin-refund/refunds/walkin-invoice \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
   -H "Content-Type: application/json" \
+  -b cookies.txt \
   -d '{
     "invoice_id": "uuid-string",
     "refunded_items": [
@@ -83,7 +79,7 @@ curl -X POST http://localhost:8000/walkin-refund/refunds/walkin-invoice \
 **Example**:
 ```bash
 curl -X GET "http://localhost:8000/walkin-refund/refunds/walkin-invoice?limit=10&skip=0" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -123,7 +119,7 @@ curl -X GET "http://localhost:8000/walkin-refund/refunds/walkin-invoice?limit=10
 **Example**:
 ```bash
 curl -X GET http://localhost:8000/walkin-refund/refunds/walkin-invoice/uuid-string \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -161,7 +157,7 @@ curl -X GET http://localhost:8000/walkin-refund/refunds/walkin-invoice/uuid-stri
 **Example**:
 ```bash
 curl -X GET http://localhost:8000/walkin-refund/refunds/walkin-invoice/daily/2026-02-07 \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -205,7 +201,7 @@ curl -X GET http://localhost:8000/walkin-refund/refunds/walkin-invoice/daily/202
 **Example**:
 ```bash
 curl -X GET http://localhost:8000/walkin-refund/refunds/walkin-invoice/invoice/uuid-string \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -257,8 +253,8 @@ curl -X GET http://localhost:8000/walkin-refund/refunds/walkin-invoice/invoice/u
 **Example**:
 ```bash
 curl -X PUT http://localhost:8000/walkin-refund/refunds/walkin-invoice/uuid-string \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
   -H "Content-Type: application/json" \
+  -b cookies.txt \
   -d '{
     "reason": "Updated reason: Customer returned damaged product",
     "created_at": "2026-02-08T11:20:41.289250"
@@ -288,7 +284,7 @@ curl -X PUT http://localhost:8000/walkin-refund/refunds/walkin-invoice/uuid-stri
 **Example**:
 ```bash
 curl -X DELETE http://localhost:8000/walkin-refund/refunds/walkin-invoice/uuid-string \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -326,13 +322,17 @@ Common error types:
 
 ## Security Notes
 
-- All endpoints require appropriate role-based access control (admin and cashier can access)
+- All endpoints require appropriate role-based access control using session cookies
 - Refund data is protected by role-based access control
 - Inventory updates are synchronized with refunds (products returned to stock)
 - Refund amounts are validated against original invoice amounts
 - Unique refund numbers are generated with database-level locking
 - Original invoice payment status is updated when refunds are processed
 - Both admin and cashier roles have access to refund operations for walk-in invoices
+- Session-based authentication with cookie management for enhanced security
+- Protection against JWT token theft from client-side storage
+- Instant logout capability across all devices
+- Full control over active sessions
 
 ## Production Ready Features
 
@@ -340,7 +340,7 @@ Common error types:
 - Pydantic v2 validation
 - Proper error handling and logging
 - Database transaction safety
-- JWT token-based authentication
+- Session-based authentication with cookie management
 - Role-based access control (both admin and cashier roles can access refund endpoints)
 - Input sanitization and validation
 - Complete CRUD operations for refunds (Create, Read, Update, Delete)
@@ -350,3 +350,6 @@ Common error types:
 - Payment status updates synchronized with refunds
 - Date and amount modification capabilities for refunds
 - Full audit trail for all refund operations
+- Server-side session control for better security
+- Instant logout capability across all devices
+- Better compliance with audit trails and regulations

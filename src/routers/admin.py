@@ -11,8 +11,7 @@ from ..models.salesman import Salesman, SalesmanCreate, SalesmanUpdate
 from ..models.stock_entry import StockEntry, StockEntryType
 from ..models.product import Product
 from ..models.vendor import Vendor
-from ..auth.auth import get_current_user
-from ..auth.rbac import admin_required, employee_required
+from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session
 from ..services.user_service import UserService
 from ..services.product_service import ProductService
 from ..services.invoice_service import InvoiceService
@@ -24,7 +23,7 @@ router = APIRouter()
 
 @router.get("/")
 async def get_admin_dashboard(
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -73,7 +72,7 @@ async def get_reports(
     report_type: str = "daily",
     start_date: str = None,
     end_date: str = None,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -124,7 +123,7 @@ async def get_reports(
 
 @router.get("/settings")
 async def get_settings(
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -151,7 +150,7 @@ async def get_settings(
 @router.put("/settings")
 async def update_settings(
     settings_update: Dict[str, Any],
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -174,7 +173,7 @@ async def update_settings(
 @router.get("/getadmin/{id}")
 async def get_admin(
     id: str,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -228,7 +227,7 @@ async def get_admin(
 @router.post("/deleteadmin/{id}")
 async def delete_admin(
     id: str,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -273,7 +272,7 @@ async def delete_admin(
 @router.get("/GetSalesman/{id}")
 async def get_salesman(
     id: str,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -314,7 +313,7 @@ async def view_salesman(
     search_string: str = None,
     skip: int = 0,
     limit: int = 100,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -357,7 +356,7 @@ async def view_admin(
     search_string: str = None,
     skip: int = 0,
     limit: int = 100,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -415,7 +414,7 @@ async def view_admin(
 @router.post("/salesman")
 async def create_salesman_admin(
     salesman_create: SalesmanCreate,
-    current_user: User = Depends(admin_required()),  # Only admins can create salesmen
+    current_user: User = Depends(admin_required_from_session()),  # Only admins can create salesmen
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -450,7 +449,7 @@ async def create_salesman_admin(
 async def update_salesman_admin(
     id: str,
     salesman_update: SalesmanUpdate,
-    current_user: User = Depends(admin_required()),  # Only admins can update salesmen
+    current_user: User = Depends(admin_required_from_session()),  # Only admins can update salesmen
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -499,7 +498,7 @@ async def update_salesman_admin(
 @router.delete("/salesman/{id}")
 async def delete_salesman_admin(
     id: str,
-    current_user: User = Depends(admin_required()),  # Only admins can delete salesmen
+    current_user: User = Depends(admin_required_from_session()),  # Only admins can delete salesmen
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -537,7 +536,7 @@ async def customer_order_report(
     orderid: str = None,
     timezone: str = None,
     printoption: str = None,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -555,7 +554,7 @@ async def customer_order_report(
             from uuid import UUID
             order_uuid = UUID(orderid)
 
-            statement = select(CustomOrder).where(CustomOrder.id == order_uuid)
+            statement = select(CustomerInvoice).where(CustomerInvoice == order_uuid)
             result = await db.execute(statement)
             order = result.scalar_one_or_none()
 
@@ -597,7 +596,7 @@ async def view_admins(
     search_string: str = None,
     skip: int = 0,
     limit: int = 100,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -654,7 +653,7 @@ async def view_admins_capitalized(
     search_string: str = None,
     skip: int = 0,
     limit: int = 100,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -671,7 +670,7 @@ async def create_admin(
     ad_password: str = "",
     ad_cnic: str = None,
     ad_branch: str = None,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -735,7 +734,7 @@ async def create_admin_capitalized(
     ad_password: str = "",
     ad_cnci: str = None,
     ad_branch: str = None,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -753,7 +752,7 @@ async def update_admin(
     ad_password: str = None,
     ad_cnic: str = None,
     ad_branch: str = None,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -840,7 +839,7 @@ async def update_admin_capitalized(
     ad_password: str = None,
     ad_cnic: str = None,
     ad_branch: str = None,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -853,7 +852,7 @@ async def update_admin_capitalized(
 
 @router.get("/GetMaxProId")
 async def get_max_pro_id(
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -877,7 +876,7 @@ async def get_max_pro_id(
 @router.get("/GetProducts/{id}")
 async def get_products(
     id: str,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -925,7 +924,7 @@ async def view_product(
     branches: str = None,
     skip: int = 0,
     limit: int = 100,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -977,7 +976,7 @@ async def view_product(
 @router.post("/Deleteproduct/{id}")
 async def delete_product(
     id: str,
-    current_user: User = Depends(admin_required()),  # Keep as admin only for security
+    current_user: User = Depends(admin_required_from_session()),  # Keep as admin only for security
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1009,7 +1008,7 @@ async def delete_product(
 @router.post("/DeleteProductImage/{id}")
 async def delete_product_image(
     id: str,
-    current_user: User = Depends(admin_required()),  # Allow employees to manage product images
+    current_user: User = Depends(admin_required_from_session()),  # Allow employees to manage product images
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1049,7 +1048,7 @@ async def delete_product_image(
 @router.post("/brand")
 async def create_brand(
     brand: str = None,
-    current_user: User = Depends(admin_required()),  # Allow employees to create brands
+    current_user: User = Depends(admin_required_from_session()),  # Allow employees to create brands
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1073,7 +1072,7 @@ async def create_brand(
 @router.post("/Deletebrand")
 async def delete_brand(
     brand: str = None,
-    current_user: User = Depends(admin_required()),  # Allow employees to delete brands
+    current_user: User = Depends(admin_required_from_session()),  # Allow employees to delete brands
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1096,7 +1095,7 @@ async def delete_brand(
 @router.post("/GetStockDetail")
 async def get_stock_detail(
     pro_name: str = None,
-    current_user: User = Depends(admin_required()),  # Allow employees to check stock details
+    current_user: User = Depends(admin_required_from_session()),  # Allow employees to check stock details
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1130,7 +1129,7 @@ async def get_stock_detail(
 @router.get("/GetCustomerVendorByBranch")
 async def get_customer_vendor_by_branch(
     branch: str = None,
-    current_user: User = Depends(admin_required()),  # Allow employees to get category info
+    current_user: User = Depends(admin_required_from_session()),  # Allow employees to get category info
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1159,7 +1158,7 @@ async def get_customer_vendor_by_branch(
 @router.get("/GetCustomer/{id}")
 async def get_customer(
     id: str,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1229,7 +1228,7 @@ async def view_customer(
     searchaddress: str = None,
     skip: int = 0,
     limit: int = 100,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1318,7 +1317,7 @@ async def view_customer(
 @router.post("/Deletecustomer/{id}")
 async def delete_customer(
     id: str,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1350,7 +1349,7 @@ async def delete_customer(
 @router.post("/Getcustomerbalance")
 async def get_customer_balance(
     branches: str = None,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1373,7 +1372,7 @@ async def get_customer_balance(
 @router.post("/Customerviewreport")
 async def customer_view_report(
     timezone: str = None,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1403,7 +1402,7 @@ async def customer_view_report(
 @router.get("/GetVendor/{id}")
 async def get_vendor(
     id: str,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1455,7 +1454,7 @@ async def view_vendor(
     searchaddress: str = None,
     skip: int = 0,
     limit: int = 100,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1534,7 +1533,7 @@ async def view_vendor(
 @router.post("/Deletevendor/{id}")
 async def delete_vendor(
     id: str,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1566,7 +1565,7 @@ async def delete_vendor(
 @router.post("/Getvendorbalance")
 async def get_vendor_balance(
     branches: str = None,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1588,7 +1587,7 @@ async def get_vendor_balance(
 
 @router.post("/Vendorviewreport")
 async def vendor_view_report(
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1617,7 +1616,7 @@ async def vendor_view_report(
 @router.get("/GetExpense/{id}")
 async def get_expense(
     id: str,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1658,7 +1657,7 @@ async def view_expense(
     branches: str = None,
     skip: int = 0,
     limit: int = 100,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1706,7 +1705,7 @@ async def view_expense(
 @router.post("/Getbranchexpense")
 async def get_branch_expense(
     branches: str = None,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1740,7 +1739,7 @@ async def create_expense_frontend(
     e_amount: float,
     et_id_fk: str = None,
     note: str = None,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1783,7 +1782,7 @@ async def update_expense_frontend(
     e_name: str = None,
     e_amount: float = None,
     note: str = None,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1841,7 +1840,7 @@ async def update_expense_frontend(
 @router.post("/DeleteExpense/{id}")
 async def delete_expense_frontend(
     id: str,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1876,7 +1875,7 @@ async def view_stock(
     shelf: str = None,
     skip: int = 0,
     limit: int = 100,
-    current_user: User = Depends(admin_required()),  # Require admin for stock management
+    current_user: User = Depends(admin_required_from_session()),  # Require admin for stock management
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1942,7 +1941,7 @@ async def view_stock(
 async def search_stock(
     branches: str = None,
     search_string: str = None,
-    current_user: User = Depends(employee_required()),  # Allow employees to search stock
+    current_user: User = Depends(employee_required_from_session()),  # Allow employees to search stock
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1982,7 +1981,7 @@ async def search_stock(
 async def adjust_stock(
     stock_items: List[Dict] = None,
     timezone: str = None,
-    current_user: User = Depends(admin_required()),  # Only admin can adjust stock
+    current_user: User = Depends(admin_required_from_session()),  # Only admin can adjust stock
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -2086,7 +2085,7 @@ async def save_stock_in(
     stock_items: List[Dict] = None,
     timezone: str = None,
     Date: str = None,
-    current_user: User = Depends(admin_required()),  # Only admin can save stock in
+    current_user: User = Depends(admin_required_from_session()),  # Only admin can save stock in
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -2190,7 +2189,7 @@ async def stock_report(
     timezone: str = None,
     branches: str = None,
     shelf: str = None,
-    current_user: User = Depends(admin_required()),  # Only admin can generate reports
+    current_user: User = Depends(admin_required_from_session()),  # Only admin can generate reports
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -2237,7 +2236,7 @@ async def stock_report_excel(
     timezone: str = None,
     branches: str = None,
     shelf: str = None,
-    current_user: User = Depends(admin_required()),  # Only admin can generate reports
+    current_user: User = Depends(admin_required_from_session()),  # Only admin can generate reports
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -2306,7 +2305,7 @@ async def stock_report_excel(
 
 @router.post("/Dailyinventoryreport")
 async def daily_inventory_report(
-    current_user: User = Depends(admin_required()),  # Only admin can generate reports
+    current_user: User = Depends(admin_required_from_session()),  # Only admin can generate reports
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -2340,7 +2339,7 @@ async def print_barcodes(
     pro_name: str,
     quantity: int,
     barcode: str = None,
-    current_user: User = Depends(admin_required()),  # Only admin can print barcodes
+    current_user: User = Depends(admin_required_from_session()),  # Only admin can print barcodes
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -2410,7 +2409,7 @@ async def save_stock_in_with_barcodes(
     timezone: str = None,
     Date: str = None,
     print_barcodes: bool = False,
-    current_user: User = Depends(admin_required()),  # Only admin can save stock in
+    current_user: User = Depends(admin_required_from_session()),  # Only admin can save stock in
     db: AsyncSession = Depends(get_db)
 ):
     """

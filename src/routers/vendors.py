@@ -8,8 +8,7 @@ from ..database.database import get_db
 from ..models.user import User  # Import User at the top to avoid NameError
 from ..models.vendor import Vendor, VendorCreate, VendorUpdate, VendorRead
 from ..services.vendor_service import VendorService
-from ..auth.auth import get_current_user
-from ..auth.rbac import admin_required, cashier_required, employee_required
+from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, cashier_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session
 
 router = APIRouter()
 
@@ -17,7 +16,7 @@ router = APIRouter()
 async def get_vendors(
     skip: int = 0,
     limit: int = 100,
-    current_user: User = Depends(employee_required()),  # Employees and above can view vendors
+    current_user: User = Depends(employee_required_from_session()),  # Employees and above can view vendors
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -30,7 +29,7 @@ async def get_vendors(
 @router.post("/", response_model=VendorRead)
 async def create_vendor(
     vendor_create: VendorCreate,
-    current_user: User = Depends(admin_required()),  # Only admins can create vendors
+    current_user: User = Depends(admin_required_from_session()),  # Only admins can create vendors
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -42,7 +41,7 @@ async def create_vendor(
 @router.get("/{vendor_id}", response_model=VendorRead)
 async def get_vendor(
     vendor_id: str,
-    current_user: User = Depends(employee_required()),  # Employees and above can view vendor details
+    current_user: User = Depends(employee_required_from_session()),  # Employees and above can view vendor details
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -71,7 +70,7 @@ async def get_vendor(
 async def update_vendor(
     vendor_id: str,
     vendor_update: VendorUpdate,
-    current_user: User = Depends(admin_required()),  # Only admins can update vendors
+    current_user: User = Depends(admin_required_from_session()),  # Only admins can update vendors
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -99,7 +98,7 @@ async def update_vendor(
 @router.delete("/{vendor_id}")
 async def delete_vendor(
     vendor_id: str,
-    current_user: User = Depends(admin_required()),  # Only admins can delete vendors
+    current_user: User = Depends(admin_required_from_session()),  # Only admins can delete vendors
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -128,7 +127,7 @@ async def delete_vendor(
 @router.get("/get-vendor/{id}")
 async def get_vendor_details(
     id: str,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -177,7 +176,7 @@ async def view_vendors(
     searchaddress: str = None,
     skip: int = 0,
     limit: int = 100,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -253,7 +252,7 @@ async def view_vendors(
 @router.post("/delete-vendor/{id}")
 async def delete_vendor_frontend(
     id: str,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -283,7 +282,7 @@ async def delete_vendor_frontend(
 @router.post("/get-vendor-balance")
 async def get_vendor_balance(
     branches: str = None,
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -305,7 +304,7 @@ async def get_vendor_balance(
 
 @router.post("/vendor-view-report")
 async def vendor_view_report(
-    current_user: User = Depends(admin_required()),
+    current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """

@@ -1,22 +1,18 @@
 # Vendor API Documentation
 
-This document provides comprehensive documentation for all vendor-related endpoints in the Regal POS Backend, including curl commands for testing and integration.
+This document provides comprehensive documentation for all vendor-related endpoints in the Regal POS Backend with session-based authentication, including curl commands for testing and integration.
 
 ## Authentication
 
-All vendor endpoints require authentication with a valid JWT access token. Obtain a token by logging in:
+All vendor endpoints require session-based authentication. Obtain a session by logging in:
 
 ```bash
-curl -X POST http://localhost:8000/auth/traditional-login\
+curl -X POST http://localhost:8000/auth/session-login \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "username=admin&password=admin123"
 ```
 
-Use the returned `access_token` in the Authorization header:
-
-```bash
--H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
-```
+The login response will include a session cookie that will be automatically sent with subsequent requests when using the `-b` flag with curl or proper cookie handling in applications.
 
 ## Vendor Management Endpoints
 
@@ -34,7 +30,7 @@ Use the returned `access_token` in the Authorization header:
 **Example**:
 ```bash
 curl -X GET http://localhost:8000/admin/GetVendor/uuid-string \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -67,7 +63,7 @@ curl -X GET http://localhost:8000/admin/GetVendor/uuid-string \
 **Example**:
 ```bash
 curl -X GET "http://localhost:8000/admin/Viewvendor?search_string=vendor&limit=10" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -97,7 +93,7 @@ curl -X GET "http://localhost:8000/admin/Viewvendor?search_string=vendor&limit=1
 **Example**:
 ```bash
 curl -X POST http://localhost:8000/admin/Deletevendor/uuid-string \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -123,7 +119,7 @@ curl -X POST http://localhost:8000/admin/Deletevendor/uuid-string \
 ```bash
 curl -X POST http://localhost:8000/admin/Getvendorbalance \
   -H "Content-Type: application/x-www-form-urlencoded" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
+  -b cookies.txt \
   -d "branches=MainBranch"
 ```
 
@@ -145,7 +141,7 @@ curl -X POST http://localhost:8000/admin/Getvendorbalance \
 **Example**:
 ```bash
 curl -X POST http://localhost:8000/admin/Vendorviewreport \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -167,7 +163,7 @@ curl -X POST http://localhost:8000/admin/Vendorviewreport \
 **Example**:
 ```bash
 curl -X GET "http://localhost:8000/admin/GetCustomerVendorByBranch?branch=MainBranch" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -203,7 +199,7 @@ curl -X GET "http://localhost:8000/admin/GetCustomerVendorByBranch?branch=MainBr
 **Example**:
 ```bash
 curl -X GET "http://localhost:8000/vendors/?limit=10" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 ### 8. Create Vendor
@@ -227,7 +223,7 @@ curl -X GET "http://localhost:8000/vendors/?limit=10" \
 ```bash
 curl -X POST http://localhost:8000/vendors/ \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
+  -b cookies.txt \
   -d '{"name":"New Vendor","contacts":"{\"phone\":\"1234567890\",\"email\":\"vendor@example.com\",\"address\":\"123 Main St\"}","terms":"Net 30"}'
 ```
 
@@ -242,7 +238,7 @@ curl -X POST http://localhost:8000/vendors/ \
 **Example**:
 ```bash
 curl -X GET http://localhost:8000/vendors/uuid-string \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 ### 10. Update Vendor
@@ -257,7 +253,7 @@ curl -X GET http://localhost:8000/vendors/uuid-string \
 ```bash
 curl -X PUT http://localhost:8000/vendors/uuid-string \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
+  -b cookies.txt \
   -d '{"name":"Updated Vendor Name","terms":"Updated terms"}'
 ```
 
@@ -272,7 +268,7 @@ curl -X PUT http://localhost:8000/vendors/uuid-string \
 **Example**:
 ```bash
 curl -X DELETE http://localhost:8000/vendors/uuid-string \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 ## Frontend-Compatible Endpoints
@@ -304,10 +300,14 @@ All endpoints return standardized error responses:
 
 ## Security Notes
 
-- All endpoints require appropriate role authentication
+- All endpoints require appropriate role-based access control using session cookies
 - Vendor data is protected by role-based access control
 - Audit logs are maintained for all vendor-related actions
 - Foreign key constraints prevent deletion of vendors with related transactions
+- Session-based authentication with cookie management for enhanced security
+- Protection against JWT token theft from client-side storage
+- Instant logout capability across all devices
+- Full control over active sessions
 
 ## Production Ready Features
 
@@ -315,6 +315,9 @@ All endpoints return standardized error responses:
 - Pydantic v2 validation
 - Proper error handling and logging
 - Database transaction safety
-- JWT token-based authentication
+- Session-based authentication with cookie management
 - Role-based access control
 - Input sanitization and validation
+- Server-side session control for better security
+- Instant logout capability across all devices
+- Better compliance with audit trails and regulations

@@ -8,8 +8,7 @@ from ..database.database import get_db
 from ..models.user import User  # Import User at the top to avoid NameError
 from ..models.stock_entry import StockEntry, StockEntryCreate, StockEntryUpdate, StockEntryRead
 from ..services.stock_service import StockService
-from ..auth.auth import get_current_user
-from ..auth.rbac import admin_required, cashier_required, employee_required
+from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, cashier_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session
 
 router = APIRouter()
 
@@ -18,7 +17,7 @@ def get_stock_entries(
     product_id: str = None,
     skip: int = 0,
     limit: int = 100,
-    current_user: User = Depends(employee_required()),  # Employees and above can view stock
+    current_user: User = Depends(employee_required_from_session()),  # Employees and above can view stock
     db: Session = Depends(get_db)
 ):
     """
@@ -42,7 +41,7 @@ def get_stock_entries(
 @router.post("/", response_model=StockEntryRead)
 def create_stock_entry(
     stock_entry_create: StockEntryCreate,
-    current_user: User = Depends(admin_required()),  # Only admins can create stock entries
+    current_user: User = Depends(admin_required_from_session()),  # Only admins can create stock entries
     db: Session = Depends(get_db)
 ):
     """
@@ -55,7 +54,7 @@ def create_stock_entry(
 @router.get("/{stock_id}", response_model=StockEntryRead)
 def get_stock_entry(
     stock_id: str,
-    current_user: User = Depends(employee_required()),  # Employees and above can view stock details
+    current_user: User = Depends(employee_required_from_session()),  # Employees and above can view stock details
     db: Session = Depends(get_db)
 ):
     """
@@ -84,7 +83,7 @@ def get_stock_entry(
 def update_stock_entry(
     stock_id: str,
     stock_entry_update: StockEntryUpdate,
-    current_user: User = Depends(admin_required()),  # Only admins can update stock entries
+    current_user: User = Depends(admin_required_from_session()),  # Only admins can update stock entries
     db: Session = Depends(get_db)
 ):
     """
@@ -113,7 +112,7 @@ def update_stock_entry(
 @router.delete("/{stock_id}")
 def delete_stock_entry(
     stock_id: str,
-    current_user: User = Depends(admin_required()),  # Only admins can delete stock entries
+    current_user: User = Depends(admin_required_from_session()),  # Only admins can delete stock entries
     db: Session = Depends(get_db)
 ):
     """

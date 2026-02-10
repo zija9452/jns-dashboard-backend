@@ -1,22 +1,18 @@
 # Stock API Documentation
 
-This document provides comprehensive documentation for all stock-related endpoints in the Regal POS Backend, including curl commands for testing and integration.
+This document provides comprehensive documentation for all stock-related endpoints in the Regal POS Backend with session-based authentication, including curl commands for testing and integration.
 
 ## Authentication
 
-All stock endpoints require authentication with a valid JWT access token. Obtain a token by logging in:
+All stock endpoints require session-based authentication. Obtain a session by logging in:
 
 ```bash
-curl -X POST http://localhost:8000/auth/traditional-login \
+curl -X POST http://localhost:8000/auth/session-login \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "username=admin&password=admin123"
 ```
 
-Use the returned `access_token` in the Authorization header:
-
-```bash
--H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
-```
+The login response will include a session cookie that will be automatically sent with subsequent requests when using the `-b` flag with curl or proper cookie handling in applications.
 
 ## Stock Management Endpoints
 
@@ -42,7 +38,7 @@ Use the returned `access_token` in the Authorization header:
 **Example**:
 ```bash
 curl -X GET "http://localhost:8000/admin/ViewStock?search_string=product&branches=MainBranch&limit=10" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -96,7 +92,7 @@ curl -X GET "http://localhost:8000/admin/ViewStock?search_string=product&branche
 ```bash
 curl -X POST http://localhost:8000/admin/Adjuststock \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
+  -b cookies.txt \
   -d '[{"pro_name":"Product Name","quantity":10,"stock_id":"uuid-string","status":"IN","frombranch":"MainBranch","tobranch":"SecondaryBranch"}]'
 ```
 
@@ -140,7 +136,7 @@ curl -X POST http://localhost:8000/admin/Adjuststock \
 ```bash
 curl -X POST http://localhost:8000/admin/SaveStockIn \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
+  -b cookies.txt \
   -d '[{"ven_name":"Vendor Name","pro_name":"Product Name","pro_price":99.99,"pro_cost":79.99,"quantity":50,"totalCost":3999.5,"pro_barcode":"1234567890123","cat_name":"Category Name","brand":"Brand Name","pro_id":"uuid-string","ven_id":"uuid-string"}]'
 ```
 
@@ -177,7 +173,7 @@ curl -X POST http://localhost:8000/admin/SaveStockIn \
 **Example**:
 ```bash
 curl -X GET "http://localhost:8000/admin/searchstock?branches=MainBranch&search_string=product" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -216,7 +212,7 @@ curl -X GET "http://localhost:8000/admin/searchstock?branches=MainBranch&search_
 ```bash
 curl -X POST http://localhost:8000/admin/StockReport \
   -H "Content-Type: application/x-www-form-urlencoded" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
+  -b cookies.txt \
   -d "cat_name=Electronics&pro_name=Phone&ven_name=Supplier&timezone=UTC&branches=MainBranch&shelf=A1"
 ```
 
@@ -249,7 +245,7 @@ curl -X POST http://localhost:8000/admin/StockReport \
 ```bash
 curl -X POST http://localhost:8000/admin/StockReportexcel \
   -H "Content-Type: application/x-www-form-urlencoded" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
+  -b cookies.txt \
   -d "cat_name=Electronics&pro_name=Phone&ven_name=Supplier&timezone=UTC&branches=MainBranch&shelf=A1"
 ```
 
@@ -271,7 +267,7 @@ Base64-encoded Excel file content.
 **Example**:
 ```bash
 curl -X POST http://localhost:8000/admin/Dailyinventoryreport \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -299,7 +295,7 @@ curl -X POST http://localhost:8000/admin/Dailyinventoryreport \
 **Example**:
 ```bash
 curl -X POST "http://localhost:8000/admin/PrintBarcodes?pro_name=Laptop&quantity=5&barcode=LAPTOP123" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -351,7 +347,7 @@ curl -X POST "http://localhost:8000/admin/PrintBarcodes?pro_name=Laptop&quantity
 ```bash
 curl -X POST "http://localhost:8000/admin/SaveStockInWithBarcodes?print_barcodes=true" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
+  -b cookies.txt \
   -d '[{"ven_name":"Vendor Name","pro_name":"Product Name","pro_price":99.99,"pro_cost":79.99,"quantity":50,"totalCost":3999.5,"pro_barcode":"1234567890123","cat_name":"Category Name","brand":"Brand Name","pro_id":"uuid-string","ven_id":"uuid-string"}]'
 ```
 
@@ -406,7 +402,7 @@ curl -X POST "http://localhost:8000/admin/SaveStockInWithBarcodes?print_barcodes
 ```bash
 curl -X POST http://localhost:8000/admin/SaveStockIn \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
+  -b cookies.txt \
   -d '[{"ven_name":"Vendor Name","pro_name":"Product Name","pro_price":99.99,"pro_cost":79.99,"quantity":50,"totalCost":3999.5,"pro_barcode":"1234567890123","cat_name":"Category Name","brand":"Brand Name","pro_id":"uuid-string"}]'
 ```
 
@@ -438,7 +434,7 @@ curl -X POST http://localhost:8000/admin/SaveStockIn \
 **Example**:
 ```bash
 curl -X GET "http://localhost:8000/admin/searchstock?branches=MainBranch" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -473,7 +469,7 @@ curl -X GET "http://localhost:8000/admin/searchstock?branches=MainBranch" \
 ```bash
 curl -X POST http://localhost:8000/admin/StockReport \
   -H "Content-Type: application/x-www-form-urlencoded" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
+  -b cookies.txt \
   -d "cat_name=Electronics&pro_name=Phone&ven_name=Supplier&timezone=UTC&branches=MainBranch&shelf=A1"
 ```
 
@@ -493,7 +489,7 @@ curl -X POST http://localhost:8000/admin/StockReport \
 **Example**:
 ```bash
 curl -X POST http://localhost:8000/admin/Dailyinventoryreport \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -515,7 +511,7 @@ curl -X POST http://localhost:8000/admin/Dailyinventoryreport \
 **Example**:
 ```bash
 curl -X POST "http://localhost:8000/admin/GetStockDetail?pro_name=ProductName" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Response**:
@@ -579,11 +575,15 @@ All endpoints return standardized error responses:
 
 ## Security Notes
 
-- All endpoints require appropriate role authentication
+- All endpoints require appropriate role-based access control using session cookies
 - Stock data is protected by role-based access control
 - Audit logs are maintained for all stock-related actions
 - Only admins can modify stock levels and generate reports
 - Foreign key constraints prevent deletion of products with stock history
+- Session-based authentication with cookie management for enhanced security
+- Protection against JWT token theft from client-side storage
+- Instant logout capability across all devices
+- Full control over active sessions
 
 ## Production Ready Features
 
@@ -591,10 +591,13 @@ All endpoints return standardized error responses:
 - Pydantic v2 validation
 - Proper error handling and logging
 - Database transaction safety
-- JWT token-based authentication
+- Session-based authentication with cookie management
 - Role-based access control
 - Input sanitization and validation
 - Comprehensive API documentation
+- Server-side session control for better security
+- Instant logout capability across all devices
+- Better compliance with audit trails and regulations
 
 ## CRUD Commands for Stock Operations
 
@@ -604,7 +607,7 @@ All endpoints return standardized error responses:
 ```bash
 curl -X POST http://localhost:8000/admin/SaveStockIn \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
+  -b cookies.txt \
   -d '[{
     "ven_name": "Vendor Name",
     "pro_name": "Product Name",
@@ -624,7 +627,7 @@ curl -X POST http://localhost:8000/admin/SaveStockIn \
 ```bash
 curl -X POST "http://localhost:8000/admin/SaveStockInWithBarcodes?print_barcodes=true" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
+  -b cookies.txt \
   -d '[{
     "ven_name": "Vendor Name",
     "pro_name": "Product Name",
@@ -645,7 +648,7 @@ curl -X POST "http://localhost:8000/admin/SaveStockInWithBarcodes?print_barcodes
 **Generate ZPL for Specific Product**:
 ```bash
 curl -X POST "http://localhost:8000/admin/PrintBarcodes?pro_name=Product Name&quantity=5&barcode=1234567890123" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 ### Stock Adjustment Operations
@@ -654,7 +657,7 @@ curl -X POST "http://localhost:8000/admin/PrintBarcodes?pro_name=Product Name&qu
 ```bash
 curl -X POST http://localhost:8000/admin/Adjuststock \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
+  -b cookies.txt \
   -d '[{
     "pro_name": "Product Name",
     "quantity": 10,
@@ -670,13 +673,13 @@ curl -X POST http://localhost:8000/admin/Adjuststock \
 **View All Stock**:
 ```bash
 curl -X GET "http://localhost:8000/admin/ViewStock?search_string=product&branches=MainBranch&limit=100" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 **Search Stock by Branch**:
 ```bash
 curl -X GET "http://localhost:8000/admin/searchstock?branches=MainBranch&search_string=product" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```
 
 ### Report Generation Operations
@@ -685,7 +688,7 @@ curl -X GET "http://localhost:8000/admin/searchstock?branches=MainBranch&search_
 ```bash
 curl -X POST http://localhost:8000/admin/StockReport \
   -H "Content-Type: application/x-www-form-urlencoded" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
+  -b cookies.txt \
   -d "cat_name=Electronics&pro_name=Phone&ven_name=Supplier&timezone=UTC&branches=MainBranch&shelf=A1"
 ```
 
@@ -693,12 +696,12 @@ curl -X POST http://localhost:8000/admin/StockReport \
 ```bash
 curl -X POST http://localhost:8000/admin/StockReportexcel \
   -H "Content-Type: application/x-www-form-urlencoded" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE" \
+  -b cookies.txt \
   -d "cat_name=Electronics&pro_name=Phone&ven_name=Supplier&timezone=UTC&branches=MainBranch&shelf=A1"
 ```
 
 **Generate Daily Inventory Report**:
 ```bash
 curl -X POST http://localhost:8000/admin/Dailyinventoryreport \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE"
+  -b cookies.txt
 ```

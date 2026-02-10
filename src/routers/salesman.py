@@ -8,8 +8,7 @@ from ..database.database import get_db
 from ..models.user import User  # Import User at the top to avoid NameError
 from ..models.salesman import Salesman, SalesmanCreate, SalesmanUpdate, SalesmanRead
 from ..services.salesman_service import SalesmanService
-from ..auth.auth import get_current_user
-from ..auth.rbac import admin_required, cashier_required, employee_required
+from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, cashier_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session
 
 router = APIRouter()
 
@@ -17,7 +16,7 @@ router = APIRouter()
 async def get_salesmen(
     skip: int = 0,
     limit: int = 100,
-    current_user: User = Depends(employee_required()),  # Employees and above can view salesmen
+    current_user: User = Depends(employee_required_from_session()),  # Employees and above can view salesmen
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -30,7 +29,7 @@ async def get_salesmen(
 @router.post("/", response_model=SalesmanRead)
 async def create_salesman(
     salesman_create: SalesmanCreate,
-    current_user: User = Depends(admin_required()),  # Only admins can create salesmen
+    current_user: User = Depends(admin_required_from_session()),  # Only admins can create salesmen
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -50,7 +49,7 @@ async def create_salesman(
 @router.get("/{salesman_id}", response_model=SalesmanRead)
 async def get_salesman(
     salesman_id: str,
-    current_user: User = Depends(employee_required()),  # Employees and above can view salesman details
+    current_user: User = Depends(employee_required_from_session()),  # Employees and above can view salesman details
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -79,7 +78,7 @@ async def get_salesman(
 async def update_salesman(
     salesman_id: str,
     salesman_update: SalesmanUpdate,
-    current_user: User = Depends(admin_required()),  # Only admins can update salesmen
+    current_user: User = Depends(admin_required_from_session()),  # Only admins can update salesmen
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -116,7 +115,7 @@ async def update_salesman(
 @router.delete("/{salesman_id}")
 async def delete_salesman(
     salesman_id: str,
-    current_user: User = Depends(admin_required()),  # Only admins can delete salesmen
+    current_user: User = Depends(admin_required_from_session()),  # Only admins can delete salesmen
     db: AsyncSession = Depends(get_db)
 ):
     """
