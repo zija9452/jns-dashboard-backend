@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     debug: bool = False
 
     # Database settings
-    database_url: str = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:password@localhost:5432/regal_pos_dev")
+    database_url: str = os.getenv("DATABASE_URL")
     database_pool_size: int = int(os.getenv("DATABASE_POOL_SIZE", "20"))
     database_max_overflow: int = int(os.getenv("DATABASE_MAX_OVERFLOW", "30"))
 

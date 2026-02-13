@@ -269,7 +269,7 @@ async def delete_admin(
         "message": "User deleted successfully"
     }
 
-@router.get("/getsalesman/{id}")
+@router.get("/GetSalesman/{id}")
 async def get_salesman(
     id: str,
     current_user: User = Depends(admin_required_from_session()),
@@ -647,6 +647,19 @@ async def view_admins(
 
     return result
 
+# Capitalized version for JavaScript frontend compatibility
+@router.get("/ViewAdmins")
+async def view_admins_capitalized(
+    search_string: str = None,
+    skip: int = 0,
+    limit: int = 100,
+    current_user: User = Depends(admin_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    View all admin users with optional search functionality (capitalized for JS frontend)
+    """
+    return await view_admins(search_string, skip, limit, current_user, db)
 
 @router.post("/createadmin")
 async def create_admin(
@@ -711,6 +724,23 @@ async def create_admin(
         "message": "Admin user created successfully"
     }
 
+# Capitalized version for JavaScript frontend compatibility
+@router.post("/CreateAdmin")
+async def create_admin_capitalized(
+    ad_name: str,
+    ad_role: str,
+    ad_phone: str = None,
+    ad_address: str = None,
+    ad_password: str = "",
+    ad_cnci: str = None,
+    ad_branch: str = None,
+    current_user: User = Depends(admin_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Create a new admin user - Capitalized endpoint for JS frontend compatibility
+    """
+    return await create_admin(ad_name, ad_role, ad_phone, ad_address, ad_password, ad_cnci, ad_branch, current_user, db)
 
 @router.put("/updateadmin/{id}")
 async def update_admin(
@@ -798,10 +828,29 @@ async def update_admin(
         "message": "Admin user updated successfully"
     }
 
+# Capitalized version for JavaScript frontend compatibility
+@router.put("/UpdateAdmin/{id}")
+async def update_admin_capitalized(
+    id: str,
+    ad_name: str = None,
+    ad_role: str = None,
+    ad_phone: str = None,
+    ad_address: str = None,
+    ad_password: str = None,
+    ad_cnic: str = None,
+    ad_branch: str = None,
+    current_user: User = Depends(admin_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Update admin user details - Capitalized endpoint for JS frontend compatibility
+    """
+    return await update_admin(id, ad_name, ad_role, ad_phone, ad_address, ad_password, ad_cnic, ad_branch, current_user, db)
+
 
 # Product-related endpoints required by the JavaScript frontend
 
-@router.get("/getmaxproid")
+@router.get("/GetMaxProId")
 async def get_max_pro_id(
     current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
@@ -824,7 +873,7 @@ async def get_max_pro_id(
 
     return max_id_num
 
-@router.get("/getproducts/{id}")
+@router.get("/GetProducts/{id}")
 async def get_products(
     id: str,
     current_user: User = Depends(admin_required_from_session()),
@@ -869,7 +918,7 @@ async def get_products(
 
     return product_data
 
-@router.get("/viewproduct")
+@router.get("/Viewproduct")
 async def view_product(
     search_string: str = None,
     branches: str = None,
@@ -924,7 +973,7 @@ async def view_product(
 
     return result
 
-@router.post("/deleteproduct/{id}")
+@router.post("/Deleteproduct/{id}")
 async def delete_product(
     id: str,
     current_user: User = Depends(admin_required_from_session()),  # Keep as admin only for security
@@ -956,7 +1005,7 @@ async def delete_product(
         "message": "Product deleted successfully"
     }
 
-@router.post("/deleteproductimage/{id}")
+@router.post("/DeleteProductImage/{id}")
 async def delete_product_image(
     id: str,
     current_user: User = Depends(admin_required_from_session()),  # Allow employees to manage product images
@@ -1020,7 +1069,7 @@ async def create_brand(
         "shelf": brand
     }
 
-@router.post("/deletebrand")
+@router.post("/Deletebrand")
 async def delete_brand(
     brand: str = None,
     current_user: User = Depends(admin_required_from_session()),  # Allow employees to delete brands
@@ -1043,7 +1092,7 @@ async def delete_brand(
         "message": f"Brand '{brand}' deleted successfully"
     }
 
-@router.post("/getstockdetail")
+@router.post("/GetStockDetail")
 async def get_stock_detail(
     pro_name: str = None,
     current_user: User = Depends(admin_required_from_session()),  # Allow employees to check stock details
@@ -1077,7 +1126,7 @@ async def get_stock_detail(
     else:
         return {"error": "Product not found"}
 
-@router.get("/getcustomervendorbybranch")
+@router.get("/GetCustomerVendorByBranch")
 async def get_customer_vendor_by_branch(
     branch: str = None,
     current_user: User = Depends(admin_required_from_session()),  # Allow employees to get category info
@@ -1106,7 +1155,7 @@ async def get_customer_vendor_by_branch(
 
 # Customer-related endpoints required by the JavaScript frontend
 
-@router.get("/getcustomer/{id}")
+@router.get("/GetCustomer/{id}")
 async def get_customer(
     id: str,
     current_user: User = Depends(admin_required_from_session()),
@@ -1171,7 +1220,7 @@ async def get_customer(
 
     return customer_data
 
-@router.get("/viewcustomer")
+@router.get("/Viewcustomer")
 async def view_customer(
     search_string: str = None,
     branches: str = None,
@@ -1265,7 +1314,7 @@ async def view_customer(
 
     return result
 
-@router.post("/deletecustomer/{id}")
+@router.post("/Deletecustomer/{id}")
 async def delete_customer(
     id: str,
     current_user: User = Depends(admin_required_from_session()),
@@ -1297,7 +1346,7 @@ async def delete_customer(
         "message": "Customer deleted successfully"
     }
 
-@router.post("/getcustomerbalance")
+@router.post("/Getcustomerbalance")
 async def get_customer_balance(
     branches: str = None,
     current_user: User = Depends(admin_required_from_session()),
@@ -1320,7 +1369,7 @@ async def get_customer_balance(
         "cus_balance": balance
     }
 
-@router.post("/customerviewreport")
+@router.post("/Customerviewreport")
 async def customer_view_report(
     timezone: str = None,
     current_user: User = Depends(admin_required_from_session()),
@@ -1350,7 +1399,7 @@ async def customer_view_report(
 
 # Vendor-related endpoints required by the JavaScript frontend
 
-@router.get("/getvendor/{id}")
+@router.get("/GetVendor/{id}")
 async def get_vendor(
     id: str,
     current_user: User = Depends(admin_required_from_session()),
@@ -1397,7 +1446,7 @@ async def get_vendor(
 
     return vendor_data
 
-@router.get("/viewvendor")
+@router.get("/Viewvendor")
 async def view_vendor(
     search_string: str = None,
     branches: str = None,
@@ -1481,7 +1530,7 @@ async def view_vendor(
 
     return result
 
-@router.post("/deletevendor/{id}")
+@router.post("/Deletevendor/{id}")
 async def delete_vendor(
     id: str,
     current_user: User = Depends(admin_required_from_session()),
@@ -1513,7 +1562,7 @@ async def delete_vendor(
         "message": "Vendor deleted successfully"
     }
 
-@router.post("/getvendorbalance")
+@router.post("/Getvendorbalance")
 async def get_vendor_balance(
     branches: str = None,
     current_user: User = Depends(admin_required_from_session()),
@@ -1536,7 +1585,7 @@ async def get_vendor_balance(
         "cus_balance": balance  # Using cus_balance as per the frontend expectation
     }
 
-@router.post("/vendorviewreport")
+@router.post("/Vendorviewreport")
 async def vendor_view_report(
     current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
@@ -1564,7 +1613,7 @@ async def vendor_view_report(
     return encoded_pdf
 
 
-@router.get("/getexpense/{id}")
+@router.get("/GetExpense/{id}")
 async def get_expense(
     id: str,
     current_user: User = Depends(admin_required_from_session()),
@@ -1602,7 +1651,7 @@ async def get_expense(
     return expense_data
 
 
-@router.get("/viewexpense")
+@router.get("/Viewexpense")
 async def view_expense(
     search_string: str = None,
     branches: str = None,
@@ -1653,7 +1702,7 @@ async def view_expense(
     return result
 
 
-@router.post("/getbranchexpense")
+@router.post("/Getbranchexpense")
 async def get_branch_expense(
     branches: str = None,
     current_user: User = Depends(admin_required_from_session()),
@@ -1684,7 +1733,7 @@ async def get_branch_expense(
     }
 
 
-@router.post("/createexpense")
+@router.post("/CreateExpense")
 async def create_expense_frontend(
     e_name: str,
     e_amount: float,
@@ -1727,7 +1776,7 @@ async def create_expense_frontend(
     }
 
 
-@router.put("/updateexpense/{id}")
+@router.put("/UpdateExpense/{id}")
 async def update_expense_frontend(
     id: str,
     e_name: str = None,
@@ -1788,7 +1837,7 @@ async def update_expense_frontend(
     }
 
 
-@router.post("/deleteexpense/{id}")
+@router.post("/DeleteExpense/{id}")
 async def delete_expense_frontend(
     id: str,
     current_user: User = Depends(admin_required_from_session()),
@@ -1819,7 +1868,7 @@ async def delete_expense_frontend(
     }
 # Stock Management Endpoints required by the JavaScript frontend
 
-@router.get("/viewstock")
+@router.get("/ViewStock")
 async def view_stock(
     search_string: str = None,
     branches: str = None,
@@ -1928,7 +1977,7 @@ async def search_stock(
     return result
 
 
-@router.post("/adjuststock")
+@router.post("/Adjuststock")
 async def adjust_stock(
     stock_items: List[Dict] = None,
     timezone: str = None,
@@ -2031,7 +2080,7 @@ async def adjust_stock(
     return encoded_pdf
 
 
-@router.post("/savestockin")
+@router.post("/SaveStockIn")
 async def save_stock_in(
     stock_items: List[Dict] = None,
     timezone: str = None,
@@ -2132,7 +2181,7 @@ async def save_stock_in(
     }
 
 
-@router.post("/stockreport")
+@router.post("/StockReport")
 async def stock_report(
     cat_name: str = None,
     pro_name: str = None,
@@ -2179,7 +2228,7 @@ async def stock_report(
     return encoded_pdf
 
 
-@router.post("/stockreportexcel")
+@router.post("/StockReportexcel")
 async def stock_report_excel(
     cat_name: str = None,
     pro_name: str = None,
@@ -2254,7 +2303,7 @@ async def stock_report_excel(
     return encoded_excel
 
 
-@router.post("/dailyinventoryreport")
+@router.post("/Dailyinventoryreport")
 async def daily_inventory_report(
     current_user: User = Depends(admin_required_from_session()),  # Only admin can generate reports
     db: AsyncSession = Depends(get_db)
@@ -2285,7 +2334,7 @@ async def daily_inventory_report(
     return encoded_pdf
 
 
-@router.post("/printbarcodes")
+@router.post("/PrintBarcodes")
 async def print_barcodes(
     pro_name: str,
     quantity: int,
@@ -2354,7 +2403,7 @@ async def print_barcodes(
 
 
 # Enhanced SaveStockIn to include barcode printing capability
-@router.post("/savestockinwithbarcodes")
+@router.post("/SaveStockInWithBarcodes")
 async def save_stock_in_with_barcodes(
     stock_items: List[Dict] = None,
     timezone: str = None,
@@ -2491,3 +2540,4 @@ async def save_stock_in_with_barcodes(
         response["print_requested"] = True
 
     return response
+

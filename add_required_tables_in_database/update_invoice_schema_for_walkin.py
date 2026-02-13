@@ -12,9 +12,6 @@ load_dotenv()
 
 # Get database URL from environment
 DATABASE_URL = os.getenv("DATABASE_URL", os.getenv("NEON_DATABASE_URL", ""))
-if not DATABASE_URL:
-    # Default fallback URL - using the one from docker-compose.yml
-    DATABASE_URL = "postgresql+asyncpg://neondb_owner:npg_DSJeaHiRo69W@ep-falling-base-ahj4k5gl-pooler.c-3.us-east-1.aws.neon.tech:5432/neondb"
 
 # Convert from sqlalchemy asyncpg format to regular postgresql format if needed
 if DATABASE_URL.startswith("postgresql+asyncpg"):

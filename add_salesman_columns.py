@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Get database URL from environment or use default
-DATABASE_URL = os.getenv("DATABASE_URL", os.getenv("NEON_DATABASE_URL", "postgresql://neondb_owner:npg_DSJeaHiRo69W@ep-falling-base-ahj4k5gl-pooler.c-3.us-east-1.aws.neon.tech:5432/neondb"))
+DATABASE_URL = os.getenv("DATABASE_URL", os.getenv("NEON_DATABASE_URL", "postgresql://your_db_user:your_db_password@your_db_host:5432/your_db_name"))
 
 async def add_missing_columns():
     """Add missing columns to the salesman table"""

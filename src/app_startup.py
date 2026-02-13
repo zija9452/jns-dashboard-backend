@@ -1,4 +1,5 @@
 import asyncio
+import os
 from sqlmodel import SQLModel
 from .database.database import engine
 from .models.user import User
@@ -77,12 +78,16 @@ async def create_admin_user(db_session):
             await db_session.commit()
             await db_session.refresh(admin_role)
 
+        # Get admin credentials from environment variables
+        admin_username = os.getenv('ADMIN_USERNAME')
+        admin_password = os.getenv('ADMIN_PASSWORD')
+        
         # Create default admin user
         admin_user = User(
             full_name="Admin User",
-            email="admin@regalpos.com",
-            username="admin",
-            password_hash=get_password_hash("admin123"),  # Default password
+            email=f"{admin_username}@regalpos.com",
+            username=admin_username,
+            password_hash=get_password_hash(admin_password),  # Use password from environment
             role_id=admin_role.id,
             is_active=True
         )
@@ -90,7 +95,7 @@ async def create_admin_user(db_session):
         db_session.add(admin_user)
         await db_session.commit()
 
-        print("Default admin user created: username: admin, password: admin123")
+        print(f"Default admin user created: username: {admin_username}, password: {admin_password}")
 
 
 async def initialize_database():
