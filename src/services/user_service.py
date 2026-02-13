@@ -32,6 +32,7 @@ class UserService:
             address=user_create.address,
             cnic=user_create.cnic,
             branch=user_create.branch,
+            company_id=user_create.company_id,  # Include company_id from user_create
             is_active=user_create.is_active if hasattr(user_create, 'is_active') else True
         )
 

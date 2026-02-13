@@ -4,6 +4,7 @@ from typing import List, Dict, Any
 from uuid import UUID
 import uuid
 from datetime import datetime, timedelta
+from pydantic import BaseModel
 
 from ..database.database import get_db
 from ..models.user import User  # Import User at the top to avoid NameError
@@ -18,6 +19,25 @@ from ..services.invoice_service import InvoiceService
 from ..services.customer_service import CustomerService
 from ..services.expense_service import ExpenseService
 from ..services.stock_service import StockService
+
+# Pydantic models for request bodies
+class CreateAdminRequest(BaseModel):
+    ad_name: str
+    ad_role: str
+    ad_phone: str = None
+    ad_address: str = None
+    ad_password: str = ""
+    ad_cnic: str = None
+    ad_branch: str = None
+
+class UpdateAdminRequest(BaseModel):
+    ad_name: str = None
+    ad_role: str = None
+    ad_phone: str = None
+    ad_address: str = None
+    ad_password: str = None
+    ad_cnic: str = None
+    ad_branch: str = None
 
 router = APIRouter()
 
@@ -650,13 +670,7 @@ async def view_admins(
 
 @router.post("/createadmin")
 async def create_admin(
-    ad_name: str,
-    ad_role: str,
-    ad_phone: str = None,
-    ad_address: str = None,
-    ad_password: str = "",
-    ad_cnic: str = None,
-    ad_branch: str = None,
+    request: CreateAdminRequest,
     current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
@@ -668,12 +682,12 @@ async def create_admin(
     from sqlalchemy import select
 
     # Check if role exists
-    role_result = await db.execute(select(Role).where(Role.name == ad_role))
+    role_result = await db.execute(select(Role).where(Role.name == request.ad_role))
     role = role_result.scalar_one_or_none()
     if not role:
         # Create the role if it doesn't exist
         from uuid import UUID
-        role = Role(name=ad_role, permissions="{}")
+        role = Role(name=request.ad_role, permissions="{}")
         db.add(role)
         await db.commit()
         await db.refresh(role)
@@ -682,20 +696,22 @@ async def create_admin(
     from ..models.user import UserCreate
     import uuid
     # Generate unique email by adding a random suffix to avoid conflicts
-    base_email = ad_name.replace(' ', '.').lower()
+    base_email = request.ad_name.replace(' ', '.').lower()
     unique_email = f"{base_email}.{str(uuid.uuid4())[:8]}@example.com"
-    unique_username = f"{ad_name.replace(' ', '').lower()}.{str(uuid.uuid4())[:8]}"
+    unique_username = f"{request.ad_name.replace(' ', '').lower()}.{str(uuid.uuid4())[:8]}"
 
+    # Create user with all required fields, explicitly setting company_id to None to avoid foreign key constraint
     user_create = UserCreate(
-        full_name=ad_name,
+        full_name=request.ad_name,
         email=unique_email,  # Default email with unique suffix
         username=unique_username,
         role_id=role.id,
-        phone=ad_phone,
-        address=ad_address,
-        cnic=ad_cnic,
-        branch=ad_branch,
-        password=ad_password if ad_password else "default_password123"
+        phone=request.ad_phone,
+        address=request.ad_address,
+        cnic=request.ad_cnic,
+        branch=request.ad_branch,
+        password=request.ad_password if request.ad_password else "default_password123",
+        company_id=None  # Explicitly set to None to avoid foreign key constraint issue
     )
 
     created_user = await UserService.create_user(db, user_create)
@@ -704,10 +720,10 @@ async def create_admin(
         "ad_id": str(created_user.id),
         "ad_name": created_user.full_name,
         "ad_role": role.name,
-        "ad_phone": ad_phone or "",
-        "ad_address": ad_address or "",
-        "ad_cnic": ad_cnic or "",
-        "ad_branch": ad_branch or "",
+        "ad_phone": request.ad_phone or "",
+        "ad_address": request.ad_address or "",
+        "ad_cnic": request.ad_cnic or "",
+        "ad_branch": request.ad_branch or "",
         "message": "Admin user created successfully"
     }
 
@@ -715,13 +731,7 @@ async def create_admin(
 @router.put("/updateadmin/{id}")
 async def update_admin(
     id: str,
-    ad_name: str = None,
-    ad_role: str = None,
-    ad_phone: str = None,
-    ad_address: str = None,
-    ad_password: str = None,
-    ad_cnic: str = None,
-    ad_branch: str = None,
+    request: UpdateAdminRequest,
     current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
@@ -748,26 +758,26 @@ async def update_admin(
     from ..models.user import UserUpdate
     update_data = {}
 
-    if ad_name is not None:
-        update_data["full_name"] = ad_name
-    if ad_phone is not None:
-        update_data["phone"] = ad_phone
-    if ad_address is not None:
-        update_data["address"] = ad_address
-    if ad_cnic is not None:
-        update_data["cnic"] = ad_cnic
-    if ad_branch is not None:
-        update_data["branch"] = ad_branch
+    if request.ad_name is not None:
+        update_data["full_name"] = request.ad_name
+    if request.ad_phone is not None:
+        update_data["phone"] = request.ad_phone
+    if request.ad_address is not None:
+        update_data["address"] = request.ad_address
+    if request.ad_cnic is not None:
+        update_data["cnic"] = request.ad_cnic
+    if request.ad_branch is not None:
+        update_data["branch"] = request.ad_branch
 
-    if ad_role:
+    if request.ad_role:
         from ..models.role import Role
         from sqlalchemy import select
-        role_result = await db.execute(select(Role).where(Role.name == ad_role))
+        role_result = await db.execute(select(Role).where(Role.name == request.ad_role))
         role = role_result.scalar_one_or_none()
         if role:
             update_data["role_id"] = str(role.id)  # Convert UUID to string for audit logging
 
-    if ad_password:
+    if request.ad_password:
         # In a real implementation, you'd hash the password here
         # For now, we'll skip updating the password in this example
         pass
@@ -1564,259 +1574,6 @@ async def vendor_view_report(
     return encoded_pdf
 
 
-@router.get("/getexpense/{id}")
-async def get_expense(
-    id: str,
-    current_user: User = Depends(admin_required_from_session()),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Retrieve specific expense details by ID
-    Required by JavaScript frontend
-    """
-    try:
-        expense_id = UUID(id)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid expense ID format"
-        )
-
-    expense = await ExpenseService.get_expense(db, expense_id)
-    if not expense:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Expense not found"
-        )
-
-    # Map to the expected frontend fields
-    expense_data = {
-        "e_id": str(expense.id),
-        "e_name": expense.expense_type,
-        "e_amount": float(expense.amount),
-        "et_id_fk": str(expense.created_by),  # Using created_by as the expense type FK
-        "e_date": expense.expense_date.isoformat() if expense.expense_date else None,
-        "note": expense.note or ""
-    }
-
-    return expense_data
-
-
-@router.get("/viewexpense")
-async def view_expense(
-    search_string: str = None,
-    branches: str = None,
-    skip: int = 0,
-    limit: int = 100,
-    current_user: User = Depends(admin_required_from_session()),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    View expenses with search and branch filtering
-    Required by JavaScript frontend
-    """
-    # Get all expenses with pagination
-    expenses = await ExpenseService.get_expenses(db, skip=skip, limit=limit)
-
-    # Apply filters
-    filtered_expenses = []
-    for expense in expenses:
-        # Apply branch filter if provided
-        # For expenses, we'll use the created_by user's branch or some other branch association
-        # Since the expense model doesn't have a direct branch field, we'll skip this for now
-        # or we can filter based on user's branch who created the expense
-
-        # Apply search filter if provided
-        should_include = True
-        if search_string:
-            search_lower = search_string.lower()
-            if (search_lower not in expense.expense_type.lower() and
-                search_lower not in (expense.note or "").lower()):
-                should_include = False
-
-        if should_include:
-            filtered_expenses.append(expense)
-
-    # Format the response to match expected frontend structure
-    result = []
-    for expense in filtered_expenses:
-        result.append({
-            "e_id": str(expense.id),
-            "e_name": expense.expense_type,
-            "e_amount": float(expense.amount),
-            "et_id_fk": str(expense.created_by),
-            "e_date": expense.expense_date.isoformat() if expense.expense_date else None,
-            "note": expense.note or "",
-            "branch": getattr(expense, 'branch', '') or ''  # Will be empty since expense model doesn't have branch
-        })
-
-    return result
-
-
-@router.post("/getbranchexpense")
-async def get_branch_expense(
-    branches: str = None,
-    current_user: User = Depends(admin_required_from_session()),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Get branch expense total
-    Required by JavaScript frontend
-    """
-    from sqlalchemy import select, func
-    from ..models.expense import Expense
-
-    # Calculate total expenses for the branch
-    # Since expense model doesn't have a direct branch field, we'll calculate all expenses
-    # Or we could filter by users in a specific branch if needed
-
-    statement = select(func.sum(Expense.amount).label('total'))
-    result = await db.execute(statement)
-    total_expense = result.scalar_one_or_none()
-
-    if total_expense is None:
-        total_expense = 0
-    else:
-        total_expense = float(total_expense)
-
-    return {
-        "cus_balance": total_expense  # Using cus_balance as per the frontend expectation
-    }
-
-
-@router.post("/createexpense")
-async def create_expense_frontend(
-    e_name: str,
-    e_amount: float,
-    et_id_fk: str = None,
-    note: str = None,
-    current_user: User = Depends(admin_required_from_session()),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Create a new expense via frontend
-    Required by JavaScript frontend
-    """
-    from ..models.expense import ExpenseCreate
-    from datetime import date
-
-    try:
-        from uuid import UUID
-        created_by_uuid = UUID(et_id_fk) if et_id_fk else current_user.id
-    except ValueError:
-        created_by_uuid = current_user.id
-
-    from decimal import Decimal
-    expense_create = ExpenseCreate(
-        expense_type=e_name,
-        amount=Decimal(str(e_amount)),
-        created_by=created_by_uuid,
-        note=note
-    )
-
-    expense = await ExpenseService.create_expense(db, expense_create)
-
-    # Return in frontend-compatible format
-    return {
-        "e_id": str(expense.id),
-        "e_name": expense.expense_type,
-        "e_amount": float(expense.amount) if expense.amount else 0.0,
-        "et_id_fk": str(expense.created_by),
-        "e_date": expense.expense_date.isoformat() if expense.expense_date else None,
-        "note": expense.note or ""
-    }
-
-
-@router.put("/updateexpense/{id}")
-async def update_expense_frontend(
-    id: str,
-    e_name: str = None,
-    e_amount: float = None,
-    note: str = None,
-    current_user: User = Depends(admin_required_from_session()),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Update an expense via frontend
-    Required by JavaScript frontend
-    """
-    try:
-        expense_id = UUID(id)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid expense ID format"
-        )
-
-    expense = await ExpenseService.get_expense(db, expense_id)
-    if not expense:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Expense not found"
-        )
-
-    # Prepare update data
-    expense_update = {}
-    if e_name is not None:
-        expense_update["expense_type"] = e_name
-    if e_amount is not None:
-        from decimal import Decimal
-        expense_update["amount"] = float(e_amount)  # Use float instead of Decimal to avoid JSON serialization issues
-    if note is not None:
-        expense_update["note"] = note
-
-    from ..models.expense import ExpenseUpdate
-    # Convert amount to Decimal only if it's present and it's a float
-    if "amount" in expense_update and expense_update["amount"] is not None:
-        from decimal import Decimal
-        expense_update["amount"] = Decimal(str(expense_update["amount"]))
-
-    update_obj = ExpenseUpdate(**expense_update)
-
-    update_obj = ExpenseUpdate(**expense_update)
-
-    updated_expense = await ExpenseService.update_expense(db, expense_id, update_obj)
-
-    # Return in frontend-compatible format
-    return {
-        "e_id": str(updated_expense.id),
-        "e_name": updated_expense.expense_type,
-        "e_amount": float(updated_expense.amount) if updated_expense.amount else 0.0,
-        "et_id_fk": str(updated_expense.created_by),
-        "e_date": updated_expense.expense_date.isoformat() if updated_expense.expense_date else None,
-        "note": updated_expense.note or ""
-    }
-
-
-@router.post("/deleteexpense/{id}")
-async def delete_expense_frontend(
-    id: str,
-    current_user: User = Depends(admin_required_from_session()),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Delete an expense via frontend
-    Required by JavaScript frontend
-    """
-    try:
-        expense_id = UUID(id)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid expense ID format"
-        )
-
-    success = await ExpenseService.delete_expense(db, expense_id)
-    if not success:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Expense not found"
-        )
-
-    return {
-        "success": True,
-        "message": "Expense deleted successfully"
-    }
 # Stock Management Endpoints required by the JavaScript frontend
 
 @router.get("/viewstock")

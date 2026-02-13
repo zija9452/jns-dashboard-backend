@@ -28,7 +28,7 @@ class User(UserBase, table=True):
     address: Optional[str] = Field(default=None, max_length=200)  # Address field
     cnic: Optional[str] = Field(default=None, max_length=20)  # CNIC field
     branch: Optional[str] = Field(default=None, max_length=50)  # Branch field
-    company_id: Optional[uuid.UUID] = Field(default=None, foreign_key="companies.id")  # Company association
+    company_id: Optional[uuid.UUID] = Field(default=None)  # Company association (foreign key removed due to missing companies table)
     biometric_hash: Optional[str] = Field(default=None, max_length=255)  # For employee biometric data
     is_biometric_enabled: bool = Field(default=False)  # Whether biometric auth is enabled
     biometric_device_id: Optional[str] = Field(default=None, max_length=255)  # For device registration
