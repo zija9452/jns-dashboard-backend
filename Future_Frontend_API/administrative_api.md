@@ -55,19 +55,33 @@ curl -X GET http://localhost:8000/admin/getadmin/8fc7528b-c3a2-4b36-a39a-68c1369
 
 **Authentication**: Admin role required
 
-**Query Parameters**:
-- `ad_name`: Full name of the admin user
-- `ad_role`: Role (admin, cashier, employee)
-- `ad_phone`: Phone number (optional)
-- `ad_address`: Address (optional)
-- `ad_password`: Password (optional, defaults to "default_password123")
-- `ad_cnic`: CNIC number (optional)
-- `ad_branch`: Branch (optional)
+**Request Body** (JSON):
+```json
+{
+  "ad_name": "Full name of the admin user",
+  "ad_role": "Role (admin, cashier, employee)",
+  "ad_phone": "Phone number (optional)",
+  "ad_address": "Address (optional)",
+  "ad_password": "Password (optional, defaults to 'default_password123')",
+  "ad_cnic": "CNIC number (optional)",
+  "ad_branch": "Branch (optional)"
+}
+```
 
 **Example**:
 ```bash
-curl -X POST "http://localhost:8000/admin/createadmin?ad_name=New%20Admin&ad_role=admin&ad_phone=1234567890&ad_address=New%20Address&ad_cnic=123456789&ad_branch=Main%20Branch" \
-  -b cookies.txt
+curl -X POST "http://localhost:8000/admin/createadmin" \
+  -H "Content-Type: application/json" \
+  -H "Cookie: session_token=your_session_token" \
+  -d '{
+    "ad_name": "New Admin",
+    "ad_role": "admin",
+    "ad_phone": "1234567890",
+    "ad_address": "New Address",
+    "ad_password": "secure_password",
+    "ad_cnic": "123456789",
+    "ad_branch": "Main Branch"
+  }'
 ```
 
 **Response**:
@@ -95,19 +109,28 @@ curl -X POST "http://localhost:8000/admin/createadmin?ad_name=New%20Admin&ad_rol
 **Path Parameter**:
 - `{id}`: UUID of the admin user to update
 
-**Query Parameters** (all optional):
-- `ad_name`: Updated full name
-- `ad_role`: Updated role
-- `ad_phone`: Updated phone number
-- `ad_address`: Updated address
-- `ad_password`: Updated password
-- `ad_cnic`: Updated CNIC number
-- `ad_branch`: Updated branch
+**Request Body** (JSON, all fields optional):
+```json
+{
+  "ad_name": "Updated full name",
+  "ad_role": "Updated role",
+  "ad_phone": "Updated phone number",
+  "ad_address": "Updated address",
+  "ad_password": "Updated password",
+  "ad_cnic": "Updated CNIC number",
+  "ad_branch": "Updated branch"
+}
+```
 
 **Example**:
 ```bash
-curl -X PUT "http://localhost:8000/admin/updateadmin/uuid-string?ad_name=Updated%20Name&ad_phone=0987654321" \
-  -b cookies.txt
+curl -X PUT "http://localhost:8000/admin/updateadmin/uuid-string" \
+  -H "Content-Type: application/json" \
+  -H "Cookie: session_token=your_session_token" \
+  -d '{
+    "ad_name": "Updated Name",
+    "ad_phone": "0987654321"
+  }'
 ```
 
 **Response**:
@@ -157,10 +180,10 @@ curl -X POST http://localhost:8000/admin/deleteadmin/uuid-string \
 
 **Description**: Get a list of all admin users with optional search functionality.
 
-**Authentication**: Admin role required
+**Authentication**: Admin role required (admin or cashier roles can access)
 
 **Query Parameters** (optional):
-- `search_string`: Search term to filter users
+- `search_string`: Search term to filter users (searches in name, username, email, phone, address, cnic)
 - `skip`: Number of records to skip (for pagination)
 - `limit`: Maximum number of records to return (default 100)
 
