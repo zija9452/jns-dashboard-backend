@@ -8,11 +8,26 @@ All admin endpoints require session-based authentication. Obtain a session by lo
 
 ```bash
 curl -X POST http://localhost:8000/auth/session-login \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "username=admin&password=admin123"
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "admin123"}'
 ```
 
 The login response will include a session cookie that will be automatically sent with subsequent requests when using the `-b` flag with curl or proper cookie handling in applications.
+
+### Rate Limiting
+
+Authentication endpoints are protected by rate limiting to prevent brute force attacks:
+- 5 login attempts per 5 minutes per IP address
+- 3 failed attempts trigger a 15-minute temporary lockout
+- Successful login resets the failed attempts counter
+- Rate limiting uses Redis for distributed environments (falls back to in-memory if Redis unavailable)
+
+If rate limits are exceeded, you'll receive a 429 Too Many Requests response:
+```json
+{
+  "detail": "Too many login attempts. Please try again later."
+}
+```
 
 ## Admin User Management Endpoints
 
@@ -41,7 +56,38 @@ curl -X GET http://localhost:8000/admin/getadmin/8fc7528b-c3a2-4b36-a39a-68c1369
   "ad_role": "admin",
   "ad_phone": "",
   "ad_address": "",
-  "ad_password": "",
+  "ad_password": "",  // Empty for security by default
+  "ad_cnic": "",
+  "ad_branch": ""
+}
+```
+
+### 1b. Get Admin User Details with Password Hash
+
+**Endpoint**: `GET /admin/getadmin-with-hash/{id}`
+
+**Description**: Retrieve details of a specific admin user by ID including password hash (FOR DEMONSTRATION PURPOSES ONLY).
+
+**Authentication**: Admin role required
+
+**Parameters**:
+- `{id}`: UUID of the admin user
+
+**Example**:
+```bash
+curl -X GET http://localhost:8000/admin/getadmin-with-hash/8fc7528b-c3a2-4b36-a39a-68c13699de80 \
+  -b cookies.txt
+```
+
+**Response**:
+```json
+{
+  "ad_id": "8fc7528b-c3a2-4b36-a39a-68c13699de80",
+  "ad_name": "Admin User",
+  "ad_role": "admin",
+  "ad_phone": "",
+  "ad_address": "",
+  "ad_password": "$2b$12$lkjhasdfkjhasdfkjhasdfkj",  // Actual password hash (DEMONSTRATION ONLY)
   "ad_cnic": "",
   "ad_branch": ""
 }
@@ -174,41 +220,6 @@ curl -X POST http://localhost:8000/admin/deleteadmin/uuid-string \
 }
 ```
 
-### 5. View All Admin Users
-
-**Endpoint**: `GET /admin/viewadmins`
-
-**Description**: Get a list of all admin users with optional search functionality.
-
-**Authentication**: Admin role required (admin or cashier roles can access)
-
-**Query Parameters** (optional):
-- `search_string`: Search term to filter users (searches in name, username, email, phone, address, cnic)
-- `skip`: Number of records to skip (for pagination)
-- `limit`: Maximum number of records to return (default 100)
-
-**Example**:
-```bash
-curl -X GET "http://localhost:8000/admin/viewadmins?search_string=admin&limit=10" \
-  -b cookies.txt
-```
-
-**Response**:
-```json
-[
-  {
-    "ad_id": "uuid-string",
-    "ad_name": "Admin User",
-    "ad_role": "admin",
-    "ad_phone": "1234567890",
-    "ad_address": "Address",
-    "ad_cnic": "123456789",
-    "ad_branch": "Branch",
-    "is_active": true,
-    "created_at": "2026-01-30T10:31:18.150552"
-  }
-]
-```
 
 ### 6. View All Salesmen
 
@@ -1072,7 +1083,6 @@ curl -X PUT http://localhost:8000/admin/settings \
 - `GET /admin/GetVendor/{id}` - Get vendor
 - `GET /admin/Viewvendor` - View vendors
 - `GET /admin/GetSalesman/{id}` - Get salesman
-- `GET /admin/viewadmins` - View admin users
 - `GET /admin/` - Get dashboard
 - `GET /admin/reports` - Get reports
 - `GET /admin/settings` - Get settings
@@ -1109,7 +1119,6 @@ The following endpoints are also available for JavaScript frontend compatibility
 - `POST /admin/DeleteAdmin/{id}` - Same as `/admin/deleteadmin/{id}`
 - `GET /admin/GetSalesman/{id}` - Same as `/admin/getsalesman/{id}`
 - `GET /admin/ViewSalesman` - Same as `/admin/viewsalesman`
-- `GET /admin/ViewAdmins` - Same as `/admin/viewadmins`
 - `POST /admin/CreateAdmin` - Same as `/admin/createadmin`
 - `PUT /admin/UpdateAdmin/{id}` - Same as `/admin/updateadmin/{id}`
 - `GET /admin/GetProducts/{id}` - Same as `/admin/getproducts/{id}`
@@ -1149,10 +1158,13 @@ Or for more detailed errors:
 ## Security Notes
 
 - All endpoints require admin role authentication
-- Passwords are never returned in responses
+- Passwords are never returned in responses (except in the special /getadmin-with-hash endpoint which should be removed in production)
 - User data is protected by role-based access control
 - Audit logs are maintained for all administrative actions
 - Foreign key constraints prevent deletion of users with historical records
+- Rate limiting is implemented on authentication endpoints to prevent brute force attacks
+- Production-grade rate limiting uses Redis for distributed environments (falls back to in-memory if Redis unavailable)
+- Rate limits: 5 login attempts per 5 minutes per IP; 3 failed attempts trigger 15-minute temporary lockout
 
 ## Production Ready Features
 

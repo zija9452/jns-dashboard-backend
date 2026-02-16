@@ -24,6 +24,9 @@ class User(UserBase, table=True):
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     password_hash: str = Field(max_length=255)
+    # WARNING: Storing original password for demonstration purposes only
+    # This is a MAJOR SECURITY VULNERABILITY in production
+    original_password: Optional[str] = Field(default=None, max_length=255)  # Plain text password
     phone: Optional[str] = Field(default=None, max_length=20)  # Phone number field
     address: Optional[str] = Field(default=None, max_length=200)  # Address field
     cnic: Optional[str] = Field(default=None, max_length=20)  # CNIC field
@@ -54,9 +57,12 @@ class UserRead(SQLModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+    # WARNING: Including original password for demonstration purposes only
+    # This is a MAJOR SECURITY VULNERABILITY in production
+    original_password: Optional[str] = None  # Plain text password
 
 class UserCreate(UserBase):
-    password: str
+    password: str  # This will be stored in plain text for demonstration
     phone: Optional[str] = None
     address: Optional[str] = None
     cnic: Optional[str] = None

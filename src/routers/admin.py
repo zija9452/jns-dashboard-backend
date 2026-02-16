@@ -237,7 +237,52 @@ async def get_admin(
         "ad_role": role.name if role else "unknown",
         "ad_phone": user.phone or "",
         "ad_address": user.address or "",
-        "ad_password": "",  # Never return actual password
+        "ad_password": "",  # Never return actual password - this is correct
+        "ad_cnic": user.cnic or "",
+        "ad_branch": user.branch or ""
+    }
+
+    return admin_data
+
+@router.get("/getadmin-with-hash/{id}")
+async def get_admin_with_hash(
+    id: str,
+    current_user: User = Depends(admin_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Retrieve admin user details by ID including hashed password (FOR EDUCATIONAL PURPOSES ONLY)
+    This endpoint demonstrates how to access the hashed password but should NEVER BE USED IN PRODUCTION
+    """
+    try:
+        user_id = UUID(id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user ID format"
+        )
+
+    user = await UserService.get_user(db, user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    # Get the user's role name
+    from ..models.role import Role
+    from sqlalchemy import select
+    role_result = await db.execute(select(Role).where(Role.id == user.role_id))
+    role = role_result.scalar_one_or_none()
+
+    # Map to the expected frontend fields including the hashed password
+    admin_data = {
+        "ad_id": str(user.id),
+        "ad_name": user.full_name,
+        "ad_role": role.name if role else "unknown",
+        "ad_phone": user.phone or "",
+        "ad_address": user.address or "",
+        "ad_password": user.password_hash,  # THIS IS THE HASHED PASSWORD - DO NOT USE IN PRODUCTION
         "ad_cnic": user.cnic or "",
         "ad_branch": user.branch or ""
     }
@@ -365,66 +410,6 @@ async def view_salesman(
             "sal_phone": salesman.phone or "",  # Using actual phone field from model
             "sal_address": salesman.address or "",  # Using actual address field from model
             "branch": salesman.branch or ""  # Using actual branch field from model
-        })
-
-    return result
-
-# JavaScript frontend seems to call this endpoint for admin search (likely copy-paste error)
-# So we'll also provide admin user search under the same endpoint name
-@router.get("/viewadmin")
-async def view_admin(
-    search_string: str = None,
-    skip: int = 0,
-    limit: int = 100,
-    current_user: User = Depends(admin_required_from_session()),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    View admin users with optional search functionality
-    Required by JavaScript frontend - alternative to viewsalesman for admin users
-    """
-    from ..models.role import Role
-    from sqlalchemy import select
-
-    # Get all users, with optional search
-    all_users = await UserService.get_users(db, skip=skip, limit=limit)
-
-    # Filter for admin users only
-    admin_users = []
-    for user in all_users:
-        role_result = await db.execute(select(Role).where(Role.id == user.role_id))
-        role = role_result.scalar_one_or_none()
-        if role and (role.name == "admin" or role.name == "employee" or role.name == "cashier"):  # Include all staff roles
-            admin_users.append(user)
-
-    # Filter by search string if provided
-    if search_string:
-        search_lower = search_string.lower()
-        filtered_users = []
-        for user in admin_users:
-            if (search_lower in user.full_name.lower() or
-                search_lower in user.username.lower() or
-                search_lower in user.email.lower() or
-                search_lower in (user.phone or "").lower() or
-                search_lower in (user.address or "").lower() or
-                search_lower in (user.cnic or "").lower()):
-                filtered_users.append(user)
-        admin_users = filtered_users
-
-    # Format the response to match expected frontend structure
-    result = []
-    for user in admin_users:
-        role_result = await db.execute(select(Role).where(Role.id == user.role_id))
-        role = role_result.scalar_one_or_none()
-
-        result.append({
-            "ad_id": str(user.id),
-            "ad_name": user.full_name,
-            "ad_role": role.name if role else "unknown",
-            "ad_phone": user.phone or "",
-            "ad_address": user.address or "",
-            "ad_cnic": user.cnic or "",
-            "ad_branch": user.branch or ""
         })
 
     return result
@@ -609,63 +594,6 @@ async def customer_order_report(
     return encoded_pdf
 
 
-
-
-@router.get("/viewadmins")
-async def view_admins(
-    search_string: str = None,
-    skip: int = 0,
-    limit: int = 100,
-    current_user: User = Depends(admin_required_from_session()),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    View all admin users with optional search functionality
-    """
-    from ..models.role import Role
-    from sqlalchemy import select
-
-    # Get all users with role 'admin'
-    all_users = await UserService.get_users(db, skip=skip, limit=limit)
-
-    # Filter for admin users only
-    admin_users = []
-    for user in all_users:
-        role_result = await db.execute(select(Role).where(Role.id == user.role_id))
-        role = role_result.scalar_one_or_none()
-        if role and role.name == "admin":
-            admin_users.append(user)
-
-    # Filter by search string if provided
-    if search_string:
-        search_lower = search_string.lower()
-        filtered_users = []
-        for user in admin_users:
-            if (search_lower in user.full_name.lower() or
-                search_lower in user.username.lower() or
-                search_lower in user.email.lower()):
-                filtered_users.append(user)
-        admin_users = filtered_users
-
-    # Format the response
-    result = []
-    for user in admin_users:
-        role_result = await db.execute(select(Role).where(Role.id == user.role_id))
-        role = role_result.scalar_one_or_none()
-
-        result.append({
-            "ad_id": str(user.id),
-            "ad_name": user.full_name,
-            "ad_role": role.name if role else "unknown",
-            "ad_phone": user.phone or "",
-            "ad_address": user.address or "",
-            "ad_cnic": user.cnic or "",
-            "ad_branch": user.branch or "",
-            "is_active": user.is_active,
-            "created_at": user.created_at.isoformat()
-        })
-
-    return result
 
 
 @router.post("/createadmin")

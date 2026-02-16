@@ -4,16 +4,31 @@ from typing import Dict, Optional
 from collections import defaultdict
 from datetime import datetime, timedelta
 import hashlib
+import redis
+import os
+from functools import wraps
 
 class RateLimiter:
     """
-    Simple in-memory rate limiter
-    In production, you'd want to use Redis or similar for distributed rate limiting
+    Production-ready rate limiter supporting both in-memory and Redis backends
     """
 
     def __init__(self):
-        self.requests = defaultdict(list)  # IP -> list of request timestamps
-        self.blocked_ips = {}  # IP -> unblock_time
+        # Try to connect to Redis for distributed rate limiting
+        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+        try:
+            self.redis_client = redis.from_url(redis_url, decode_responses=True)
+            self.use_redis = True
+            print("Using Redis for rate limiting")
+        except:
+            print("Redis not available, falling back to in-memory rate limiting")
+            self.requests = defaultdict(list)  # IP -> list of request timestamps
+            self.blocked_ips = {}  # IP -> unblock_time
+            self.use_redis = False
+
+    def _get_redis_key(self, identifier: str, key_type: str = "requests") -> str:
+        """Generate Redis key for the given identifier and type"""
+        return f"rate_limit:{key_type}:{identifier}"
 
     def is_allowed(self, identifier: str, limit: int, window: int) -> bool:
         """
@@ -27,6 +42,53 @@ class RateLimiter:
         Returns:
             True if request is allowed, False otherwise
         """
+        if self.use_redis:
+            return self._is_allowed_redis(identifier, limit, window)
+        else:
+            return self._is_allowed_memory(identifier, limit, window)
+
+    def _is_allowed_redis(self, identifier: str, limit: int, window: int) -> bool:
+        """Redis-based rate limiting implementation"""
+        current_time = time.time()
+        requests_key = self._get_redis_key(identifier, "requests")
+        blocked_key = self._get_redis_key(identifier, "blocked")
+
+        # Check if IP is temporarily blocked
+        if self.redis_client.exists(blocked_key):
+            unblock_time = float(self.redis_client.get(blocked_key) or 0)
+            if current_time < unblock_time:
+                return False
+            else:
+                # Unblock if time has passed
+                self.redis_client.delete(blocked_key)
+
+        # Use Redis sorted set to track requests with timestamps
+        # Remove expired entries
+        self.redis_client.zremrangebyscore(requests_key, 0, current_time - window)
+
+        # Get current count
+        current_count = self.redis_client.zcard(requests_key)
+
+        # Check if under limit
+        if current_count < limit:
+            # Add current request timestamp
+            self.redis_client.zadd(requests_key, {str(current_time): current_time})
+            # Set expiration for the key to clean up automatically
+            self.redis_client.expire(requests_key, window + 60)  # Extra time for cleanup
+            return True
+
+        # Too many requests - check for repeated violations
+        extended_window_start = current_time - (window * 2)
+        recent_requests = self.redis_client.zcount(requests_key, extended_window_start, current_time)
+        
+        # Block for 1 hour if too many violations
+        if recent_requests > limit * 3:
+            self.redis_client.setex(blocked_key, 3600, current_time + 3600)  # 1 hour
+
+        return False
+
+    def _is_allowed_memory(self, identifier: str, limit: int, window: int) -> bool:
+        """Memory-based rate limiting implementation (fallback)"""
         current_time = time.time()
 
         # Check if IP is temporarily blocked
@@ -59,6 +121,22 @@ class RateLimiter:
             self.blocked_ips[identifier] = current_time + 3600  # 1 hour
 
         return False
+
+    def get_reset_time(self, identifier: str, window: int) -> int:
+        """Get the time when the rate limit will reset"""
+        if self.use_redis:
+            requests_key = self._get_redis_key(identifier, "requests")
+            # Get the oldest request timestamp
+            oldest_req = self.redis_client.zrange(requests_key, 0, 0, withscores=True)
+            if oldest_req:
+                oldest_timestamp = oldest_req[0][1]
+                return int(oldest_timestamp + window - time.time())
+            return 0
+        else:
+            if identifier in self.requests and self.requests[identifier]:
+                oldest_req = min(self.requests[identifier])
+                return int(oldest_req + window - time.time())
+            return 0
 
 # Global rate limiter instance
 rate_limiter = RateLimiter()
@@ -104,8 +182,14 @@ class AuthRateLimiter:
         Record a successful login (resets failed login counter)
         """
         # Clear failed login attempts for this IP
-        if f"failed_login_{ip_address}" in rate_limiter.requests:
-            del rate_limiter.requests[f"failed_login_{ip_address}"]
+        if rate_limiter.use_redis:
+            # When using Redis, remove the failed login key
+            failed_login_key = rate_limiter._get_redis_key(ip_address, "failed_login_requests")
+            rate_limiter.redis_client.delete(failed_login_key)
+        else:
+            # When using in-memory storage
+            if f"failed_login_{ip_address}" in rate_limiter.requests:
+                del rate_limiter.requests[f"failed_login_{ip_address}"]
 
     def record_failed_login(self, ip_address: str) -> bool:
         """
@@ -118,7 +202,13 @@ class AuthRateLimiter:
         allowed = self.is_failed_login_allowed(ip_address)
         if not allowed:
             # Add to blocked IPs
-            rate_limiter.blocked_ips[ip_address] = time.time() + 900  # 15 minutes
+            if rate_limiter.use_redis:
+                # When using Redis, set the blocked IP in Redis
+                blocked_key = rate_limiter._get_redis_key(ip_address, "blocked")
+                rate_limiter.redis_client.setex(blocked_key, 900, time.time() + 900)  # 15 minutes
+            else:
+                # When using in-memory storage
+                rate_limiter.blocked_ips[ip_address] = time.time() + 900  # 15 minutes
         return not allowed
 
 # Global auth rate limiter instance

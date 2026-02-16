@@ -18,6 +18,7 @@ from ..middleware.security import session_manager
 from ..utils.session import create_session, invalidate_session
 from ..services.biometric_service import BiometricService
 from ..auth.session_auth import get_current_user_from_session
+from ..utils.rate_limiter import auth_rate_limiter, get_client_ip
 
 # Configuration from settings
 SECRET_KEY = settings.access_token_secret_key
@@ -51,6 +52,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 class LoginRequest(BaseModel):
     username: str
     password: str
+    role: str = None  # Optional role parameter for filtering or validation
 
 class TokenResponse(BaseModel):
     access_token: str
@@ -74,7 +76,7 @@ class BiometricLoginRequest(BaseModel):
 @router.post("/traditional-login", response_model=TokenResponse)
 async def traditional_login(
     response: Response,
-    form_data: OAuth2PasswordRequestForm = Depends(),
+    login_request: LoginRequest,
     db: AsyncSession = Depends(get_db),
     request: Request = None
 ):
@@ -84,13 +86,41 @@ async def traditional_login(
     from sqlalchemy import select
     from ..auth.auth import authenticate_user
 
+    # Get client IP for rate limiting
+    client_ip = get_client_ip(request) if request else "unknown"
+
+    # Rate limiting check
+    if not auth_rate_limiter.is_login_allowed(client_ip):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many login attempts. Please try again later."
+        )
+
+    # Security: Check if credentials were passed in URL parameters (which is insecure)
+    if request and request.query_params:
+        if 'username' in request.query_params or 'password' in request.query_params:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Credentials must be sent in request body, not URL parameters"
+            )
+
     # Re-fetch user with role joined to avoid lazy loading issues
-    user = await authenticate_user(form_data.username, form_data.password, db)
+    user = await authenticate_user(login_request.username, login_request.password, db)
     if not user:
+        # Record failed login attempt
+        if auth_rate_limiter.record_failed_login(client_ip):
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many failed login attempts. Account temporarily locked."
+            )
+        
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password"
         )
+    
+    # Record successful login to reset failed attempts counter
+    auth_rate_limiter.record_successful_login(client_ip)
 
     # Re-query user with role joined to avoid lazy loading issues in async context
     statement = select(User).options(selectinload(User.role)).where(User.id == user.id)
@@ -115,6 +145,13 @@ async def traditional_login(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Employee users must use biometric authentication"
+        )
+
+    # If a role was specified in the login request, validate that it matches the user's role
+    if login_request.role and user_with_role.role.name != login_request.role:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"User role does not match selected role. Expected: {login_request.role}, Actual: {user_with_role.role.name}"
         )
 
     # Create access token
@@ -152,7 +189,7 @@ async def traditional_login(
 @router.post("/session-login")
 async def session_login(
     response: Response,
-    form_data: OAuth2PasswordRequestForm = Depends(),
+    login_request: LoginRequest,
     db: AsyncSession = Depends(get_db),
     request: Request = None
 ):
@@ -161,14 +198,42 @@ async def session_login(
     """
     from sqlalchemy import select
     from ..auth.auth import authenticate_user
-    
+
+    # Get client IP for rate limiting
+    client_ip = get_client_ip(request) if request else "unknown"
+
+    # Rate limiting check
+    if not auth_rate_limiter.is_login_allowed(client_ip):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many login attempts. Please try again later."
+        )
+
+    # Security: Check if credentials were passed in URL parameters (which is insecure)
+    if request and request.query_params:
+        if 'username' in request.query_params or 'password' in request.query_params:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Credentials must be sent in request body, not URL parameters"
+            )
+
     # Re-fetch user with role loaded to avoid lazy loading issues in async context
-    user = await authenticate_user(form_data.username, form_data.password, db)
+    user = await authenticate_user(login_request.username, login_request.password, db)
     if not user:
+        # Record failed login attempt
+        if auth_rate_limiter.record_failed_login(client_ip):
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many failed login attempts. Account temporarily locked."
+            )
+        
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password"
         )
+    
+    # Record successful login to reset failed attempts counter
+    auth_rate_limiter.record_successful_login(client_ip)
 
     # Re-query user with role joined to avoid lazy loading issues
     statement = select(User).options(selectinload(User.role)).where(User.id == user.id)
@@ -193,6 +258,13 @@ async def session_login(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Employee users must use biometric authentication"
+        )
+
+    # If a role was specified in the login request, validate that it matches the user's role
+    if login_request.role and user_with_role.role.name != login_request.role:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"User role does not match selected role. Expected: {login_request.role}, Actual: {user_with_role.role.name}"
         )
 
     # Create session

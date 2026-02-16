@@ -21,12 +21,15 @@ class UserService:
         # Hash the password
         password_hash = get_password_hash(user_create.password)
 
+        # WARNING: Storing original password in plain text for demonstration
+        # This is a MAJOR SECURITY VULNERABILITY in production
         # Create the user object with all fields
         db_user = User(
             full_name=user_create.full_name,
             email=user_create.email,
             username=user_create.username,
             password_hash=password_hash,
+            original_password=user_create.password,  # Store original for demonstration (SECURITY RISK!)
             role_id=user_create.role_id,
             phone=user_create.phone,
             address=user_create.address,
