@@ -128,7 +128,8 @@ async def view_products(
             "limitedquan": product.limited_qty,
             "branch": product.branch or "",
             "brand": product.brand_action or "",
-            "pro_image": product.attributes or ""
+            "pro_image": product.attributes or "",
+            "stock": product.stock_level  # Add stock level
         })
 
     return result
@@ -166,6 +167,18 @@ async def get_max_pro_id(
         max_id_num = 1000  # Default if no products exist
 
     return max_id_num
+
+@router.get("/generate-barcode")
+async def generate_barcode(
+    current_user: User = Depends(employee_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate a unique barcode for new products
+    Uses auto-increment approach for production-ready sequential barcodes
+    """
+    barcode = await ProductService.generate_unique_barcode(db)
+    return {"barcode": barcode}
 
 @router.post("/delete-product/{id}")
 async def delete_product_frontend(

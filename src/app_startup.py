@@ -13,6 +13,8 @@ from .models.expense import Expense
 from .models.invoice import Invoice
 from .models.refund import Refund
 from .models.audit_log import AuditLog
+from .models.category import Category
+from .models.brand import Brand
 from .auth.password import get_password_hash
 
 
@@ -85,7 +87,6 @@ async def create_admin_user(db_session):
         # Create default admin user
         admin_user = User(
             full_name="Admin User",
-            email=f"{admin_username}@regalpos.com",
             username=admin_username,
             password_hash=get_password_hash(admin_password),  # Use password from environment
             role_id=admin_role.id,

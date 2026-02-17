@@ -12,6 +12,56 @@ class ProductService:
     """
 
     @staticmethod
+    def calculate_check_digit(barcode: str) -> int:
+        """
+        Calculate EAN-13 check digit
+        """
+        sum_val = 0
+        for i, digit in enumerate(barcode):
+            sum_val += int(digit) * (1 if i % 2 == 0 else 3)
+        return (10 - (sum_val % 10)) % 10
+
+    @staticmethod
+    async def generate_unique_barcode(db: AsyncSession) -> str:
+        """
+        Generate a unique barcode using auto-increment approach
+        Format: 690 + 6 digit sequence + 1 check digit = 10 digits total
+        """
+        # Get the last product with highest barcode (any barcode)
+        statement = select(Product).where(
+            Product.barcode != None
+        ).where(
+            Product.barcode != ''
+        ).order_by(Product.barcode.desc()).limit(1)
+        result = await db.execute(statement)
+        last_product = result.scalar_one_or_none()
+
+        if not last_product:
+            # Start from 690000001
+            base_code = "69000000"
+        else:
+            # Extract the number part from last barcode
+            last_barcode = last_product.barcode
+            if last_barcode.startswith('690') and len(last_barcode) >= 9:
+                # Get the 6-digit sequence number
+                last_num_str = last_barcode[3:-1]  # Remove prefix and check digit
+                try:
+                    last_num = int(last_num_str)
+                    next_num = last_num + 1
+                    base_code = f"690{next_num:06d}"
+                except ValueError:
+                    # Fallback to timestamp-based if parsing fails
+                    import time
+                    base_code = f"690{int(time.time() * 1000) % 1000000:06d}"
+            else:
+                # Start fresh if last barcode doesn't match format
+                base_code = "69000000"
+
+        # Calculate check digit
+        check_digit = ProductService.calculate_check_digit(base_code)
+        return f"{base_code}{check_digit}"
+
+    @staticmethod
     async def create_product(db: AsyncSession, product_create: ProductCreate, user_id: str = "") -> Product:
         """
         Create a new product

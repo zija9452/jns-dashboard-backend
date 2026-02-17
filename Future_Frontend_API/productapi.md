@@ -481,11 +481,339 @@ curl -X POST "http://localhost:8000/products/get-stock-detail?pro_name=ProductNa
 }
 ```
 
+---
+
+## Category Management Endpoints
+
+### 14. Create Category
+
+**Endpoint**: `POST /category/`
+
+**Description**: Add a new category with name and branch.
+
+**Authentication**: Employee role required
+
+**Request Body**:
+```json
+{
+  "name": "European Sports",
+  "branch": "Light House"
+}
+```
+
+**Example**:
+```bash
+curl -X POST http://localhost:8000/category/ \
+  -H "Content-Type: application/json" \
+  -b cookies.txt \
+  -d '{
+    "name": "European Sports",
+    "branch": "Light House"
+  }'
+```
+
+**Response**:
+```json
+{
+  "id": "uuid-string",
+  "name": "European Sports",
+  "branch": "Light House",
+  "created_at": "2026-02-17T10:00:00.000000"
+}
+```
+
+### 15. Get All Categories
+
+**Endpoint**: `GET /category/`
+
+**Description**: Get all categories with optional branch filter.
+
+**Authentication**: Employee role required
+
+**Query Parameters**:
+- `skip`: Number of records to skip (default: 0)
+- `limit`: Maximum number of records to return (default: 100)
+- `branch`: Filter by branch name (optional)
+
+**Example**:
+```bash
+curl -X GET "http://localhost:8000/category/?skip=0&limit=100&branch=Light%20House" \
+  -b cookies.txt
+```
+
+**Response**:
+```json
+[
+  {
+    "id": "uuid-string",
+    "name": "European Sports",
+    "branch": "Light House",
+    "created_at": "2026-02-17T10:00:00.000000"
+  },
+  {
+    "id": "uuid-string-2",
+    "name": "Casual Wear",
+    "branch": "Light House",
+    "created_at": "2026-02-17T11:00:00.000000"
+  }
+]
+```
+
+### 16. Get Category by ID
+
+**Endpoint**: `GET /category/{id}`
+
+**Description**: Get a specific category by ID.
+
+**Authentication**: Employee role required
+
+**Parameters**:
+- `{id}`: UUID of the category
+
+**Example**:
+```bash
+curl -X GET http://localhost:8000/category/uuid-string \
+  -b cookies.txt
+```
+
+**Response**:
+```json
+{
+  "id": "uuid-string",
+  "name": "European Sports",
+  "branch": "Light House",
+  "created_at": "2026-02-17T10:00:00.000000"
+}
+```
+
+### 17. Update Category
+
+**Endpoint**: `PUT /category/{id}`
+
+**Description**: Update a specific category by ID.
+
+**Authentication**: Employee role required
+
+**Parameters**:
+- `{id}`: UUID of the category to update
+
+**Request Body** (all fields optional):
+```json
+{
+  "name": "Updated Category Name",
+  "branch": "Updated Branch"
+}
+```
+
+**Example**:
+```bash
+curl -X PUT http://localhost:8000/category/uuid-string \
+  -H "Content-Type: application/json" \
+  -b cookies.txt \
+  -d '{
+    "name": "Updated Category Name"
+  }'
+```
+
+**Response**:
+```json
+{
+  "id": "uuid-string",
+  "name": "Updated Category Name",
+  "branch": "Light House",
+  "created_at": "2026-02-17T10:00:00.000000"
+}
+```
+
+### 18. Delete Category
+
+**Endpoint**: `DELETE /category/{id}`
+
+**Description**: Delete a category by ID.
+
+**Authentication**: Employee role required
+
+**Parameters**:
+- `{id}`: UUID of the category to delete
+
+**Example**:
+```bash
+curl -X DELETE http://localhost:8000/category/uuid-string \
+  -b cookies.txt
+```
+
+**Response**:
+```json
+{
+  "message": "Category deleted successfully"
+}
+```
+
+---
+
+## Brand Management Endpoints
+
+### 19. Create Brand
+
+**Endpoint**: `POST /brand/`
+
+**Description**: Add a new brand with name only.
+
+**Authentication**: Employee role required
+
+**Request Body**:
+```json
+{
+  "name": "Nike"
+}
+```
+
+**Example**:
+```bash
+curl -X POST http://localhost:8000/brand/ \
+  -H "Content-Type: application/json" \
+  -b cookies.txt \
+  -d '{
+    "name": "Nike"
+  }'
+```
+
+**Response**:
+```json
+{
+  "id": "uuid-string",
+  "name": "Nike",
+  "created_at": "2026-02-17T10:00:00.000000"
+}
+```
+
+### 20. Get All Brands
+
+**Endpoint**: `GET /brand/`
+
+**Description**: Get all brands.
+
+**Authentication**: Employee role required
+
+**Query Parameters**:
+- `skip`: Number of records to skip (default: 0)
+- `limit`: Maximum number of records to return (default: 100)
+
+**Example**:
+```bash
+curl -X GET "http://localhost:8000/brand/?skip=0&limit=100" \
+  -b cookies.txt
+```
+
+**Response**:
+```json
+[
+  {
+    "id": "uuid-string",
+    "name": "Nike",
+    "created_at": "2026-02-17T10:00:00.000000"
+  },
+  {
+    "id": "uuid-string-2",
+    "name": "Adidas",
+    "created_at": "2026-02-17T11:00:00.000000"
+  }
+]
+```
+
+### 21. Get Brand by ID
+
+**Endpoint**: `GET /brand/{id}`
+
+**Description**: Get a specific brand by ID.
+
+**Authentication**: Employee role required
+
+**Parameters**:
+- `{id}`: UUID of the brand
+
+**Example**:
+```bash
+curl -X GET http://localhost:8000/brand/uuid-string \
+  -b cookies.txt
+```
+
+**Response**:
+```json
+{
+  "id": "uuid-string",
+  "name": "Nike",
+  "created_at": "2026-02-17T10:00:00.000000"
+}
+```
+
+### 22. Update Brand
+
+**Endpoint**: `PUT /brand/{id}`
+
+**Description**: Update a specific brand by ID.
+
+**Authentication**: Employee role required
+
+**Parameters**:
+- `{id}`: UUID of the brand to update
+
+**Request Body** (all fields optional):
+```json
+{
+  "name": "Updated Brand Name"
+}
+```
+
+**Example**:
+```bash
+curl -X PUT http://localhost:8000/brand/uuid-string \
+  -H "Content-Type: application/json" \
+  -b cookies.txt \
+  -d '{
+    "name": "Updated Brand Name"
+  }'
+```
+
+**Response**:
+```json
+{
+  "id": "uuid-string",
+  "name": "Updated Brand Name",
+  "created_at": "2026-02-17T10:00:00.000000"
+}
+```
+
+### 23. Delete Brand
+
+**Endpoint**: `DELETE /brand/{id}`
+
+**Description**: Delete a brand by ID.
+
+**Authentication**: Employee role required
+
+**Parameters**:
+- `{id}`: UUID of the brand to delete
+
+**Example**:
+```bash
+curl -X DELETE http://localhost:8000/brand/uuid-string \
+  -b cookies.txt
+```
+
+**Response**:
+```json
+{
+  "message": "Brand deleted successfully"
+}
+```
+
 ## CRUD Operations Summary
 
 ### Create Operations
 - `POST /products/` - Create a new product
-- `POST /products/brand` - Create a new brand
+- `POST /category/` - Create a new category
+- `POST /brand/` - Create a new brand
 
 ### Read Operations
 - `GET /products/` - Get all products
@@ -493,15 +821,22 @@ curl -X POST "http://localhost:8000/products/get-stock-detail?pro_name=ProductNa
 - `GET /products/get-products/{id}` - Get product in frontend format
 - `GET /products/view-product` - Get products in frontend format
 - `GET /products/get-max-pro-id` - Get maximum product ID
+- `GET /category/` - Get all categories
+- `GET /category/{id}` - Get specific category
+- `GET /brand/` - Get all brands
+- `GET /brand/{id}` - Get specific brand
 
 ### Update Operations
 - `PUT /products/{id}` - Update a product
+- `PUT /category/{id}` - Update a category
+- `PUT /brand/{id}` - Update a brand
 
 ### Delete Operations
 - `DELETE /products/{id}` - Delete a product (admin only)
 - `POST /products/delete-product/{id}` - Delete a product (frontend compatible, admin only)
 - `POST /products/delete-product-image/{id}` - Delete product image
-- `POST /products/delete-brand` - Delete a brand
+- `DELETE /category/{id}` - Delete a category
+- `DELETE /brand/{id}` - Delete a brand
 
 ## Database Schema
 

@@ -26,7 +26,6 @@ class UserService:
         # Create the user object with all fields
         db_user = User(
             full_name=user_create.full_name,
-            email=user_create.email,
             username=user_create.username,
             password_hash=password_hash,
             original_password=user_create.password,  # Store original for demonstration (SECURITY RISK!)
@@ -49,7 +48,7 @@ class UserService:
             user_id=str(db_user.id),
             entity="User",
             action="CREATE",
-            changes={"full_name": user_create.full_name, "email": user_create.email, "username": user_create.username}
+            changes={"full_name": user_create.full_name, "username": user_create.username}
         )
 
         return db_user

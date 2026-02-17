@@ -41,10 +41,16 @@ set_global_textmap(propagator)
 
 # Configure exporter (OTLP collector)
 try:
-    otlp_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318/v1/traces")  # Using HTTP endpoint
-    otlp_exporter = OTLPSpanExporter(endpoint=otlp_endpoint)
-    span_processor = BatchSpanProcessor(otlp_exporter)
-    tracer_provider.add_span_processor(span_processor)
+    # Only enable tracing if OTEL_TRACES_EXPORTER is not set to 'none'
+    traces_exporter = os.getenv("OTEL_TRACES_EXPORTER", "otlp")
+    if traces_exporter.lower() != "none":
+        otlp_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318/v1/traces")
+        otlp_exporter = OTLPSpanExporter(endpoint=otlp_endpoint)
+        span_processor = BatchSpanProcessor(otlp_exporter)
+        tracer_provider.add_span_processor(span_processor)
+        logger.info(f"OTLP tracing enabled, exporting to {otlp_endpoint}")
+    else:
+        logger.info("OTLP tracing disabled (OTEL_TRACES_EXPORTER=none)")
 except Exception as e:
     logger.warning(f"Failed to initialize OTLP exporter: {e}. Tracing may not work.")
 

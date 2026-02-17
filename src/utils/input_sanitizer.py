@@ -31,13 +31,6 @@ def sanitize_input(input_data: Union[str, List, Dict]) -> Union[str, List, Dict]
         # For non-string types, return as is
         return input_data
 
-def validate_email(email: str) -> bool:
-    """
-    Validate email format
-    """
-    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-    return re.match(pattern, email) is not None
-
 def validate_phone(phone: str) -> bool:
     """
     Validate phone number format
@@ -99,10 +92,7 @@ class InputValidator:
                 sanitized_value = sanitize_input(value)
 
                 # Apply specific validation based on field name
-                if key.lower() in ['email', 'e_mail', 'mail']:
-                    if not validate_email(sanitized_value):
-                        raise ValueError(f"Invalid email format for field '{key}'")
-                elif key.lower() in ['phone', 'telephone', 'mobile']:
+                if key.lower() in ['phone', 'telephone', 'mobile']:
                     if not validate_phone(sanitized_value):
                         raise ValueError(f"Invalid phone number format for field '{key}'")
                 elif key.lower() in ['url', 'website', 'link']:

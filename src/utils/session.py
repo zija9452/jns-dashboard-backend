@@ -16,7 +16,7 @@ async def create_session(user_id: str, db: AsyncSession, ip_address: str = None,
                         biometric_verified: bool = False):
     """Create a new user session"""
     session_token = generate_session_token()
-    expires_at = datetime.now() + timedelta(hours=24)  # 24-hour session
+    expires_at = datetime.now() + timedelta(hours=3)  # 3-hour session
 
     session = UserSession(
         user_id=user_id,

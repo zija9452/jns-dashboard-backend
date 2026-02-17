@@ -49,7 +49,7 @@ async def create_user(
             detail="Role does not exist"
         )
 
-    # Check if username or email already exists
+    # Check if username already exists
     existing_user_by_username = await UserService.get_user_by_username(db, user_create.username)
     if existing_user_by_username:
         raise HTTPException(
@@ -57,26 +57,18 @@ async def create_user(
             detail="Username already taken"
         )
 
-    email_statement = select(User).where(User.email == user_create.email)
-    email_result = await db.execute(email_statement)
-    existing_user_by_email = email_result.scalar_one_or_none()
-    if existing_user_by_email:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
-        )
-
     return await UserService.create_user(db, user_create)
 
 @router.get("/{user_id}", response_model=UserRead)
 async def get_user(
     user_id: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_from_session),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Get a specific user by ID
     Users can view their own profile, admins can view any user
+    Requires session authentication
     """
     try:
         user_uuid = UUID(user_id)
@@ -107,12 +99,13 @@ async def get_user(
 async def update_user(
     user_id: str,
     user_update: UserUpdate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_from_session),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Update a specific user by ID
     Users can update their own profile, admins can update any user
+    Requires session authentication
     """
     try:
         user_uuid = UUID(user_id)

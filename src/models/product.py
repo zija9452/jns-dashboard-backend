@@ -24,7 +24,7 @@ class Product(SQLModel, table=True):
     discount: Optional[Decimal] = Field(default=0.00, sa_column=Column(Numeric(5, 2), nullable=True))
     category: Optional[str] = Field(default=None, max_length=50)
     branch: Optional[str] = Field(default=None, max_length=50)
-    limited_qty: bool = Field(default=False)
+    limited_qty: int = Field(default=0)
     brand_action: Optional[str] = Field(default=None, max_length=100)
     created_at: datetime = Field(default_factory=lambda: datetime.now())
     updated_at: datetime = Field(default_factory=lambda: datetime.now(), nullable=False)
@@ -45,7 +45,7 @@ class ProductRead(SQLModel):
     discount: Optional[Decimal]
     category: Optional[str]
     branch: Optional[str]
-    limited_qty: bool
+    limited_qty: int
     brand_action: Optional[str]
     created_at: datetime
     updated_at: datetime
@@ -65,7 +65,7 @@ class ProductCreate(SQLModel):
     discount: Optional[Decimal] = 0.00
     category: Optional[str] = None
     branch: Optional[str] = None
-    limited_qty: bool = False
+    limited_qty: int = 0
     brand_action: Optional[str] = None
 
 
@@ -82,7 +82,7 @@ class ProductUpdate(SQLModel):
     discount: Optional[Decimal] = None
     category: Optional[str] = None
     branch: Optional[str] = None
-    limited_qty: Optional[bool] = None
+    limited_qty: Optional[int] = None
     brand_action: Optional[str] = None
 
     model_config = ConfigDict(json_encoders={Decimal: float})

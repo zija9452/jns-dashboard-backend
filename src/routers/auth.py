@@ -287,7 +287,7 @@ async def session_login(
         httponly=True,
         secure=True,  # Set to False in development
         samesite="lax",
-        max_age=86400  # 24 hours
+        max_age=10800  # 3 hours (10800 seconds)
     )
 
     return {

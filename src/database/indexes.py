@@ -9,7 +9,6 @@ from src.models.audit_log import AuditLog
 # Define database indexes for performance optimization
 
 # User table indexes
-user_email_index = Index('idx_user_email', User.email)
 user_username_index = Index('idx_user_username', User.username)
 user_role_index = Index('idx_user_role_id', User.role_id)
 
@@ -40,7 +39,6 @@ def create_indexes(engine):
     Create all defined indexes in the database
     """
     # Create indexes for User table
-    user_email_index.create(engine, checkfirst=True)
     user_username_index.create(engine, checkfirst=True)
     user_role_index.create(engine, checkfirst=True)
 
@@ -71,7 +69,6 @@ def drop_indexes(engine):
     Drop all defined indexes from the database
     """
     # Drop indexes for User table
-    user_email_index.drop(engine, checkfirst=True)
     user_username_index.drop(engine, checkfirst=True)
     user_role_index.drop(engine, checkfirst=True)
 

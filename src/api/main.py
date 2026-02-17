@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 import os
 from decimal import Decimal
 
-from src.routers import auth, users, products, customers, vendors, salesman, stock, expenses, customer_invoice, refunds, admin, pos, walkin_invoice, walkin_refund
+from src.routers import auth, users, products, customers, vendors, salesman, stock, expenses, customer_invoice, refunds, admin, pos, walkin_invoice, walkin_refund, category, brand
 from src.utils.error_handlers import setup_error_handlers
 from src.middleware.security import SecurityHeadersMiddleware
 from src.utils.metrics import MetricsMiddleware, start_metrics_server
@@ -124,6 +124,8 @@ async def customer_invoice_health():
 app.include_router(auth.router, prefix="/auth", tags=["authentication"])
 app.include_router(users.router, prefix="/users", tags=["users"])
 app.include_router(products.router, prefix="/products", tags=["products"])
+app.include_router(category.router, tags=["category"])
+app.include_router(brand.router, tags=["brand"])
 app.include_router(customers.router, prefix="/customers", tags=["customers"])
 app.include_router(vendors.router, prefix="/vendors", tags=["vendors"])
 app.include_router(salesman.router, prefix="/salesman", tags=["salesman"])
