@@ -69,11 +69,8 @@ class ProductService:
         db_product = Product(
             sku=product_create.sku,
             name=product_create.name,
-            desc=product_create.desc,
             unit_price=product_create.unit_price,
             cost_price=product_create.cost_price,
-            tax_rate=product_create.tax_rate,
-            vendor_id=product_create.vendor_id,
             stock_level=product_create.stock_level,
             attributes=product_create.attributes,
             barcode=product_create.barcode,
@@ -150,7 +147,7 @@ class ProductService:
         for field, value in update_data.items():
             if value is not None:  # Only update non-None values
                 # Handle Decimal fields specifically to ensure proper type
-                if field in ['unit_price', 'cost_price', 'tax_rate', 'discount']:
+                if field in ['unit_price', 'cost_price', 'discount']:
                     if isinstance(value, (int, float)):
                         from decimal import Decimal
                         setattr(db_product, field, Decimal(str(value)))

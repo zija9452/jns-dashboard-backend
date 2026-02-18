@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
 from uuid import UUID
@@ -9,6 +10,7 @@ from ..models.product import Product, ProductCreate, ProductUpdate, ProductRead
 from ..models.user import User  # Import User at the top to avoid NameError
 from ..services.product_service import ProductService
 from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session
+from sqlmodel import select
 
 router = APIRouter()
 
@@ -86,7 +88,7 @@ async def view_products(
     search_string: str = None,
     branches: str = None,
     skip: int = 0,
-    limit: int = 100,
+    limit: int = 40,  # Fetch 40 products for frontend pagination (optimized)
     current_user: User = Depends(admin_cashier_employee_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
@@ -94,30 +96,37 @@ async def view_products(
     View products with search and branch filtering
     Required by JavaScript frontend
     """
-    # Get all products with pagination
-    products = await ProductService.get_products(db, skip=skip, limit=limit)
+    # Build query with database-level filtering (much faster than in-memory filtering)
+    statement = select(Product)
 
-    # Apply filters
-    filtered_products = []
-    for product in products:
-        # Apply branch filter if provided
-        if branches and product.branch != branches:
-            continue
+    # Apply branch filter at database level
+    if branches:
+        statement = statement.where(Product.branch == branches)
 
-        # Apply search filter if provided
-        if search_string:
-            search_lower = search_string.lower()
-            if (search_lower not in product.name.lower() and
-                search_lower not in (product.barcode or "").lower() and
-                search_lower not in (product.sku or "").lower()):
-                continue
+    # Apply search filter at database level (case-insensitive)
+    if search_string:
+        search_lower = search_string.lower()
+        # Use simple LIKE instead of ilike for better performance on remote DB
+        statement = statement.where(
+            or_(
+                Product.name.ilike(f"%{search_lower}%"),
+                Product.barcode.ilike(f"%{search_lower}%"),
+                Product.sku.ilike(f"%{search_lower}%")
+            )
+        )
 
-        filtered_products.append(product)
+    # Apply pagination at database level
+    statement = statement.offset(skip).limit(limit)
+
+    # Execute query with optimized options
+    result = await db.execute(statement)
+    products = result.scalars().all()
 
     # Format the response to match expected frontend structure
-    result = []
-    for product in filtered_products:
-        result.append({
+    # Note: Excluding pro_image for better performance (images can be large base64 strings)
+    result_list = []
+    for product in products:
+        result_list.append({
             "pro_id": str(product.id),
             "pro_name": product.name,
             "pro_price": float(product.unit_price),
@@ -128,11 +137,11 @@ async def view_products(
             "limitedquan": product.limited_qty,
             "branch": product.branch or "",
             "brand": product.brand_action or "",
-            "pro_image": product.attributes or "",
+            "pro_image": "",  # Empty string for better performance
             "stock": product.stock_level  # Add stock level
         })
 
-    return result
+    return result_list
 
 @router.get("/get-max-pro-id")
 async def get_max_pro_id(
