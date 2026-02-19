@@ -17,6 +17,19 @@ async def lifespan(app: FastAPI):
     # Startup
     from src.app_startup import initialize_database
     await initialize_database()
+    
+    # Warmup database connection pool (prevents cold start)
+    from src.database.database import AsyncSessionLocal
+    from sqlmodel import select
+    from src.models.product import Product
+    
+    try:
+        async with AsyncSessionLocal() as session:
+            # Execute a simple query to warmup the connection
+            await session.execute(select(Product).limit(1))
+            print("✅ Database connection pool warmed up!")
+    except Exception as e:
+        print(f"⚠️ Database warmup failed: {e}")
 
     # Start metrics server in a background thread
     import threading

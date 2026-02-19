@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import or_
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List
+from typing import List, Dict, Any
 from uuid import UUID
 import uuid
+import time
 
 from ..database.database import get_db
 from ..models.product import Product, ProductCreate, ProductUpdate, ProductRead
@@ -13,6 +14,12 @@ from ..auth.session_auth import get_current_user_from_session, admin_required_fr
 from sqlmodel import select
 
 router = APIRouter()
+
+# In-memory cache for view-products API (5 minutes TTL)
+_products_cache: Dict[str, Dict[str, Any]] = {}
+_CACHE_TTL = 300  # 5 minutes
+_cache_cleanup_interval = 60  # Cleanup every 60 seconds
+_last_cleanup_time = time.time()
 
 @router.get("/", response_model=List[ProductRead])
 async def get_products(
@@ -27,6 +34,12 @@ async def get_products(
     """
     products = await ProductService.get_products(db, skip=skip, limit=limit)
     return products
+
+# Helper function to clear products cache
+def clear_products_cache():
+    """Clear all cached product lists"""
+    global _products_cache
+    _products_cache.clear()
 
 @router.post("/", response_model=ProductRead)
 async def create_product(
@@ -46,10 +59,13 @@ async def create_product(
             detail="Product with this SKU already exists"
         )
 
+    # Clear cache after creating product
+    clear_products_cache()
+
     return await ProductService.create_product(db, product_create, str(current_user.id))
 
 # Specific routes that should come before the generic /{product_id} route to avoid conflicts
-@router.get("/get-products/{id}")
+@router.get("/getproducts/{id}")
 async def get_product_details(
     id: UUID,
     current_user: User = Depends(admin_cashier_employee_required_from_session()),
@@ -74,76 +90,147 @@ async def get_product_details(
         "pro_cost": float(product.cost_price),
         "pro_barcode": product.barcode or "",
         "pro_dis": float(product.discount) if product.discount else 0.0,
-        "cat_id_fk": product.category or "",  # This should be the category ID
+        "cat_id_fk": product.category or "",
         "limitedquan": product.limited_qty,
         "branch": product.branch or "",
         "brand": product.brand_action or "",
-        "pro_image": product.attributes or ""  # Using attributes field to store image path
+        "pro_image": product.attributes or ""
     }
 
     return product_data
 
-@router.get("/view-product")
+@router.get("/viewproduct")
 async def view_products(
     search_string: str = None,
     branches: str = None,
-    skip: int = 0,
-    limit: int = 40,  # Fetch 40 products for frontend pagination (optimized)
+    page: int = 1,       # Page number for backend pagination
+    limit: int = 8,      # 8 items per page (for 5 pages = 40 products total)
     current_user: User = Depends(admin_cashier_employee_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    View products with search and branch filtering
+    View products with branch filtering and search
     Required by JavaScript frontend
+    Optimized: Only fetches required fields, no extra data
+    Returns: Paginated data + total count for proper frontend pagination
     """
-    # Build query with database-level filtering (much faster than in-memory filtering)
-    statement = select(Product)
+    current_time = time.time()
 
-    # Apply branch filter at database level
+    # Calculate skip from page
+    skip = (page - 1) * limit
+
+    # Periodic cache cleanup (only every 60 seconds)
+    global _last_cleanup_time
+    if current_time - _last_cleanup_time > _cache_cleanup_interval:
+        keys_to_delete = [
+            key for key, value in _products_cache.items()
+            if current_time - value['timestamp'] >= _CACHE_TTL
+        ]
+        for key in keys_to_delete:
+            del _products_cache[key]
+        _last_cleanup_time = current_time
+
+    # Generate cache key (include search for accurate caching)
+    cache_key = f"{branches or ''}:{search_string or ''}:{limit}"
+
+    # Check cache for total count (page doesn't matter for count)
+    count_cache_key = f"count:{branches or ''}:{search_string or ''}"
+    
+    # Build base query - select only required columns for better performance
+    base_statement = select(
+        Product.id,
+        Product.name,
+        Product.unit_price,
+        Product.cost_price,
+        Product.barcode,
+        Product.discount,
+        Product.category,
+        Product.limited_qty,
+        Product.branch,
+        Product.brand_action,
+        Product.stock_level
+    )
+
+    # Apply branch filter at database level (indexed - FAST)
     if branches:
-        statement = statement.where(Product.branch == branches)
+        base_statement = base_statement.where(Product.branch == branches)
 
     # Apply search filter at database level (case-insensitive)
-    if search_string:
-        search_lower = search_string.lower()
-        # Use simple LIKE instead of ilike for better performance on remote DB
-        statement = statement.where(
+    if search_string and search_string.strip():
+        search_pattern = f"%{search_string.strip()}%"
+        base_statement = base_statement.where(
             or_(
-                Product.name.ilike(f"%{search_lower}%"),
-                Product.barcode.ilike(f"%{search_lower}%"),
-                Product.sku.ilike(f"%{search_lower}%")
+                Product.name.ilike(search_pattern),
+                Product.barcode.ilike(search_pattern),
+                Product.sku.ilike(search_pattern)
             )
         )
 
+    # Get total count (efficient using count query)
+    count_statement = select(Product.id)
+    if branches:
+        count_statement = count_statement.where(Product.branch == branches)
+    if search_string and search_string.strip():
+        search_pattern = f"%{search_string.strip()}%"
+        count_statement = count_statement.where(
+            or_(
+                Product.name.ilike(search_pattern),
+                Product.barcode.ilike(search_pattern),
+                Product.sku.ilike(search_pattern)
+            )
+        )
+    
+    count_result = await db.execute(count_statement)
+    total_count = len(count_result.scalars().all())
+
     # Apply pagination at database level
-    statement = statement.offset(skip).limit(limit)
+    statement = base_statement.offset(skip).limit(limit)
 
-    # Execute query with optimized options
+    # Execute query
     result = await db.execute(statement)
-    products = result.scalars().all()
+    products = result.fetchall()
 
-    # Format the response to match expected frontend structure
-    # Note: Excluding pro_image for better performance (images can be large base64 strings)
-    result_list = []
-    for product in products:
-        result_list.append({
-            "pro_id": str(product.id),
-            "pro_name": product.name,
-            "pro_price": float(product.unit_price),
-            "pro_cost": float(product.cost_price),
-            "pro_barcode": product.barcode or "",
-            "pro_dis": float(product.discount) if product.discount else 0.0,
-            "cat_id_fk": product.category or "",
-            "limitedquan": product.limited_qty,
-            "branch": product.branch or "",
-            "brand": product.brand_action or "",
-            "pro_image": "",  # Empty string for better performance
-            "stock": product.stock_level  # Add stock level
-        })
+    # Format response using list comprehension - minimal fields only
+    result_list = [
+        {
+            "pro_id": str(p[0]),
+            "pro_name": p[1],
+            "pro_price": float(p[2]) if p[2] else 0.0,
+            "pro_cost": float(p[3]) if p[3] else 0.0,
+            "pro_barcode": p[4] or "",
+            "pro_dis": float(p[5]) if p[5] else 0.0,
+            "cat_id_fk": p[6] or "",
+            "limitedquan": p[7],
+            "branch": p[8] or "",
+            "brand": p[9] or "",
+            "pro_image": "",
+            "stock": p[10]
+        }
+        for p in products
+    ]
 
-    return result_list
+    # Calculate total pages
+    total_pages = (total_count + limit - 1) // limit  # Ceiling division
 
-@router.get("/get-max-pro-id")
+    # Prepare response with pagination info
+    response_data = {
+        'data': result_list,
+        'page': page,
+        'limit': limit,
+        'total': total_count,
+        'total_pages': total_pages,
+        'has_more': page < total_pages
+    }
+
+    # Cache the result
+    _products_cache[cache_key] = {
+        'data': response_data,
+        'timestamp': current_time
+    }
+
+    return response_data
+
+@router.get("/getmaxproid")
 async def get_max_pro_id(
     current_user: User = Depends(employee_required_from_session()),
     db: AsyncSession = Depends(get_db)
@@ -177,7 +264,7 @@ async def get_max_pro_id(
 
     return max_id_num
 
-@router.get("/generate-barcode")
+@router.get("/generatebarcode")
 async def generate_barcode(
     current_user: User = Depends(employee_required_from_session()),
     db: AsyncSession = Depends(get_db)
@@ -189,7 +276,7 @@ async def generate_barcode(
     barcode = await ProductService.generate_unique_barcode(db)
     return {"barcode": barcode}
 
-@router.post("/delete-product/{id}")
+@router.post("/deleteproduct/{id}")
 async def delete_product_frontend(
     id: str,
     current_user: User = Depends(admin_required_from_session()),  # Keep as admin only for security
@@ -214,12 +301,15 @@ async def delete_product_frontend(
             detail="Product not found"
         )
 
+    # Clear cache after deleting product
+    clear_products_cache()
+
     return {
         "success": True,
         "message": "Product deleted successfully"
     }
 
-@router.post("/delete-product-image/{id}")
+@router.post("/deleteproductimage/{id}")
 async def delete_product_image(
     id: str,
     current_user: User = Depends(employee_required_from_session()),  # Allow employees to manage product images
@@ -312,6 +402,9 @@ async def update_product(
             detail="Product not found"
         )
 
+    # Clear cache after updating product
+    clear_products_cache()
+
     return await ProductService.update_product(db, product_uuid, product_update, str(current_user.id))
 
 @router.delete("/{product_id}")
@@ -338,6 +431,9 @@ async def delete_product(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Product not found"
         )
+
+    # Clear cache after deleting product
+    clear_products_cache()
 
     return {"message": "Product deleted successfully"}
 
@@ -367,7 +463,7 @@ async def create_brand(
         "shelf": brand
     }
 
-@router.post("/delete-brand")
+@router.post("/deletebrand")
 async def delete_brand(
     brand: str = None,
     current_user: User = Depends(employee_required_from_session()),  # Allow employees to delete brands
@@ -390,7 +486,7 @@ async def delete_brand(
         "message": f"Brand '{brand}' deleted successfully"
     }
 
-@router.post("/get-stock-detail")
+@router.post("/getstockdetail")
 async def get_stock_detail(
     pro_name: str = None,
     current_user: User = Depends(employee_required_from_session()),  # Allow employees to check stock details
@@ -408,7 +504,7 @@ async def get_stock_detail(
     statement = select(Product).where(Product.name.ilike(f'%{pro_name}%'))
     result = await db.execute(statement)
     products = result.scalars().all()
-    
+
     # Return the first matching product's stock level
     if products:
         product = products[0]  # Get the first match
@@ -418,7 +514,7 @@ async def get_stock_detail(
     else:
         return {"error": "Product not found"}
 
-@router.get("/get-categories-by-branch")
+@router.get("/getcategoriesbybranch")
 async def get_categories_by_branch(
     branch: str = None,
     current_user: User = Depends(employee_required_from_session()),  # Allow employees to get category info

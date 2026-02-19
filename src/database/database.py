@@ -15,17 +15,19 @@ if DATABASE_URL and "neon.tech" in DATABASE_URL:
     # For Neon connections, use appropriate pool settings for serverless architecture
     engine = create_async_engine(
         DATABASE_URL,
-        echo=False,  # Disable SQL logging for performance
-        pool_size=20,  # Reasonable pool size for Neon proxy
-        max_overflow=30,  # Additional connections if needed
-        pool_pre_ping=True,  # Verify connections before use
-        pool_recycle=300,  # Recycle connections every 5 minutes
-        pool_timeout=30,  # Timeout when getting connection from pool
+        echo=True,  # Enable SQL logging for debugging
+        pool_size=15,  # Increased pool for better concurrency
+        max_overflow=25,  # Allow more overflow connections during peak
+        pool_pre_ping=True,  # Re-enabled: verify connections before use
+        pool_recycle=120,  # Recycle connections every 2 minutes (Neon serverless)
+        pool_timeout=120,  # Increased timeout to prevent pool exhaustion
         connect_args={
             "server_settings": {
                 "application_name": "regal-pos-app"
             },
-            "command_timeout": 60,  # Timeout for individual commands
+            "command_timeout": 120,  # Increased timeout for individual commands
+            "ssl": "require",  # Explicit SSL for Neon
+            "timeout": 120,  # asyncpg timeout
         }
     )
 else:
