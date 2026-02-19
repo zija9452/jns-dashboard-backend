@@ -659,7 +659,7 @@ async def get_order(
     return order_data
 
 
-@router.get("/Viewcustomerorder")
+@router.get("/viewcustomerorder")
 async def view_customer_order(
     searchString: str = None,
     status: str = None,
@@ -866,6 +866,69 @@ async def delete_custom_order_endpoint(
     }
 
 
+@router.put("/UpdateCustomerInvoice/{id}")
+async def update_customer_invoice(
+    id: str,
+    request_data: dict,
+    current_user: User = Depends(cashier_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Update customer invoice details
+    Required by JavaScript frontend
+    """
+    from sqlalchemy import select
+    from uuid import UUID
+    from ..models.customer_invoice import CustomerInvoice
+    import json
+
+    try:
+        invoice_id = UUID(id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid invoice ID format"
+        )
+
+    # Get the customer invoice to update
+    statement = select(CustomerInvoice).where(CustomerInvoice.id == invoice_id)
+    result = await db.execute(statement)
+    invoice = result.scalar_one_or_none()
+
+    if not invoice:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invoice not found"
+        )
+
+    # Update fields from request
+    e_name = request_data.get('e_name')
+    e_amount = request_data.get('e_amount')
+    note = request_data.get('note')
+
+    if e_name:
+        invoice.customer_name = e_name
+    if e_amount:
+        invoice.total_amount = float(e_amount)
+    if note:
+        # Update fields JSON
+        try:
+            fields_data = json.loads(invoice.fields)
+        except:
+            fields_data = {}
+        fields_data['note'] = note
+        invoice.fields = json.dumps(fields_data)
+
+    await db.commit()
+    await db.refresh(invoice)
+
+    return {
+        "success": True,
+        "message": "Customer invoice updated successfully",
+        "invoice_id": str(invoice.id)
+    }
+
+
 # Additional endpoints required by the JavaScript frontend
 
 @router.post("/Customers")
@@ -888,6 +951,7 @@ async def create_customer_from_modal(
     cus_address = request_data.get('cus_address')
     cus_cnic = request_data.get('cus_cnic')
     cus_sal_id_fk = request_data.get('cus_sal_id_fk')
+    branch = request_data.get('branch')
 
     # Validate required fields
     if not cus_name:
@@ -925,6 +989,14 @@ async def create_customer_from_modal(
         "country": ""  # No country provided in the form
     })
 
+    # Convert sal_id_fk to UUID if provided
+    sal_id_uuid = None
+    if cus_sal_id_fk:
+        try:
+            sal_id_uuid = uuid.UUID(cus_sal_id_fk)
+        except ValueError:
+            sal_id_uuid = None
+
     # Create customer data
     customer_data = CustomerCreate(
         name=cus_name,
@@ -932,6 +1004,9 @@ async def create_customer_from_modal(
         billing_addr=billing_addr,
         shipping_addr=billing_addr,  # Use same as billing
         credit_limit=0.0,  # Default credit limit
+        cnic=cus_cnic,
+        sal_id_fk=sal_id_uuid,
+        branch=branch
     )
 
     # Create the customer
@@ -941,10 +1016,11 @@ async def create_customer_from_modal(
         "success": True,
         "cus_id": str(created_customer.id),
         "cus_name": created_customer.name,
-        "cus_phone": cus_phone,  # Use the input parameter instead of accessing non-existent field
-        "cus_address": cus_address,  # Return the address as provided
+        "cus_phone": cus_phone,
+        "cus_address": cus_address,
         "cus_cnic": cus_cnic,
-        "cus_sal_id_fk": cus_sal_id_fk
+        "cus_sal_id_fk": cus_sal_id_fk,
+        "branch": branch
     }
 
 
@@ -1031,7 +1107,7 @@ async def customer_balance(
         )
 
 
-@router.get("/customer-balance/{customer_id}")
+@router.get("/customerbalance/{customer_id}")
 async def get_customer_balance(
     customer_id: str,
     current_user: User = Depends(cashier_required_from_session()),
@@ -1102,7 +1178,7 @@ async def get_customer_balance(
     }
 
 
-@router.get("/customer-orders/{customer_id}")
+@router.get("/customerorders/{customer_id}")
 async def get_customer_orders(
     customer_id: str,
     current_user: User = Depends(cashier_required_from_session()),

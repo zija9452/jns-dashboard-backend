@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+from uuid import UUID
 from typing import Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -12,6 +13,8 @@ class DecimalEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, Decimal):
             return float(obj)
+        if isinstance(obj, UUID):
+            return str(obj)
         return super().default(obj)
 
 class AuditLogger:

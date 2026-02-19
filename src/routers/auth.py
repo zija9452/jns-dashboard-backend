@@ -186,7 +186,7 @@ async def traditional_login(
     }
 
 
-@router.post("/session-login")
+@router.post("/login")
 async def session_login(
     response: Response,
     login_request: LoginRequest,
