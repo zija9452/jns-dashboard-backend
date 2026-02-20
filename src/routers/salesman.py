@@ -36,14 +36,6 @@ async def create_salesman(
     Create a new salesman
     Requires admin role
     """
-    # Check if code already exists
-    existing_salesman = await SalesmanService.get_salesman_by_code(db, salesman_create.code)
-    if existing_salesman:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Salesman with this code already exists"
-        )
-
     return await SalesmanService.create_salesman(db, salesman_create, str(current_user.id))
 
 # Frontend-compatible endpoints (MUST be before /{salesman_id} routes)
@@ -123,15 +115,6 @@ async def update_salesman(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Salesman not found"
         )
-
-    # Check if updating code and if new code already exists
-    if salesman_update.code and salesman_update.code != salesman.code:
-        existing_salesman = await SalesmanService.get_salesman_by_code(db, salesman_update.code)
-        if existing_salesman:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Salesman with this code already exists"
-            )
 
     return await SalesmanService.update_salesman(db, salesman_uuid, salesman_update, str(current_user.id))
 
