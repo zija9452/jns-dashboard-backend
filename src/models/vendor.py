@@ -10,6 +10,7 @@ class Vendor(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     name: str = Field(max_length=100)
     contacts: str = Field()  # JSON string for phone, email, address
+    branch: Optional[str] = Field(default=None, max_length=200)
     terms: Optional[str] = Field(default=None)  # JSON string for payment terms, etc.
     created_at: datetime = Field(default_factory=lambda: datetime.now())
     updated_at: datetime = Field(default_factory=lambda: datetime.now(), nullable=False)
@@ -18,6 +19,7 @@ class VendorRead(SQLModel):
     id: uuid.UUID
     name: str
     contacts: str
+    branch: Optional[str]
     terms: Optional[str]
     created_at: datetime
     updated_at: datetime
@@ -25,9 +27,11 @@ class VendorRead(SQLModel):
 class VendorCreate(SQLModel):
     name: str
     contacts: str  # JSON string
+    branch: Optional[str] = None
     terms: Optional[str] = None  # JSON string
 
 class VendorUpdate(SQLModel):
     name: Optional[str] = None
     contacts: Optional[str] = None
+    branch: Optional[str] = None
     terms: Optional[str] = None

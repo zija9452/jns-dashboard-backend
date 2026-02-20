@@ -62,7 +62,7 @@ async def view_customers(
             or_(
                 Customer.name.ilike(search_pattern),
                 Customer.contacts.ilike(search_pattern),
-                Customer.billing_addr.ilike(search_pattern)
+                Customer.cnic.ilike(search_pattern)
             )
         )
 
@@ -76,7 +76,7 @@ async def view_customers(
             or_(
                 Customer.name.ilike(search_pattern),
                 Customer.contacts.ilike(search_pattern),
-                Customer.billing_addr.ilike(search_pattern)
+                Customer.cnic.ilike(search_pattern)
             )
         )
 
@@ -97,24 +97,17 @@ async def view_customers(
         try:
             contacts_data = json.loads(customer.contacts)
         except:
-            contacts_data = {"phone": "", "email": ""}
-
-        address_data = {}
-        try:
-            if customer.billing_addr:
-                address_data = json.loads(customer.billing_addr)
-        except:
-            address_data = {"street": "", "city": "", "country": ""}
+            contacts_data = {"phone": "", "email": "", "address": ""}
 
         customer_data = {
             "cus_id": str(customer.id),
             "cus_name": customer.name,
             "cus_phone": contacts_data.get("phone", ""),
             "cus_cnic": customer.cnic or "",
-            "cus_address": address_data.get("street", ""),
+            "cus_address": contacts_data.get("address", ""),
             "cus_sal_id_fk": str(customer.sal_id_fk) if customer.sal_id_fk else "",
             "branch": customer.branch or "",
-            "cus_balance": float(customer.credit_limit)
+            "cus_balance": float(customer.cus_balance) if customer.cus_balance else 0.0
         }
 
         result_list.append(customer_data)
@@ -354,25 +347,176 @@ async def customer_view_report(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Generate customer view report
+    Generate customer view report with proper table format
     Required by JavaScript frontend
     """
-    # In a real implementation, this would generate a PDF report
-    # For now, returning a placeholder response
-    # This would typically involve creating a PDF and returning base64 encoded data
-
-    # Placeholder response - in real implementation, this would generate an actual report
     import base64
-    # Create a simple placeholder PDF content (this is just a minimal PDF header)
-    pdf_content = "%PDF-1.4\n1 0 obj\n<<\n/Type /Catalog\n/Pages 2 0 R\n>>\nendobj\n"
-    pdf_content += "2 0 obj\n<<\n/Type /Pages\n/Kids [3 0 R]\n/Count 1\n>>\nendobj\n"
-    pdf_content += "3 0 obj\n<<\n/Type /Page\n/Parent 2 0 R\n/MediaBox [0 0 612 792]\n/Contents 4 0 R\n>>\nendobj\n"
-    pdf_content += "4 0 obj\n<<\n/Length 44\n>>\nstream\nBT\n/F1 12 Tf\n72 720 Td\n(Customer Report) Tj\nET\nendstream\nendobj\n"
-    pdf_content += "xref\n0 5\ntrailer\n<<\n/Size 5\n/Root 1 0 R\n>>\n%%EOF"
-
-    # Encode to base64
-    encoded_pdf = base64.b64encode(pdf_content.encode()).decode()
-
+    from datetime import datetime
+    
+    # Fetch all customers
+    customers = await CustomerService.get_customers(db, skip=0, limit=100)
+    
+    # Calculate total balance
+    total_balance = 0.0
+    
+    # Build customer rows for PDF table
+    customer_rows = ""
+    for i, customer in enumerate(customers):
+        import json
+        contacts_data = {}
+        try:
+            contacts_data = json.loads(customer.contacts)
+        except:
+            contacts_data = {"phone": "", "email": "", "address": ""}
+        
+        # Get balance from customer
+        customer_balance = getattr(customer, 'balance', 0.0) or 0.0
+        total_balance += customer_balance
+        
+        customer_rows += f"""
+        <tr>
+            <td class="border" style="text-align: center;">{i+1}</td>
+            <td class="border">{customer.name}</td>
+            <td class="border">{contacts_data.get('phone', '')}</td>
+            <td class="border">{contacts_data.get('address', '')}</td>
+            <td class="border text-right">{customer_balance:.2f}</td>
+        </tr>
+        """
+    
+    # Add total row
+    customer_rows += f"""
+        <tr class="total-row">
+            <td class="border" colspan="4" style="text-align: right; font-weight: bold;">Total Market Balance:</td>
+            <td class="border text-right" style="font-weight: bold;">{total_balance:.2f}</td>
+        </tr>
+    """
+    
+    # Create HTML content for PDF with proper table styling
+    current_date = datetime.now().strftime('%d-%m-%Y')
+    
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <style>
+            @page {{
+                size: A4 landscape;
+                margin: 15mm;
+            }}
+            body {{
+                font-family: Arial, sans-serif;
+                font-size: 15px;
+                margin: 0;
+                padding: 0;
+            }}
+            h1 {{
+                text-align: center;
+                color: #333;
+                margin: 0 0 10px 0;
+                font-size: 28px;
+                font-weight: bold;
+            }}
+            .print-date {{
+                text-align: right;
+                margin-bottom: 15px;
+                color: #666;
+                font-size: 13px;
+            }}
+            table {{
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 10px;
+            }}
+            th {{
+                background-color: #444;
+                color: white;
+                border: 2px solid #000;
+                padding: 14px 12px;
+                text-align: left;
+                font-weight: bold;
+                font-size: 16px;
+            }}
+            td {{
+                border: 1px solid #000;
+                padding: 12px;
+                font-size: 15px;
+            }}
+            .border {{
+                border: 1px solid #000;
+            }}
+            .text-right {{
+                text-align: right;
+            }}
+            tr:nth-child(even) {{
+                background-color: #f5f5f5;
+            }}
+            tr:nth-child(odd) {{
+                background-color: #fff;
+            }}
+            .total-row {{
+                background-color: #e0e0e0 !important;
+                font-weight: bold;
+                font-size: 16px;
+            }}
+            .footer {{
+                margin-top: 20px;
+                text-align: center;
+                font-size: 13px;
+                color: #666;
+            }}
+        </style>
+    </head>
+    <body>
+        <h1>Customer Details</h1>
+        <div class="print-date"><strong>Print Date:</strong> {current_date}</div>
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 50px;">#</th>
+                    <th>Customer Name</th>
+                    <th>Phone</th>
+                    <th>Address</th>
+                    <th style="width: 120px; text-align: right;">Balance</th>
+                </tr>
+            </thead>
+            <tbody>
+                {customer_rows}
+            </tbody>
+        </table>
+        <div class="footer">
+            <p>Total Customers: {len(customers)}</p>
+        </div>
+    </body>
+    </html>
+    """
+    
+    # Generate PDF using weasyprint
+    try:
+        from weasyprint import HTML
+        from io import BytesIO
+        
+        # Generate PDF using weasyprint
+        pdf_doc = HTML(string=html_content)
+        pdf_bytes = pdf_doc.write_pdf()
+        encoded_pdf = base64.b64encode(pdf_bytes).decode()
+        
+    except ImportError:
+        # Fallback to simple PDF if weasyprint is not installed
+        pdf_content = "%PDF-1.4\n"
+        pdf_content += "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+        pdf_content += "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"
+        pdf_content += "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 792 612] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n"
+        pdf_content += "4 0 obj\n<< /Length 300 >>\nstream\n"
+        pdf_content += "BT\n/F1 18 Tf 350 550 Td (Customer Details) Tj ET\n"
+        pdf_content += "BT\n/F1 10 Tf 600 520 Td (Print Date: " + current_date + ") Tj ET\n"
+        pdf_content += "BT\n/F1 12 Tf 50 480 Td (Customer Name | Phone | Address | Balance) Tj ET\n"
+        pdf_content += "ET\nendstream\nendobj\n"
+        pdf_content += "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n"
+        pdf_content += "xref\n0 6\ntrailer\n<< /Size 6 /Root 1 0 R >>\n%%EOF"
+        
+        encoded_pdf = base64.b64encode(pdf_content.encode()).decode()
+    
     return encoded_pdf
 
 @router.get("/getcustomervendorbybranch")

@@ -18,6 +18,7 @@ class VendorService:
         db_vendor = Vendor(
             name=vendor_create.name,
             contacts=vendor_create.contacts,
+            branch=vendor_create.branch,
             terms=vendor_create.terms
         )
 
@@ -33,7 +34,8 @@ class VendorService:
             action="CREATE",
             changes={
                 "name": vendor_create.name,
-                "contacts": vendor_create.contacts
+                "contacts": vendor_create.contacts,
+                "branch": vendor_create.branch
             }
         )
 

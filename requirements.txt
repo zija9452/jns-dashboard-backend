@@ -36,3 +36,4 @@ sqlmodel==0.0.31
 argon2-cffi==25.1.0
 openpyxl==3.1.2
 weasyprint==61.0
+pydyf==0.8.0
