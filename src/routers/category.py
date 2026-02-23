@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from typing import List
+from typing import List, Optional
 from uuid import UUID
 import uuid
 
@@ -50,29 +50,63 @@ async def create_category(
     return db_category
 
 
-@router.get("/", response_model=List[CategoryRead])
+@router.get("/")
 async def get_categories(
-    skip: int = 0,
-    limit: int = 100,
-    branch: str = None,
+    page: int = 1,
+    limit: int = 8,
+    branch: Optional[str] = None,
     current_user: User = Depends(employee_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get all categories with optional branch filter
+    Get all categories with optional branch filter and pagination
     Requires employee role
+    Returns: Paginated data + total count for proper frontend pagination
     """
-    query = select(Category)
-    
+    # Calculate skip from page
+    skip = (page - 1) * limit
+
+    # Build base query
+    base_statement = select(Category)
+
+    # Apply branch filter
     if branch:
-        query = query.where(Category.branch == branch)
-    
-    query = query.offset(skip).limit(limit)
-    
-    result = await db.execute(query)
+        base_statement = base_statement.where(Category.branch == branch)
+
+    # Get total count
+    count_statement = select(Category.id)
+    if branch:
+        count_statement = count_statement.where(Category.branch == branch)
+
+    count_result = await db.execute(count_statement)
+    total_count = len(count_result.scalars().all())
+
+    # Apply pagination
+    statement = base_statement.offset(skip).limit(limit)
+    result = await db.execute(statement)
     categories = result.scalars().all()
-    
-    return categories
+
+    # Calculate total pages
+    total_pages = (total_count + limit - 1) // limit if limit > 0 else 1
+
+    # Prepare response with pagination info
+    response_data = {
+        'data': [
+            {
+                "id": str(cat.id),
+                "name": cat.name,
+                "branch": cat.branch or "",
+                "created_at": cat.created_at.isoformat() if cat.created_at else None
+            }
+            for cat in categories
+        ],
+        'page': page,
+        'limit': limit,
+        'total': total_count,
+        'totalPages': total_pages
+    }
+
+    return response_data
 
 
 @router.get("/{category_id}", response_model=CategoryRead)

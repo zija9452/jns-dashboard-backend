@@ -1,9 +1,7 @@
 from sqlmodel import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
-from typing import List, Optional
 from uuid import UUID
-from decimal import Decimal
 from ..models.salesman import Salesman, SalesmanCreate, SalesmanUpdate
 from ..utils.audit_logger import audit_log
 
@@ -19,11 +17,9 @@ class SalesmanService:
         """
         db_salesman = Salesman(
             name=salesman_create.name,
-            code=salesman_create.code,
             phone=salesman_create.phone,
             address=salesman_create.address,
-            branch=salesman_create.branch,
-            commission_rate=salesman_create.commission_rate
+            branch=salesman_create.branch
         )
 
         db.add(db_salesman)
@@ -38,11 +34,9 @@ class SalesmanService:
             action="CREATE",
             changes={
                 "name": salesman_create.name,
-                "code": salesman_create.code,
                 "phone": salesman_create.phone or "",
                 "address": salesman_create.address or "",
-                "branch": salesman_create.branch or "",
-                "commission_rate": str(salesman_create.commission_rate) if salesman_create.commission_rate else "0.00"
+                "branch": salesman_create.branch or ""
             }
         )
 
@@ -98,21 +92,13 @@ class SalesmanService:
         await db.commit()
         await db.refresh(db_salesman)
 
-        # Convert Decimal objects to strings for JSON serialization
-        serialized_changes = {}
-        for key, value in update_data.items():
-            if isinstance(value, Decimal):
-                serialized_changes[key] = str(value)
-            else:
-                serialized_changes[key] = value
-
         # Log the action
         await audit_log(
             db=db,
             user_id=user_id or "",  # Use provided user ID or empty string if not provided
             entity="Salesman",
             action="UPDATE",
-            changes=serialized_changes
+            changes=update_data
         )
 
         return db_salesman

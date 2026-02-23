@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List
+from typing import List, Optional
 from uuid import UUID
 import uuid
+import json
 
 from ..database.database import get_db
-from ..models.user import User  # Import User at the top to avoid NameError
+from ..models.user import User
 from ..models.salesman import Salesman, SalesmanCreate, SalesmanUpdate, SalesmanRead
 from ..services.salesman_service import SalesmanService
 from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, cashier_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session
@@ -42,24 +44,76 @@ async def create_salesman(
 
 @router.get("/viewsalesman")
 async def view_salesmen(
-    search_string: str = None,
-    branches: str = None,
-    searchphone: str = None,
-    skip: int = 0,
-    limit: int = 100,
-    current_user: User = Depends(admin_required_from_session()),
+    search_string: Optional[str] = None,
+    branches: Optional[str] = None,
+    searchphone: Optional[str] = None,
+    page: int = 1,
+    limit: int = 8,
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
     View salesmen with search and branch filtering
     Required by JavaScript frontend - matches customer/vendor pattern
+    Returns: Paginated data + total count for proper frontend pagination
     """
-    # Get all salesmen with pagination
-    salesmen = await SalesmanService.get_salesmen(db, skip=skip, limit=limit)
-    
-    # Apply filters and format response
-    result = await _view_salesmen_impl(salesmen, search_string, branches, searchphone)
-    return result
+    # Calculate skip from page
+    skip = (page - 1) * limit
+
+    # Build base query
+    base_statement = select(Salesman)
+
+    # Apply branch filter at database level
+    if branches:
+        base_statement = base_statement.where(Salesman.branch == branches)
+
+    # Apply search filters at database level
+    if search_string and search_string.strip():
+        search_pattern = f"%{search_string.strip()}%"
+        base_statement = base_statement.where(Salesman.name.ilike(search_pattern))
+
+    # Get total count
+    count_statement = select(Salesman.id)
+    if branches:
+        count_statement = count_statement.where(Salesman.branch == branches)
+    if search_string and search_string.strip():
+        search_pattern = f"%{search_string.strip()}%"
+        count_statement = count_statement.where(Salesman.name.ilike(search_pattern))
+
+    count_result = await db.execute(count_statement)
+    total_count = len(count_result.scalars().all())
+
+    # Apply pagination at database level
+    statement = base_statement.offset(skip).limit(limit)
+
+    # Execute query
+    result = await db.execute(statement)
+    salesmen = result.scalars().all()
+
+    # Format the response to match expected frontend structure
+    result_list = []
+    for salesman in salesmen:
+        result_list.append({
+            "sal_id": str(salesman.id),
+            "sal_name": salesman.name,
+            "sal_phone": salesman.phone or '',
+            "sal_address": salesman.address or '',
+            "branch": salesman.branch or ''
+        })
+
+    # Calculate total pages
+    total_pages = (total_count + limit - 1) // limit if limit > 0 else 1
+
+    # Prepare response with pagination info
+    response_data = {
+        'data': result_list,
+        'page': page,
+        'limit': limit,
+        'total': total_count,
+        'totalPages': total_pages
+    }
+
+    return response_data
 
 @router.get("/{salesman_id}", response_model=SalesmanRead)
 async def get_salesman(

@@ -14,6 +14,7 @@ class StockEntry(SQLModel, table=True):
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     product_id: uuid.UUID = Field(foreign_key="products.id")
+    vendor_id: Optional[uuid.UUID] = Field(default=None, foreign_key="vendors.id")  # Track vendor for each stock entry
     qty: int  # Positive for IN, negative for OUT
     type: StockEntryType
     location: Optional[str] = Field(default=None, max_length=100)

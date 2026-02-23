@@ -276,6 +276,55 @@ async def generate_barcode(
     barcode = await ProductService.generate_unique_barcode(db)
     return {"barcode": barcode}
 
+
+@router.get("/searchbybarcode")
+async def search_product_by_barcode(
+    barcode: str,
+    current_user: User = Depends(employee_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Search product by barcode
+    Returns product details for stock in workflow
+    """
+    from sqlalchemy import select
+    
+    # Search by barcode
+    statement = select(Product).where(Product.barcode == barcode)
+    result = await db.execute(statement)
+    product = result.scalar_one_or_none()
+    
+    if not product:
+        # Try searching by SKU
+        statement = select(Product).where(Product.sku == barcode)
+        result = await db.execute(statement)
+        product = result.scalar_one_or_none()
+    
+    if not product:
+        # Try partial match on name
+        statement = select(Product).where(Product.name.ilike(f"%{barcode}%"))
+        result = await db.execute(statement)
+        product = result.scalar_one_or_none()
+    
+    if product:
+        # Format response to match frontend expectations
+        return {
+            "pro_id": str(product.id),
+            "pro_name": product.name,
+            "pro_price": float(product.unit_price),
+            "pro_cost": float(product.cost_price),
+            "pro_barcode": product.barcode or "",
+            "pro_dis": float(product.discount) if product.discount else 0.0,
+            "cat_id_fk": product.category or "",
+            "limitedquan": product.limited_qty,
+            "branch": product.branch or "",
+            "brand": product.brand_action or "",
+            "pro_image": product.attributes or "",
+            "stock": product.stock_level
+        }
+    else:
+        return []
+
 @router.post("/deleteproduct/{id}")
 async def delete_product_frontend(
     id: str,

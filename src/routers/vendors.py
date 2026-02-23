@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List
+from sqlalchemy import select
+from typing import List, Optional
 from uuid import UUID
 import uuid
+import json
 
 from ..database.database import get_db
-from ..models.user import User  # Import User at the top to avoid NameError
+from ..models.user import User
 from ..models.vendor import Vendor, VendorCreate, VendorUpdate, VendorRead
 from ..services.vendor_service import VendorService
 from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, cashier_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session
@@ -42,83 +44,87 @@ async def create_vendor(
 
 @router.get("/viewvendor")
 async def view_vendors(
-    search_string: str = None,
-    branches: str = None,
-    searchphone: str = None,
-    searchaddress: str = None,
-    skip: int = 0,
-    limit: int = 100,
-    current_user: User = Depends(admin_required_from_session()),
+    search_string: Optional[str] = None,
+    branches: Optional[str] = None,
+    searchphone: Optional[str] = None,
+    searchaddress: Optional[str] = None,
+    page: int = 1,
+    limit: int = 8,
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
     View vendors with search and branch filtering
     Required by JavaScript frontend
+    Returns: Paginated data + total count for proper frontend pagination
+    Same approach as /products/viewproduct
     """
-    # Get all vendors with pagination
-    vendors = await VendorService.get_vendors(db, skip=skip, limit=limit)
+    # Calculate skip from page
+    skip = (page - 1) * limit
 
-    # Apply filters
-    filtered_vendors = []
+    # Build base query
+    base_statement = select(Vendor)
+
+    # Apply branch filter at database level
+    if branches:
+        base_statement = base_statement.where(Vendor.branch == branches)
+
+    # Apply search filters at database level
+    if search_string and search_string.strip():
+        search_pattern = f"%{search_string.strip()}%"
+        base_statement = base_statement.where(Vendor.name.ilike(search_pattern))
+
+    # Get total count
+    count_statement = select(Vendor.id)
+    if branches:
+        count_statement = count_statement.where(Vendor.branch == branches)
+    if search_string and search_string.strip():
+        search_pattern = f"%{search_string.strip()}%"
+        count_statement = count_statement.where(Vendor.name.ilike(search_pattern))
+
+    count_result = await db.execute(count_statement)
+    total_count = len(count_result.scalars().all())
+
+    # Apply pagination at database level
+    statement = base_statement.offset(skip).limit(limit)
+
+    # Execute query
+    result = await db.execute(statement)
+    vendors = result.scalars().all()
+
+    # Format the response for the JavaScript frontend
+    result_list = []
     for vendor in vendors:
-        # Apply branch filter if provided
-        if branches:
-            vendor_branch = getattr(vendor, 'branch', '')
-            if vendor_branch != branches:
-                continue
-
-        # Apply search filters
-        should_include = True
-        if search_string:
-            search_lower = search_string.lower()
-            if search_lower not in vendor.name.lower():
-                should_include = False
-
-        if should_include and searchphone:
-            import json
-            try:
-                contacts_data = json.loads(vendor.contacts)
-                phone = contacts_data.get("phone", "")
-                if searchphone not in phone:
-                    should_include = False
-            except:
-                should_include = False
-
-        if should_include and searchaddress:
-            import json
-            try:
-                contacts_data = {}
-                if vendor.contacts:
-                    contacts_data = json.loads(vendor.contacts)
-                address = contacts_data.get("address", "")
-                if searchaddress not in address:
-                    should_include = False
-            except:
-                should_include = False
-
-        if should_include:
-            filtered_vendors.append(vendor)
-
-    # Format the response to match expected frontend structure
-    result = []
-    for vendor in filtered_vendors:
-        import json
         contacts_data = {}
         try:
             contacts_data = json.loads(vendor.contacts)
         except:
             contacts_data = {"phone": "", "email": "", "address": ""}
 
-        result.append({
+        vendor_data = {
             "ven_id": str(vendor.id),
             "ven_name": vendor.name,
             "ven_phone": contacts_data.get("phone", ""),
             "ven_address": contacts_data.get("address", ""),
-            "branch": getattr(vendor, 'branch', ''),
-            "vend_balance": 0.0  # Vendor balance
-        })
+            "branch": getattr(vendor, 'branch', '') or '',
+            "vend_balance": 0.0
+        }
 
-    return result
+        result_list.append(vendor_data)
+
+    # Calculate total pages
+    total_pages = (total_count + limit - 1) // limit if limit > 0 else 1
+
+    # Prepare response with pagination info
+    response_data = {
+        'data': result_list,
+        'page': page,
+        'limit': limit,
+        'total': total_count,
+        'totalPages': total_pages
+    }
+
+    return response_data
 
 @router.get("/getvendor/{id}")
 async def get_vendor_details(

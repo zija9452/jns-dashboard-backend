@@ -11,6 +11,10 @@ services:
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=${REDIS_URL}
+      # Printer configuration - Host printer name
+      - PRINTER_NAME=ZDesigner GX420d
+      - HOST_PRINTER_ENABLED=true
+      - HOST_PRINT_URL=http://host.docker.internal:9000/print
     env_file:
       - .env
     depends_on:
@@ -19,6 +23,9 @@ services:
       redis:
         condition: service_healthy
     command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
+    # Use host.docker.internal to access host machine
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   postgres:
     image: postgres:15-alpine
