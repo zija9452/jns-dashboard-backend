@@ -8,6 +8,15 @@ import uuid
 from datetime import datetime
 import base64
 import os
+from pydantic import BaseModel
+
+
+class StockAdjustItem(BaseModel):
+    """Pydantic model for stock adjustment item"""
+    product_id: str
+    quantity: int
+    action: str  # 'increase' or 'decrease'
+    reason: Optional[str] = 'Stock count adjustment'
 
 from ..database.database import get_db
 from ..models.user import User
@@ -182,18 +191,89 @@ async def search_stock(
 
 @router.post("/adjuststock")
 async def adjust_stock(
-    stock_items: Optional[List[dict]] = None,
+    stock_items: List[StockAdjustItem],
     timezone: Optional[str] = None,
     current_user: User = Depends(admin_cashier_employee_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Adjust stock levels for multiple products
+    Adjust stock levels for multiple products (increase or decrease)
     Access: Admin, Cashier, Employee
-    Note: Full functionality to be implemented later
+    
+    Request Body:
+    [
+      {
+        "product_id": "uuid",
+        "quantity": 5,
+        "action": "increase" or "decrease",
+        "reason": "Stock count adjustment"
+      },
+      ...
+    ]
     """
-    # Placeholder - to be implemented
-    return {"message": "Adjust stock endpoint - to be implemented"}
+    from ..models.stock_entry import StockEntry, StockEntryType
+    
+    results = []
+    
+    for item in stock_items:
+        # Get product
+        product = await db.get(Product, UUID(item.product_id))
+        if not product:
+            results.append({
+                "product_id": item.product_id,
+                "status": "error",
+                "message": "Product not found"
+            })
+            continue
+        
+        # Calculate adjustment amount
+        if item.action == 'increase':
+            adjustment_qty = item.quantity
+        elif item.action == 'decrease':
+            adjustment_qty = -item.quantity
+        else:
+            results.append({
+                "product_id": item.product_id,
+                "status": "error",
+                "message": "Invalid action. Use 'increase' or 'decrease'"
+            })
+            continue
+        
+        # Create stock entry with ADJUST type
+        entry = StockEntry(
+            product_id=product.id,
+            vendor_id=None,  # No vendor for adjustments
+            qty=adjustment_qty,
+            type=StockEntryType.ADJUST,
+            location="Stock Adjustment",
+            ref=f"ADJ_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+        )
+        db.add(entry)
+        
+        # Update product stock
+        old_stock = product.stock_level
+        product.stock_level += adjustment_qty
+        
+        # Prevent negative stock
+        if product.stock_level < 0:
+            product.stock_level = 0
+        
+        results.append({
+            "product_id": item.product_id,
+            "product_name": product.name,
+            "action": item.action,
+            "quantity_adjusted": item.quantity,
+            "old_stock": old_stock,
+            "new_stock": product.stock_level,
+            "status": "success"
+        })
+    
+    await db.commit()
+    
+    return {
+        "message": "Stock adjustment completed successfully",
+        "results": results
+    }
 
 
 @router.post("/savestockin")
