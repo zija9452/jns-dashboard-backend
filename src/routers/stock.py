@@ -354,9 +354,14 @@ async def save_stock_in(
             "vendor_id": vendor_id,
             "status": "success"
         })
-    
+
     await db.commit()
     
+    # Invalidate stock cache after stock-in
+    from ..utils.cache import cache
+    await cache.delete_pattern("stock:view:*")
+    await cache.delete_pattern("product:barcode:*")
+
     return {
         "message": "Stock in completed successfully",
         "results": results
@@ -1159,6 +1164,76 @@ async def print_barcodes(
         "barcode": barcode,
         "price": price,
         "message": f"Generated ZPL for {quantity} barcode(s) of {pro_name}"
+    }
+
+
+@router.post("/generatebarcodesonly")
+async def generate_barcodes_only(
+    items: List[dict],
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate ZPL barcodes for multiple products WITHOUT saving stock-in
+    Access: Admin, Cashier, Employee
+    """
+    zpl_commands = []
+    
+    for item in items:
+        product_id = item.get('product_id')
+        quantity = int(item.get('quantity', 0))
+        barcode = item.get('barcode', '')
+        price = float(item.get('price', 0))
+        
+        # Get product if not provided
+        if not barcode or price == 0:
+            product = await db.get(Product, UUID(product_id))
+            if product:
+                if not barcode:
+                    barcode = product.barcode or product.sku or ''
+                if price == 0:
+                    price = float(product.sell_price or 0)
+        
+        # Skip if no barcode
+        if not barcode:
+            continue
+        
+        # Get product name
+        product = await db.get(Product, UUID(product_id))
+        pro_name = product.name if product else 'Product'
+        
+        # Generate ZPL for each unit
+        for i in range(quantity):
+            # Complete ZPL label
+            zpl = "^XA"
+            
+            # 1. Barcode with auto human-readable
+            zpl += f"^FO160,50^BY2,3,80^BCN,80,Y,N,N^FD{barcode}^FS"
+            
+            # 2. Product name - truncated and centered
+            truncated_name = pro_name[:40] if len(pro_name) > 40 else pro_name
+            zpl += f"^FO80,160^A0N,18,18^FB400,2,0,C^FD{truncated_name}^FS"
+            
+            # 3. Price - centered, larger font
+            zpl += f"^FO160,185^A0N,25,25^FB250,1,0,C^FDRs. {int(price)}^FS"
+            
+            # End label
+            zpl += "^XZ"
+            
+            # Only add if ZPL is valid (has ^XA and ^XZ)
+            if zpl.startswith("^XA") and zpl.endswith("^XZ") and len(zpl) > 50:
+                zpl_commands.append({
+                    "product_id": product_id,
+                    "barcode": barcode,
+                    "quantity": quantity,
+                    "unit_index": i + 1,
+                    "price": price,
+                    "zpl": zpl
+                })
+    
+    return {
+        "message": f"Generated {len(zpl_commands)} barcode(s)",
+        "zpl_commands": zpl_commands
     }
 
 

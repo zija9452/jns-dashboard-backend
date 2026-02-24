@@ -978,16 +978,9 @@ async def create_customer_from_modal(
     # Create contact information
     contacts = {
         "phone": cus_phone,
-        "email": "",  # No email provided in the form
+        "email": "",
         "address": cus_address
     }
-
-    # Create billing address
-    billing_addr = json.dumps({
-        "street": cus_address,
-        "city": "",  # No city provided in the form
-        "country": ""  # No country provided in the form
-    })
 
     # Convert sal_id_fk to UUID if provided
     sal_id_uuid = None
@@ -997,13 +990,10 @@ async def create_customer_from_modal(
         except ValueError:
             sal_id_uuid = None
 
-    # Create customer data
+    # Create customer data - match CustomerCreate model fields
     customer_data = CustomerCreate(
         name=cus_name,
         contacts=json.dumps(contacts),
-        billing_addr=billing_addr,
-        shipping_addr=billing_addr,  # Use same as billing
-        credit_limit=0.0,  # Default credit limit
         cnic=cus_cnic,
         sal_id_fk=sal_id_uuid,
         branch=branch

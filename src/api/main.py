@@ -16,7 +16,11 @@ from src.utils.tracing import setup_tracing
 async def lifespan(app: FastAPI):
     # Startup
     from src.app_startup import initialize_database
+    from src.database.database import init_cache
     await initialize_database()
+    
+    # Initialize Redis cache
+    await init_cache()
 
     # Start metrics server in a background thread
     import threading
@@ -27,6 +31,8 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
+    from src.database.database import close_cache
+    await close_cache()
 
 app = FastAPI(
     title="Regal POS Backend",

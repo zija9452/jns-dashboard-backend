@@ -5,6 +5,7 @@ from typing import List, Dict, Any
 from uuid import UUID
 import uuid
 import time
+import logging
 
 from ..database.database import get_db
 from ..models.product import Product, ProductCreate, ProductUpdate, ProductRead
@@ -12,6 +13,8 @@ from ..models.user import User  # Import User at the top to avoid NameError
 from ..services.product_service import ProductService
 from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session
 from sqlmodel import select
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -36,10 +39,15 @@ async def get_products(
     return products
 
 # Helper function to clear products cache
-def clear_products_cache():
-    """Clear all cached product lists"""
-    global _products_cache
-    _products_cache.clear()
+async def clear_products_cache():
+    """Clear all cached product data from Redis"""
+    from ..utils.cache import cache
+    
+    # Invalidate all product caches
+    await cache.delete_pattern("product:barcode:*")
+    await cache.delete_pattern("stock:view:*")
+    
+    logger.info("✓ Product cache invalidated")
 
 @router.post("/", response_model=ProductRead)
 async def create_product(
@@ -284,46 +292,59 @@ async def search_product_by_barcode(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Search product by barcode
+    Search product by barcode (FAST - with Redis cache)
     Returns product details for stock in workflow
     """
     from sqlalchemy import select
+    import logging
+    from ..utils.cache import cache
     
-    # Search by barcode
+    logging.info(f"Searching for barcode: {barcode}")
+
+    # Try cache first
+    cached_product = await cache.get_product_by_barcode(barcode)
+    if cached_product:
+        logging.info(f"✓ Cache HIT for barcode: {barcode}")
+        return cached_product
+    
+    logging.info(f"Cache MISS for barcode: {barcode}")
+
+    # Search by barcode ONLY (indexed - fast)
     statement = select(Product).where(Product.barcode == barcode)
     result = await db.execute(statement)
     product = result.scalar_one_or_none()
     
     if not product:
-        # Try searching by SKU
+        # Try searching by SKU (also indexed)
+        logging.info(f"Trying SKU search: {barcode}")
         statement = select(Product).where(Product.sku == barcode)
         result = await db.execute(statement)
         product = result.scalar_one_or_none()
-    
+
     if not product:
-        # Try partial match on name
-        statement = select(Product).where(Product.name.ilike(f"%{barcode}%"))
-        result = await db.execute(statement)
-        product = result.scalar_one_or_none()
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    # Format response
+    result_dict = {
+        "pro_id": str(product.id),
+        "pro_name": product.name,
+        "pro_price": float(product.unit_price),
+        "pro_cost": float(product.cost_price),
+        "pro_barcode": product.barcode or "",
+        "pro_dis": float(product.discount) if product.discount else 0.0,
+        "cat_id_fk": product.category or "",
+        "limitedquan": product.limited_qty,
+        "branch": product.branch or "",
+        "brand": product.brand_action or "",
+        "pro_image": product.attributes or "",
+        "stock": product.stock_level
+    }
     
-    if product:
-        # Format response to match frontend expectations
-        return {
-            "pro_id": str(product.id),
-            "pro_name": product.name,
-            "pro_price": float(product.unit_price),
-            "pro_cost": float(product.cost_price),
-            "pro_barcode": product.barcode or "",
-            "pro_dis": float(product.discount) if product.discount else 0.0,
-            "cat_id_fk": product.category or "",
-            "limitedquan": product.limited_qty,
-            "branch": product.branch or "",
-            "brand": product.brand_action or "",
-            "pro_image": product.attributes or "",
-            "stock": product.stock_level
-        }
-    else:
-        return []
+    # Cache for 10 minutes
+    await cache.set_product_by_barcode(barcode, result_dict, ttl=600)
+    logging.info(f"✓ Cached product for barcode: {barcode}")
+    
+    return result_dict
 
 @router.post("/deleteproduct/{id}")
 async def delete_product_frontend(
@@ -452,7 +473,7 @@ async def update_product(
         )
 
     # Clear cache after updating product
-    clear_products_cache()
+    await clear_products_cache()
 
     return await ProductService.update_product(db, product_uuid, product_update, str(current_user.id))
 

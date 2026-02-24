@@ -19,9 +19,6 @@ class CustomerService:
         db_customer = Customer(
             name=customer_create.name,
             contacts=customer_create.contacts,
-            billing_addr=customer_create.billing_addr,
-            shipping_addr=customer_create.shipping_addr,
-            credit_limit=customer_create.credit_limit,
             cnic=customer_create.cnic,
             sal_id_fk=customer_create.sal_id_fk,
             branch=customer_create.branch
@@ -40,7 +37,6 @@ class CustomerService:
             changes={
                 "name": customer_create.name,
                 "contacts": customer_create.contacts,
-                "credit_limit": str(customer_create.credit_limit),
                 "cnic": customer_create.cnic,
                 "branch": customer_create.branch
             }

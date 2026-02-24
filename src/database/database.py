@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
 # For Neon with asyncpg, we need to handle SSL differently
 # Neon uses serverless architecture with connection pooling at proxy level
@@ -15,7 +16,7 @@ if DATABASE_URL and "neon.tech" in DATABASE_URL:
     # For Neon connections, use appropriate pool settings for serverless architecture
     engine = create_async_engine(
         DATABASE_URL,
-        echo=True,  # Enable SQL logging for debugging
+        echo=False,  # Disable SQL logging for better performance
         pool_size=15,  # Increased pool for better concurrency
         max_overflow=25,  # Allow more overflow connections during peak
         pool_pre_ping=True,  # Re-enabled: verify connections before use
@@ -48,6 +49,19 @@ else:
     )
 
 AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+
+# Initialize cache on startup
+async def init_cache():
+    """Initialize Redis cache connection"""
+    from ..utils.cache import cache
+    await cache.connect()
+
+
+async def close_cache():
+    """Close Redis cache connection"""
+    from ..utils.cache import cache
+    await cache.disconnect()
 SessionLocal = AsyncSessionLocal  # For compatibility with existing imports
 
 async def get_db():
