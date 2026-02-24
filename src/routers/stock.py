@@ -373,35 +373,39 @@ async def save_stock_in_with_barcode(
         })
         
         # Generate ZPL barcode with new format (barcode lines, number, name, price)
+        # Generate one barcode per unit (quantity)
         if product.barcode:
             # Use selling_price from request if provided, otherwise from product
             barcode_price = selling_price if selling_price > 0 else (product.sell_price or 0.0)
 
-            # ZPL for Zebra GX420d - 80mm label width (~576 dots @ 203dpi)
-            # Center all content horizontally at x=160
-            zpl = "^XA"
+            # Generate ZPL for each unit in quantity
+            for i in range(quantity):
+                # ZPL for Zebra GX420d - 80mm label width (~576 dots @ 203dpi)
+                # Center all content horizontally at x=160
+                zpl = "^XA"
 
-            # 1. Barcode - with auto human-readable number below
-            zpl += f"^FO160,50^BY2,3,80^BCN,80,Y,N,N^FD{product.barcode}^FS"
+                # 1. Barcode - with auto human-readable number below
+                zpl += f"^FO160,50^BY2,3,80^BCN,80,Y,N,N^FD{product.barcode}^FS"
 
-            # 2. Product name - centered with word wrap (wider field block for longer names)
-            # Adjusted X position to center the wider FB400 block
-            truncated_name = product.name[:40] if len(product.name) > 40 else product.name
-            zpl += f"^FO80,160^A0N,18,18^FB400,2,0,C^FD{truncated_name}^FS"
+                # 2. Product name - centered with word wrap (wider field block for longer names)
+                # Adjusted X position to center the wider FB400 block
+                truncated_name = product.name[:40] if len(product.name) > 40 else product.name
+                zpl += f"^FO80,160^A0N,18,18^FB400,2,0,C^FD{truncated_name}^FS"
 
-            # 3. Price - centered, larger font (same logic as product name)
-            zpl += f"^FO160,185^A0N,25,25^FB250,1,0,C^FDRs. {int(barcode_price)}^FS"
+                # 3. Price - centered, larger font (same logic as product name)
+                zpl += f"^FO160,185^A0N,25,25^FB250,1,0,C^FDRs. {int(barcode_price)}^FS"
 
-            zpl += "^XZ"
+                zpl += "^XZ"
 
-            zpl_commands.append({
-                "product_id": product_id,
-                "product_name": product.name,
-                "barcode": product.barcode,
-                "quantity": quantity,
-                "price": barcode_price,
-                "zpl": zpl
-            })
+                zpl_commands.append({
+                    "product_id": product_id,
+                    "product_name": product.name,
+                    "barcode": product.barcode,
+                    "quantity": quantity,
+                    "unit_index": i + 1,  # Track which unit this barcode is for
+                    "price": barcode_price,
+                    "zpl": zpl
+                })
 
     await db.commit()
 
@@ -428,8 +432,8 @@ async def stock_report(
     Matches customer_invoice.py report pattern
     Access: Admin, Cashier, Employee
     """
-    # Build query with filters
-    statement = select(Product)
+    # Build query with filters - only products with stock > 0
+    statement = select(Product).where(Product.stock_level > 0)
 
     if cat_name:
         statement = statement.where(Product.category == cat_name)
@@ -586,6 +590,218 @@ async def stock_report(
 
         encoded_pdf = base64.b64encode(pdf_content.encode()).decode()
 
+    return encoded_pdf
+
+
+@router.post("/stockinreport")
+async def stock_in_report(
+    date_from: str,
+    date_to: str,
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate date-wise stock-in report (PDF base64)
+    Shows quantity added per product within date range (not current stock)
+    Access: Admin, Cashier, Employee
+    
+    Query Params:
+    - date_from: Start date (YYYY-MM-DD)
+    - date_to: End date (YYYY-MM-DD)
+    """
+    from datetime import datetime as dt
+    
+    # Parse dates
+    try:
+        from_date = dt.strptime(date_from, "%Y-%m-%d")
+        to_date = dt.strptime(date_to, "%Y-%m-%d")
+        # Set to_date to end of day
+        to_date = to_date.replace(hour=23, minute=59, second=59)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    
+    # Query stock entries with type=IN within date range
+    # Group by product_id and sum the qty
+    from sqlalchemy import func
+    
+    statement = (
+        select(
+            StockEntry.product_id,
+            func.sum(StockEntry.qty).label("total_qty_in"),
+            func.min(StockEntry.created_at).label("first_entry_date")
+        )
+        .where(StockEntry.type == StockEntryType.IN)
+        .where(StockEntry.created_at >= from_date)
+        .where(StockEntry.created_at <= to_date)
+        .group_by(StockEntry.product_id)
+    )
+    
+    result = await db.execute(statement)
+    stock_in_entries = result.fetchall()
+    
+    if not stock_in_entries:
+        # Return empty report
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                @page {{ size: A4 landscape; margin: 15mm; }}
+                body {{ font-family: Arial, sans-serif; font-size: 14px; margin: 0; padding: 0; }}
+                h1 {{ text-align: center; color: #333; margin: 0 0 10px 0; font-size: 26px; font-weight: bold; }}
+                .date-range {{ text-align: center; margin-bottom: 15px; color: #666; font-size: 12px; }}
+                .no-data {{ text-align: center; padding: 50px; color: #999; font-size: 16px; }}
+            </style>
+        </head>
+        <body>
+            <h1>Stock In Report</h1>
+            <div class="date-range">From: {date_from} | To: {date_to}</div>
+            <div class="no-data">No stock entries found for this date range</div>
+        </body>
+        </html>
+        """
+    else:
+        # Build product rows with stock-in quantities
+        product_rows = ""
+        for i, entry in enumerate(stock_in_entries):
+            product = await db.get(Product, entry.product_id)
+            if product:
+                product_rows += f"""
+                <tr>
+                    <td class="border" style="text-align: center;">{i+1}</td>
+                    <td class="border">{product.name}</td>
+                    <td class="border">{product.barcode or '-'}</td>
+                    <td class="border text-right">{entry.total_qty_in}</td>
+                    <td class="border text-right">{float(product.unit_price) if product.unit_price else 0.0:.2f}</td>
+                    <td class="border text-right">{float(product.cost_price) if product.cost_price else 0.0:.2f}</td>
+                    <td class="border">{product.category or '-'}</td>
+                    <td class="border">{product.branch or '-'}</td>
+                </tr>
+                """
+        
+        # Calculate total
+        total_qty = sum(entry.total_qty_in for entry in stock_in_entries)
+        
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                @page {{
+                    size: A4 landscape;
+                    margin: 15mm;
+                }}
+                body {{
+                    font-family: Arial, sans-serif;
+                    font-size: 14px;
+                    margin: 0;
+                    padding: 0;
+                }}
+                h1 {{
+                    text-align: center;
+                    color: #333;
+                    margin: 0 0 10px 0;
+                    font-size: 26px;
+                    font-weight: bold;
+                }}
+                .date-range {{
+                    text-align: center;
+                    margin-bottom: 15px;
+                    color: #666;
+                    font-size: 12px;
+                }}
+                table {{
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin-top: 10px;
+                }}
+                th {{
+                    background-color: #444;
+                    color: white;
+                    border: 2px solid #000;
+                    padding: 12px 10px;
+                    text-align: left;
+                    font-weight: bold;
+                    font-size: 14px;
+                }}
+                td {{
+                    border: 1px solid #000;
+                    padding: 10px;
+                    font-size: 13px;
+                }}
+                .border {{
+                    border: 1px solid #000;
+                }}
+                .text-right {{
+                    text-align: right;
+                }}
+                tr:nth-child(even) {{
+                    background-color: #f5f5f5;
+                }}
+                tr:nth-child(odd) {{
+                    background-color: #fff;
+                }}
+                .footer {{
+                    margin-top: 20px;
+                    text-align: center;
+                    font-size: 12px;
+                    color: #666;
+                }}
+            </style>
+        </head>
+        <body>
+            <h1>Stock In Report</h1>
+            <div class="date-range">From: {date_from} | To: {date_to}</div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>S.No</th>
+                        <th>Product Name</th>
+                        <th>Barcode</th>
+                        <th>Qty In</th>
+                        <th>Price</th>
+                        <th>Cost</th>
+                        <th>Category</th>
+                        <th>Branch</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {product_rows}
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="3" class="border text-right" style="font-weight: bold;">Total:</td>
+                        <td class="border text-right" style="font-weight: bold;">{total_qty}</td>
+                        <td colspan="4"></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </body>
+        </html>
+        """
+    
+    # Generate PDF
+    try:
+        from weasyprint import HTML
+        from io import BytesIO
+
+        pdf_doc = HTML(string=html_content)
+        pdf_bytes = pdf_doc.write_pdf()
+        encoded_pdf = base64.b64encode(pdf_bytes).decode()
+    except ImportError:
+        # Fallback
+        pdf_content = "%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+        pdf_content += "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"
+        pdf_content += "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 792 612] /Contents 4 0 R >>\nendobj\n"
+        pdf_content += "4 0 obj\n<< /Length 100 >>\nstream\n"
+        pdf_content += "BT\n/F1 18 Tf 350 550 Td (Stock In Report) Tj ET\n"
+        pdf_content += "ET\nendstream\nendobj\n"
+        pdf_content += "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n"
+        pdf_content += "xref\n0 6\ntrailer\n<< /Size 6 /Root 1 0 R >>\n%%EOF"
+        encoded_pdf = base64.b64encode(pdf_content.encode()).decode()
+    
     return encoded_pdf
 
 
