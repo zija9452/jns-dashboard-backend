@@ -19,9 +19,10 @@ class ExpenseService:
         """
         db_expense = Expense(
             expense_type=expense_create.expense_type,
+            expense=expense_create.expense,
             amount=expense_create.amount,
-            expense_date=expense_create.date or date.today(),
-            note=expense_create.note,
+            expense_date=expense_create.expense_date or date.today(),
+            branch=expense_create.branch,
             created_by=expense_create.created_by
         )
 
@@ -38,8 +39,8 @@ class ExpenseService:
             changes={
                 "expense_type": expense_create.expense_type,
                 "amount": str(expense_create.amount),
-                "expense_date": str(expense_create.date or date.today()),
-                "note": expense_create.note
+                "expense_date": str(expense_create.expense_date or date.today()),
+                "branch": expense_create.branch
             }
         )
 
@@ -82,11 +83,19 @@ class ExpenseService:
             "expense_type": db_expense.expense_type,
             "amount": str(db_expense.amount),
             "expense_date": str(db_expense.expense_date),
-            "note": db_expense.note
+            "branch": db_expense.branch
         }
 
         # Prepare update data
         update_data = expense_update.model_dump(exclude_unset=True)
+
+        # Convert expense_date string to date object if present
+        if 'expense_date' in update_data and update_data['expense_date']:
+            from datetime import date
+            try:
+                update_data['expense_date'] = date.fromisoformat(update_data['expense_date'])
+            except ValueError:
+                pass  # Keep as string if invalid format
 
         # Update the expense
         for field, value in update_data.items():
@@ -99,12 +108,15 @@ class ExpenseService:
         # Convert Decimal values to float for JSON serialization
         import json
         from decimal import Decimal
+        from datetime import date
 
         # Create a serializable version of changes
         serializable_changes = {}
         for key, value in {**old_values, **update_data}.items():
             if isinstance(value, Decimal):
                 serializable_changes[key] = float(value)
+            elif isinstance(value, date):
+                serializable_changes[key] = value.isoformat()
             else:
                 serializable_changes[key] = value
 
