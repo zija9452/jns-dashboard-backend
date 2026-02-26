@@ -305,7 +305,7 @@ async def save_customer_orders(
                     existing_seq = parts[-1]  # Get the last part (sequence number)
                     if existing_seq.isdigit():
                         next_seq = int(existing_seq) + 1
-                        seq_number = f"{next_seq:04d}"  # Format as 3-digit sequence (001, 002, etc.)
+                        seq_number = f"{next_seq:04d}"  # Format as 4-digit sequence (0001, 0002, etc.)
                     else:
                         seq_number = "0001"  # Default if parsing fails
                 else:
@@ -373,9 +373,9 @@ async def save_customer_orders(
                 "description": f"Initial payment at order creation: {initial_paid_amount}"
             })
 
-        # Calculate the actual amount paid after discount is applied
-        calculated_amount_paid = total_amount - Decimal(str(total_discount))
-        
+        # Use the initial_paid_amount from request (what user actually paid)
+        calculated_amount_paid = initial_paid_decimal
+
         # Create customer invoice data
         invoice_data = {
             "id": invoice_id,
@@ -401,7 +401,7 @@ async def save_customer_orders(
             "payments_history": json.dumps(initial_payment_history),  # Include initial payment in history
             "taxes": Decimal('0'),
             "discounts": Decimal(str(total_discount)),  # Total discount amount
-            "status": CustomerInvoiceStatus.ISSUED,  # Use the customer invoice status enum
+            "status": CustomerInvoiceStatus.PENDING,  # Default order status
             "payment_method": payment_method,  # Use payment method from query parameter
             "notes": remarks,  # Use remarks from query parameter
             "created_by": current_user.id,
@@ -415,20 +415,170 @@ async def save_customer_orders(
         await db.commit()
         await db.refresh(db_customer_invoice)  # Refresh to get the created record
 
-        # Generate a simple PDF report (base64 encoded) as response
-        pdf_content = "%PDF-1.4\n1 0 obj\n<<\n/Type /Catalog\n/Pages 2 0 R\n>>\nendobj\n"
-        pdf_content += "2 0 obj\n<<\n/Type /Pages\n/Kids [3 0 R]\n/Count 1\n>>\nendobj\n"
-        pdf_content += "3 0 obj\n<<\n/Type /Page\n/Parent 2 0 R\n/MediaBox [0 0 612 792]\n/Contents 4 0 R\n>>\nendobj\n"
-        pdf_content += "4 0 obj\n<<\n/Length 60\n>>\nstream\nBT\n/F1 12 Tf\n72 720 Td\n(Customer Invoice Report - " + datetime.now().strftime("%Y-%m-%d") + ") Tj\nET\nendstream\nendobj\n"
-        pdf_content += "xref\n0 5\ntrailer\n<<\n/Size 5\n/Root 1 0 R\n>>\n%%EOF"
-
-        encoded_pdf = base64.b64encode(pdf_content.encode()).decode()
-
-        return encoded_pdf
+        # Return invoice_id for fetching receipt (consistent with customer details pattern)
+        return {
+            "success": True,
+            "invoice_id": str(db_customer_invoice.id),
+            "invoice_no": invoice_no
+        }
     finally:
         # Release the advisory lock
         unlock_statement = select(func.pg_advisory_unlock(123456))
         await db.execute(unlock_statement)
+
+
+@router.post("/receipt/{invoice_id}")
+async def get_invoice_receipt(
+    invoice_id: str,
+    current_user: User = Depends(cashier_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate and return invoice receipt PDF (consistent with customer report pattern)
+    Required by JavaScript frontend
+    """
+    from sqlalchemy import select
+    import json
+    import base64
+    from uuid import UUID
+
+    try:
+        invoice_uuid = UUID(invoice_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid invoice ID format"
+        )
+
+    # Get the invoice
+    statement = select(CustomerInvoice).where(CustomerInvoice.id == invoice_uuid)
+    result = await db.execute(statement)
+    invoice = result.scalar_one_or_none()
+
+    if not invoice:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invoice not found"
+        )
+
+    # Parse invoice data
+    items_list = json.loads(invoice.items)
+    totals = json.loads(invoice.totals)
+
+    # Generate PDF
+    pdf_content = generate_simple_receipt_pdf(
+        invoice_no=invoice.invoice_no,
+        customer_name=invoice.customer_name or "N/A",
+        team_name=invoice.team_name,
+        items=items_list,
+        total_amount=float(invoice.total_amount),
+        total_discount=float(invoice.discounts or 0),
+        amount_paid=float(invoice.amount_paid),
+        balance_due=float(invoice.balance_due),
+        payment_method=invoice.payment_method,
+        payment_status=invoice.payment_status,
+        created_at=invoice.created_at
+    )
+
+    encoded_pdf = base64.b64encode(pdf_content.encode()).decode()
+
+    return {"pdf": encoded_pdf}
+
+
+def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, total_amount,
+                                  total_discount, amount_paid, balance_due, payment_method,
+                                  payment_status, created_at):
+    """Generate thermal receipt style PDF using weasyprint (same as customers.py)"""
+    
+    # Format date
+    date_str = created_at.strftime("%m-%d-%Y %I:%M %p")
+    
+    # Build items rows
+    items_rows = ""
+    for item in items[:12]:  # Limit to 12 items
+        name = str(item.get('product_name', ''))[:15]
+        qty = int(item.get('quantity', 0))
+        price = float(item.get('unit_price', 0))
+        total = float(item.get('total_price', 0))
+        
+        items_rows += f"""
+        <tr>
+            <td class="item-name">{name}</td>
+            <td class="text-center">{qty}</td>
+            <td class="text-right">{price:.0f}</td>
+            <td class="text-right">{total:.0f}</td>
+        </tr>
+        """
+    
+    # Calculate grand total
+    grand_total = total_amount - total_discount
+    
+    # Team name row (if exists)
+    team_row = f'<p class="team">Team: {team_name}</p>' if team_name else ""
+    
+    # Create simple HTML for PDF (same pattern as customers.py)
+    items_rows = ""
+    for item in items[:10]:
+        name = str(item.get('product_name', ''))[:20]
+        qty = int(item.get('quantity', 0))
+        price = float(item.get('unit_price', 0))
+        total = float(item.get('total_price', 0))
+        items_rows += f"<tr><td>{name}</td><td>{qty}</td><td>{price:.0f}</td><td>{total:.0f}</td></tr>\n"
+
+    current_date = created_at.strftime('%d-%m-%Y %I:%M %p')
+    team_line = f"<p>Team: {team_name}</p>" if team_name else ""
+
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <style>
+            @page {{ size: A4; margin: 10mm; }}
+            body {{ font-family: Arial, sans-serif; font-size: 12px; }}
+            h1 {{ text-align: center; color: #333; }}
+            table {{ width: 100%; border-collapse: collapse; }}
+            th, td {{ border: 1px solid #000; padding: 8px; text-align: left; }}
+            th {{ background-color: #444; color: white; }}
+            .total {{ font-weight: bold; font-size: 14px; }}
+        </style>
+    </head>
+    <body>
+        <h1>INVOICE</h1>
+        <p><strong>Bill No:</strong> {invoice_no}</p>
+        <p><strong>Date:</strong> {current_date}</p>
+        <p><strong>Customer:</strong> {customer_name}</p>
+        {team_line}
+        <table>
+            <thead>
+                <tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th></tr>
+            </thead>
+            <tbody>
+                {items_rows}
+            </tbody>
+        </table>
+        <p class="total">Total: {total_amount:.0f}</p>
+        <p class="total">Paid: {amount_paid:.0f}</p>
+        <p class="total">Balance: {balance_due:.0f}</p>
+        <p>Payment: {payment_method.upper()} | Status: {payment_status.upper()}</p>
+    </body>
+    </html>
+    """
+
+    # Generate PDF using weasyprint (same as customers.py)
+    try:
+        from weasyprint import HTML
+        pdf_doc = HTML(string=html_content)
+        pdf_bytes = pdf_doc.write_pdf()
+        encoded_pdf = base64.b64encode(pdf_bytes).decode()
+        print(f"PDF generated, length: {len(encoded_pdf)}")
+    except Exception as e:
+        print(f"weasyprint failed: {e}")
+        # Fallback
+        encoded_pdf = base64.b64encode(b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>\nendobj\nxref\n0 4\ntrailer\n<< /Size 4 /Root 1 0 R >>\n%%EOF").decode()
+
+    return encoded_pdf  # Return string, NOT Response
+
 
 @router.post("/GetCustomerInvoiceBalance")
 async def get_customer_invoice_balance(
@@ -673,7 +823,7 @@ async def view_customer_order(
     Required by JavaScript frontend
     """
     from ..models.customer_invoice import CustomerInvoice
-    from sqlalchemy import select
+    from sqlalchemy import select, func
     import json
 
     # Validate pagination parameters
@@ -685,17 +835,39 @@ async def view_customer_order(
         limit = 200
 
     # Build query with filters - now using CustomerInvoice instead of CustomOrder
-    statement = select(CustomerInvoice)
+    count_statement = select(func.count()).select_from(CustomerInvoice)
 
     # Apply search filter if provided - searching in items JSON or invoice details
     if searchString:
         # Use parameterized queries to prevent SQL injection - sanitize input
         sanitized_search = searchString.replace('%', '\\%').replace('_', '\\_')
-        statement = statement.where(CustomerInvoice.items.ilike(f"%{sanitized_search}%"))
+        count_statement = count_statement.where(CustomerInvoice.items.ilike(f"%{sanitized_search}%"))
 
     # Apply status filter if provided - using the status field from CustomerInvoice
     if status:
         from ..models.customer_invoice import CustomerInvoiceStatus
+        try:
+            status_enum = CustomerInvoiceStatus(status.lower())
+            count_statement = count_statement.where(CustomerInvoice.status == status_enum)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid status value"
+            )
+
+    # Get total count
+    total_count_result = await db.execute(count_statement)
+    total_count = total_count_result.scalar() or 0
+
+    # Build query for fetching data
+    statement = select(CustomerInvoice)
+
+    # Apply same filters as count query
+    if searchString:
+        sanitized_search = searchString.replace('%', '\\%').replace('_', '\\_')
+        statement = statement.where(CustomerInvoice.items.ilike(f"%{sanitized_search}%"))
+
+    if status:
         try:
             status_enum = CustomerInvoiceStatus(status.lower())
             statement = statement.where(CustomerInvoice.status == status_enum)
@@ -748,6 +920,7 @@ async def view_customer_order(
 
         result.append({
             "orderid": str(invoice.id),
+            "invoice_no": invoice.invoice_no,
             "status": invoice.status.value if hasattr(invoice.status, 'value') else invoice.status,
             "customer": customer_name,
             "teamname": team_name,
@@ -763,7 +936,18 @@ async def view_customer_order(
             "updated_at": invoice.updated_at.isoformat() if invoice.updated_at else None
         })
 
-    return result
+    # Calculate total pages (ceiling division)
+    total_pages = (total_count + limit - 1) // limit if limit > 0 else 0
+    current_page = (skip // limit) + 1 if limit > 0 else 1
+
+    return {
+        "data": result,
+        "page": current_page,
+        "limit": limit,
+        "total": total_count,
+        "total_pages": total_pages,
+        "has_more": current_page < total_pages
+    }
 
 
 @router.get("/customerorderreport")
@@ -1171,14 +1355,18 @@ async def get_customer_balance(
 @router.get("/customerorders/{customer_id}")
 async def get_customer_orders(
     customer_id: str,
+    skip: int = 0,
+    limit: int = 10,
+    searchString: str = None,
     current_user: User = Depends(cashier_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get all orders for a specific customer
+    Get all orders for a specific customer with pagination
     """
-    from sqlalchemy import select
+    from sqlalchemy import select, func
     from uuid import UUID
+    import json
 
     try:
         customer_uuid = UUID(customer_id)
@@ -1188,10 +1376,38 @@ async def get_customer_orders(
             detail="Invalid customer ID format"
         )
 
-    # Get all invoices for this customer
+    # Validate pagination parameters
+    if skip < 0:
+        skip = 0
+    if limit <= 0:
+        limit = 10
+    elif limit > 200:
+        limit = 200
+
+    # Get total count
+    count_statement = select(func.count()).select_from(CustomerInvoice).where(
+        CustomerInvoice.customer_id == customer_uuid
+    )
+    
+    # Apply search filter if provided
+    if searchString:
+        sanitized_search = searchString.replace('%', '\\%').replace('_', '\\_')
+        count_statement = count_statement.where(CustomerInvoice.items.ilike(f"%{sanitized_search}%"))
+    
+    total_count_result = await db.execute(count_statement)
+    total_count = total_count_result.scalar() or 0
+
+    # Get invoices for this customer with pagination
     statement = select(CustomerInvoice).where(
         CustomerInvoice.customer_id == customer_uuid
-    ).order_by(CustomerInvoice.created_at.desc())
+    )
+    
+    # Apply search filter if provided
+    if searchString:
+        sanitized_search = searchString.replace('%', '\\%').replace('_', '\\_')
+        statement = statement.where(CustomerInvoice.items.ilike(f"%{sanitized_search}%"))
+    
+    statement = statement.order_by(CustomerInvoice.created_at.desc()).offset(skip).limit(limit)
 
     result = await db.execute(statement)
     invoices = result.scalars().all()
@@ -1205,19 +1421,42 @@ async def get_customer_orders(
     customer_name = customer.name if customer else ""
 
     for invoice in invoices:
+        # Parse items to get quantity
+        items_data = []
+        try:
+            items_data = json.loads(invoice.items)
+        except (json.JSONDecodeError, TypeError):
+            items_data = []
+
+        total_quantity = sum(item.get('quantity', 0) for item in items_data)
+
         order_info = {
-            "order_id": str(invoice.id),
+            "orderid": str(invoice.id),
             "invoice_no": invoice.invoice_no,
+            "status": invoice.status.value if hasattr(invoice.status, 'value') else invoice.status,
+            "customer": customer_name,
+            "teamname": getattr(invoice, 'team_name', 'No Team'),
+            "quantity": total_quantity,
+            "total_amount": float(invoice.total_amount) if invoice.total_amount else 0.0,
+            "amount_paid": float(invoice.amount_paid) if invoice.amount_paid else 0.0,
             "balance_due": float(invoice.balance_due) if invoice.balance_due else 0.0,
-            "status": invoice.payment_status,
-            "created_date": invoice.created_at.isoformat() if invoice.created_at else None
+            "payment_status": invoice.payment_status,
+            "date": invoice.created_at.isoformat().split('T')[0] if invoice.created_at else None,
+            "created_at": invoice.created_at.isoformat() if invoice.created_at else None
         }
         orders_list.append(order_info)
 
+    # Calculate pagination
+    total_pages = (total_count + limit - 1) // limit if limit > 0 else 0
+    current_page = (skip // limit) + 1 if limit > 0 else 1
+
     return {
-        "customer_id": customer_id,
-        "customer_name": customer_name,
-        "orders": orders_list
+        "data": orders_list,
+        "page": current_page,
+        "limit": limit,
+        "total": total_count,
+        "total_pages": total_pages,
+        "has_more": current_page < total_pages
     }
 
 
@@ -1425,6 +1664,68 @@ async def process_payment(
         "payment_status": invoice.payment_status,
         "payment_record": new_payment,
         "updated_payment_history": payment_history
+    }
+
+
+@router.put("/update-status/{order_id}")
+async def update_order_status(
+    order_id: str,
+    request_data: dict,
+    current_user: User = Depends(cashier_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Update order status (pending, delivered, completed, cancel)
+    """
+    from sqlalchemy import select
+    from uuid import UUID
+    from ..models.customer_invoice import CustomerInvoice, CustomerInvoiceStatus
+
+    try:
+        order_uuid = UUID(order_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid order ID format"
+        )
+
+    # Get the invoice
+    statement = select(CustomerInvoice).where(CustomerInvoice.id == order_uuid)
+    result = await db.execute(statement)
+    invoice = result.scalar_one_or_none()
+
+    if not invoice:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invoice not found"
+        )
+
+    # Get new status from request
+    new_status = request_data.get('status')
+    if not new_status:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Status is required"
+        )
+
+    # Validate and update status
+    try:
+        invoice.status = CustomerInvoiceStatus(new_status.lower())
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid status. Must be one of: pending, delivered, completed, cancel"
+        )
+
+    invoice.updated_at = datetime.now()
+    await db.commit()
+    await db.refresh(invoice)
+
+    return {
+        "success": True,
+        "message": "Order status updated successfully",
+        "order_id": str(invoice.id),
+        "new_status": invoice.status.value
     }
 
 

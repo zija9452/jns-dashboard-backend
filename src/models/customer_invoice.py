@@ -9,10 +9,10 @@ import sqlalchemy as sa
 
 
 class CustomerInvoiceStatus(str, Enum):
-    DRAFT = "draft"
-    ISSUED = "issued"
-    PAID = "paid"
-    CANCELLED = "cancelled"
+    PENDING = "PENDING"
+    DELIVERED = "DELIVERED"
+    COMPLETED = "COMPLETED"
+    CANCEL = "CANCEL"
 
 
 class CustomerInvoice(SQLModel, table=True):
@@ -33,7 +33,7 @@ class CustomerInvoice(SQLModel, table=True):
     payments_history: str = Field(default="[]")  # JSON array of payment records
     taxes: Decimal = Field(sa_column=Column(Numeric(10, 2)))
     discounts: Optional[Decimal] = Field(default=0.00, sa_column=Column(Numeric(10, 2)))
-    status: CustomerInvoiceStatus = Field(default=CustomerInvoiceStatus.ISSUED, index=True)  # DRAFT, ISSUED, PAID, CANCELLED with index
+    status: CustomerInvoiceStatus = Field(default=CustomerInvoiceStatus.PENDING, index=True)  # PENDING, DELIVERED, COMPLETED, CANCEL with index
     payment_method: str = Field(default="cash", index=True)  # As per your JavaScript content with index
     notes: Optional[str] = Field(default=None)
     created_by: uuid.UUID = Field(foreign_key="users.id", index=True)
@@ -75,7 +75,7 @@ class CustomerInvoiceCreate(SQLModel):
     payments_history: Optional[str] = "[]"
     taxes: Optional[Decimal] = 0.00
     discounts: Optional[Decimal] = 0.00
-    status: Optional[CustomerInvoiceStatus] = CustomerInvoiceStatus.ISSUED
+    status: Optional[CustomerInvoiceStatus] = CustomerInvoiceStatus.PENDING
     payment_method: Optional[str] = "cash"
     notes: Optional[str] = None
 
