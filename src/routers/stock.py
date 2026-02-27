@@ -537,9 +537,10 @@ async def stock_report(
     product_rows = ""
     for i, product in enumerate(products):
         margin = 0.0
-        if product.unit_price and product.cost_price and float(product.cost_price) != 0:
-            margin = ((float(product.unit_price) - float(product.cost_price)) / float(product.cost_price)) * 100
-        
+        if product.unit_price and product.cost_price and float(product.unit_price) != 0:
+            # Calculate Margin % (Profit / Selling Price × 100)
+            margin = ((float(product.unit_price) - float(product.cost_price)) / float(product.unit_price)) * 100
+
         product_rows += f"""
         <tr>
             <td class="border" style="text-align: center;">{i+1}</td>
@@ -933,9 +934,10 @@ async def stock_report_excel(
     # Add data
     for idx, product in enumerate(products):
         margin = 0.0
-        if product.unit_price and product.cost_price and float(product.cost_price) != 0:
-            margin = ((float(product.unit_price) - float(product.cost_price)) / float(product.cost_price)) * 100
-        
+        if product.unit_price and product.cost_price and float(product.unit_price) != 0:
+            # Calculate Margin % (Profit / Selling Price × 100)
+            margin = ((float(product.unit_price) - float(product.cost_price)) / float(product.unit_price)) * 100
+
         row = [
             idx + 1,
             product.name,

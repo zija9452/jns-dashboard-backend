@@ -1667,6 +1667,56 @@ async def process_payment(
     }
 
 
+@router.get("/payment-history/{order_id}")
+async def get_payment_history(
+    order_id: str,
+    current_user: User = Depends(cashier_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get payment history for an invoice
+    """
+    from sqlalchemy import select
+    from uuid import UUID
+    from ..models.customer_invoice import CustomerInvoice
+    import json
+
+    try:
+        order_uuid = UUID(order_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid order ID format"
+        )
+
+    # Get the invoice
+    statement = select(CustomerInvoice).where(CustomerInvoice.id == order_uuid)
+    result = await db.execute(statement)
+    invoice = result.scalar_one_or_none()
+
+    if not invoice:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invoice not found"
+        )
+
+    # Parse payment history
+    try:
+        payment_history = json.loads(invoice.payments_history)
+    except (json.JSONDecodeError, TypeError):
+        payment_history = []
+
+    return {
+        "invoice_id": str(invoice.id),
+        "invoice_no": invoice.invoice_no,
+        "total_amount": float(invoice.total_amount) if invoice.total_amount else 0.0,
+        "amount_paid": float(invoice.amount_paid) if invoice.amount_paid else 0.0,
+        "balance_due": float(invoice.balance_due) if invoice.balance_due else 0.0,
+        "payment_status": invoice.payment_status,
+        "payments_history": payment_history
+    }
+
+
 @router.put("/update-status/{order_id}")
 async def update_order_status(
     order_id: str,
@@ -1710,11 +1760,11 @@ async def update_order_status(
 
     # Validate and update status
     try:
-        invoice.status = CustomerInvoiceStatus(new_status.lower())
+        invoice.status = CustomerInvoiceStatus(new_status.upper())
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid status. Must be one of: pending, delivered, completed, cancel"
+            detail=f"Invalid status. Must be one of: PENDING, DELIVERED, COMPLETED, CANCEL"
         )
 
     invoice.updated_at = datetime.now()
