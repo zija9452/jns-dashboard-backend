@@ -15,6 +15,7 @@ from ..models.product import Product
 from ..models.customer import Customer
 from ..models.salesman import Salesman
 from ..models.user import User
+from ..models.daily_cash import DailyCash, DailyCashCreate, DailyCashUpdate
 from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, cashier_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session
 
 router = APIRouter()
@@ -41,8 +42,7 @@ async def create_walkin_invoice(
             payment_date = datetime.fromisoformat(payment_date_str)
         except ValueError:
             # Handle date-only strings like "2026-02-26"
-            from datetime import date
-            payment_date = datetime.combine(date.fromisoformat(payment_date_str), datetime.min.time())
+            payment_date = datetime.combine(datetime.fromisoformat(payment_date_str).date(), datetime.min.time())
     else:
         payment_date = payment_date_str
     manual_discount = float(request_data.get('manual_discount', 0))  # Additional discount at payment time
@@ -255,6 +255,44 @@ async def create_walkin_invoice(
         db.add(invoice_obj)
         await db.commit()
         await db.refresh(invoice_obj)
+
+        # Update daily_cash sales_amount for the payment date (payment method-wise)
+        payment_date_obj = payment_date.date() if hasattr(payment_date, 'date') else payment_date
+        daily_cash_result = await db.execute(select(DailyCash).where(DailyCash.date == payment_date_obj))
+        daily_cash = daily_cash_result.scalar_one_or_none()
+        
+        # Map payment_method to column names
+        payment_method_lower = payment_method.lower() if payment_method else 'cash'
+        
+        if daily_cash:
+            # Update the specific payment method's sales
+            if payment_method_lower == 'cash':
+                daily_cash.cash_sales = daily_cash.cash_sales + Decimal(str(total_amount))
+            elif payment_method_lower == 'easypaisa zohaib':
+                daily_cash.easypaisa_zohaib_sales = daily_cash.easypaisa_zohaib_sales + Decimal(str(total_amount))
+            elif payment_method_lower == 'easypaisa yasir':
+                daily_cash.easypaisa_yasir_sales = daily_cash.easypaisa_yasir_sales + Decimal(str(total_amount))
+            elif payment_method_lower == 'faysal bank':
+                daily_cash.bank_sales = daily_cash.bank_sales + Decimal(str(total_amount))
+            else:
+                # Default to cash for unknown methods
+                daily_cash.cash_sales = daily_cash.cash_sales + Decimal(str(total_amount))
+            
+            daily_cash.updated_at = date.today()
+            await db.commit()
+        else:
+            # If no daily_cash record exists for that date, create one with just sales
+            new_daily_cash = DailyCash(
+                date=payment_date_obj,
+                cash_sales=Decimal(str(total_amount)) if payment_method_lower == 'cash' else 0.00,
+                easypaisa_zohaib_sales=Decimal(str(total_amount)) if payment_method_lower == 'easypaisa zohaib' else 0.00,
+                easypaisa_yasir_sales=Decimal(str(total_amount)) if payment_method_lower == 'easypaisa yasir' else 0.00,
+                bank_sales=Decimal(str(total_amount)) if payment_method_lower == 'faysal bank' else 0.00,
+                created_at=date.today(),
+                updated_at=date.today()
+            )
+            db.add(new_daily_cash)
+            await db.commit()
 
         # Generate a PDF receipt as response
         pdf_content = f"""%PDF-1.4
@@ -657,7 +695,7 @@ trailer
     return encoded_pdf
 
 
-@router.get("/walkin-invoices/date/{date_str}")
+@router.get("/date/{date_str}")
 async def get_walkin_invoices_by_date(
     date_str: str,
     current_user: User = Depends(cashier_required_from_session()),
@@ -684,6 +722,7 @@ async def get_walkin_invoices_by_date(
 
     # Calculate total amounts for all invoices on that date
     total_amount = 0.0
+    cash_amount = 0.0
     invoice_list = []
 
     for invoice in invoices:
@@ -692,6 +731,12 @@ async def get_walkin_invoices_by_date(
             totals_data = json.loads(invoice.totals)
             invoice_total = totals_data.get('total', 0.0)
             total_amount += float(invoice_total)
+            
+            # Track cash sales separately (case-insensitive)
+            payment_method = (invoice.payment_method or '').lower().strip()
+            if payment_method == 'cash':
+                cash_amount += float(invoice_total)
+                print(f"Cash invoice found: {invoice.invoice_no}, amount: {invoice_total}")
 
             # Parse items JSON to get product details
             items_data = []
@@ -711,7 +756,7 @@ async def get_walkin_invoices_by_date(
                     "Quantity": int(item.get('quantity', item.get('pro_quantity', 0))),
                     "Discount": float(item.get('discount', 0.0)),
                     "Total Discount": float(totals_data.get('discount', 0.0)) if isinstance(totals_data, dict) else 0.0,
-                    "Cost": float(item.get('unit_price', 0.0)) * int(item.get('quantity', item.get('pro_quantity', 1))),  # Calculate cost as price * quantity
+                    "Cost": float(item.get('unit_price', 0.0)) * int(item.get('quantity', item.get('pro_quantity', 1))),
                     "Time": invoice.created_at.strftime("%H:%M:%S") if invoice.created_at else "",
                     "Date": invoice.created_at.strftime("%Y-%m-%d") if invoice.created_at else ""
                 }
@@ -721,20 +766,23 @@ async def get_walkin_invoices_by_date(
             invoice_list.append({
                 "invoice_id": str(invoice.id),
                 "invoice_no": str(invoice.invoice_no),
-                # NOTE: No customer_id for walk-in invoices since they are from walk-in customers without accounts
-                "customer_name": invoice.customer_name,  # Name of walk-in customer
+                "customer_name": invoice.customer_name,
                 "total_amount": float(invoice_total),
+                "payment_method": invoice.payment_method,
                 "created_at": invoice.created_at.isoformat() if invoice.created_at else None,
                 "products": products_list
             })
-        except (ValueError, TypeError):
-            # If parsing fails for this invoice, skip its amount in total
+        except (ValueError, TypeError) as e:
+            print(f"Error processing invoice {invoice.id}: {e}")
             continue
 
+    print(f"Date: {date_str}, Total invoices: {len(invoice_list)}, Total: {total_amount}, Cash: {cash_amount}")
+    
     return {
         "date": date_str,
         "total_invoices": len(invoice_list),
         "total_amount": total_amount,
+        "cash_amount": cash_amount,
         "invoices": invoice_list
     }
 
@@ -948,4 +996,144 @@ async def get_daily_invoice_report(
         "total_paid": total_paid,
         "total_discount": total_discount,
         "invoices": invoice_list
+    }
+
+
+@router.post("/opening")
+async def save_opening_balance(
+    request_data: dict,
+    current_user: User = Depends(cashier_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Save opening balance for the day (cash only)
+    """
+    date_str = request_data.get('date')
+    amount = float(request_data.get('amount', 0))
+    notes = request_data.get('notes', '')
+    
+    if not date_str:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Date is required")
+    
+    try:
+        date_obj = date.fromisoformat(date_str)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid date format")
+    
+    existing = await db.execute(select(DailyCash).where(DailyCash.date == date_obj))
+    daily_cash = existing.scalar_one_or_none()
+    
+    if daily_cash:
+        daily_cash.cash_opening = Decimal(str(amount))
+        daily_cash.opening_notes = notes
+        daily_cash.updated_at = date.today()
+    else:
+        daily_cash = DailyCash(
+            date=date_obj,
+            cash_opening=Decimal(str(amount)),
+            opening_notes=notes,
+            created_at=date.today(),
+            updated_at=date.today()
+        )
+        db.add(daily_cash)
+    
+    await db.commit()
+    await db.refresh(daily_cash)
+    
+    return {
+        "message": "Opening balance saved successfully",
+        "date": date_str,
+        "amount": amount
+    }
+
+
+@router.post("/closing")
+async def save_closing_balance(
+    request_data: dict,
+    current_user: User = Depends(cashier_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Save closing balance for the day (cash only)
+    """
+    date_str = request_data.get('date')
+    amount = float(request_data.get('amount', 0))
+    notes = request_data.get('notes', '')
+    
+    if not date_str:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Date is required")
+    
+    try:
+        date_obj = date.fromisoformat(date_str)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid date format")
+    
+    existing = await db.execute(select(DailyCash).where(DailyCash.date == date_obj))
+    daily_cash = existing.scalar_one_or_none()
+    
+    if not daily_cash:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No opening balance found for this date. Please save opening first."
+        )
+    
+    # Calculate expected and difference
+    expected = float(daily_cash.cash_opening) + float(daily_cash.cash_sales)
+    difference = amount - expected
+    
+    daily_cash.cash_closing = Decimal(str(amount))
+    daily_cash.cash_expected = Decimal(str(expected))
+    daily_cash.cash_difference = Decimal(str(difference))
+    daily_cash.closing_notes = notes
+    daily_cash.updated_at = date.today()
+    
+    await db.commit()
+    await db.refresh(daily_cash)
+    
+    return {
+        "message": "Closing balance saved successfully",
+        "date": date_str,
+        "opening": float(daily_cash.cash_opening),
+        "sales": float(daily_cash.cash_sales),
+        "expected": expected,
+        "closing": amount,
+        "difference": difference,
+        "balanced": difference == 0
+    }
+
+
+@router.get("/daily-cash/{date_str}")
+async def get_daily_cash(
+    date_str: str,
+    current_user: User = Depends(cashier_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get daily cash record for a specific date
+    """
+    try:
+        date_obj = date.fromisoformat(date_str)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid date format")
+    
+    result = await db.execute(select(DailyCash).where(DailyCash.date == date_obj))
+    daily_cash = result.scalar_one_or_none()
+    
+    if not daily_cash:
+        return {
+            "date": date_str,
+            "found": False
+        }
+    
+    return {
+        "date": date_str,
+        "found": True,
+        "id": str(daily_cash.id),
+        "cash_opening": float(daily_cash.cash_opening),
+        "cash_closing": float(daily_cash.cash_closing) if daily_cash.cash_closing else None,
+        "cash_sales": float(daily_cash.cash_sales),
+        "cash_expected": float(daily_cash.cash_expected) if daily_cash.cash_expected else None,
+        "cash_difference": float(daily_cash.cash_difference) if daily_cash.cash_difference else None,
+        "opening_notes": daily_cash.opening_notes,
+        "closing_notes": daily_cash.closing_notes
     }
