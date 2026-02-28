@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status as http_status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Dict, Any
 from uuid import UUID
@@ -35,7 +35,7 @@ async def get_customer_details(
     cus_name = request_data.get('cus_name')
     if not cus_name:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail="Customer name is required"
         )
 
@@ -63,7 +63,7 @@ async def get_customer_details(
         }
     else:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=http_status.HTTP_404_NOT_FOUND,
             detail="Customer not found"
         )
 
@@ -81,7 +81,7 @@ async def get_salesman_detail(
     sal_name = request_data.get('sal_name')
     if not sal_name:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail="Salesman name is required"
         )
 
@@ -101,7 +101,7 @@ async def get_salesman_detail(
         }
     else:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=http_status.HTTP_404_NOT_FOUND,
             detail="Salesman not found"
         )
 
@@ -140,7 +140,7 @@ async def save_customer_orders(
     # Validate that order items exist
     if not order_items:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail="Order items are required"
         )
 
@@ -154,12 +154,12 @@ async def save_customer_orders(
             customer = customer_exists.scalar_one_or_none()
             if not customer:
                 raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
+                    status_code=http_status.HTTP_404_NOT_FOUND,
                     detail="Customer not found"
                 )
         except ValueError:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=http_status.HTTP_400_BAD_REQUEST,
                 detail="Invalid customer ID format"
             )
 
@@ -174,7 +174,7 @@ async def save_customer_orders(
                 customer_id_uuid = customer.id
             else:
                 raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
+                    status_code=http_status.HTTP_404_NOT_FOUND,
                     detail=f"Customer with name '{customer_name}' not found"
                 )
 
@@ -199,28 +199,28 @@ async def save_customer_orders(
             pro_name = item.get('pro_name')
             if not pro_name:
                 raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
+                    status_code=http_status.HTTP_400_BAD_REQUEST,
                     detail="Product name is required for each item"
                 )
 
             quantity = int(item.get('pro_quantity', 0))
             if quantity <= 0:
                 raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
+                    status_code=http_status.HTTP_400_BAD_REQUEST,
                     detail="Product quantity must be positive"
                 )
 
             unit_price = float(item.get('unit_price', 0))
             if unit_price < 0:
                 raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
+                    status_code=http_status.HTTP_400_BAD_REQUEST,
                     detail="Unit price cannot be negative"
                 )
 
             discount = float(item.get('discount', 0))
             if discount < 0:
                 raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
+                    status_code=http_status.HTTP_400_BAD_REQUEST,
                     detail="Discount cannot be negative"
                 )
 
@@ -273,7 +273,7 @@ async def save_customer_orders(
             total_discount += discount
         except (ValueError, TypeError) as e:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=http_status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid data format in order item: {str(e)}"
             )
 
@@ -335,7 +335,7 @@ async def save_customer_orders(
 
         if counter >= 100:
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Could not generate unique invoice number"
             )
 
@@ -346,7 +346,7 @@ async def save_customer_orders(
                 salesman_id_uuid = UUID(salesman_id)
             except ValueError:
                 raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
+                    status_code=http_status.HTTP_400_BAD_REQUEST,
                     detail="Invalid salesman ID format"
                 )
 
@@ -446,7 +446,7 @@ async def get_invoice_receipt(
         invoice_uuid = UUID(invoice_id)
     except ValueError:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail="Invalid invoice ID format"
         )
 
@@ -457,7 +457,7 @@ async def get_invoice_receipt(
 
     if not invoice:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=http_status.HTTP_404_NOT_FOUND,
             detail="Invoice not found"
         )
 
@@ -603,7 +603,7 @@ async def get_customer_invoice_balance(
             )
         except ValueError:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=http_status.HTTP_400_BAD_REQUEST,
                 detail="Invalid customer ID format"
             )
     else:
@@ -653,7 +653,7 @@ async def update_customer_invoice(
         invoice_uuid = UUID(invoice_id)
     except ValueError:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail="Invalid invoice ID format"
         )
 
@@ -664,7 +664,7 @@ async def update_customer_invoice(
 
     if not invoice:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=http_status.HTTP_404_NOT_FOUND,
             detail="Invoice not found"
         )
 
@@ -674,7 +674,7 @@ async def update_customer_invoice(
     if e_amount is not None:
         if e_amount < 0:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=http_status.HTTP_400_BAD_REQUEST,
                 detail="Amount cannot be negative"
             )
         # Update totals JSON with new amount
@@ -690,7 +690,7 @@ async def update_customer_invoice(
         # Validate note length
         if len(note) > 1000:  # Example limit
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=http_status.HTTP_400_BAD_REQUEST,
                 detail="Note too long"
             )
         invoice.notes = note
@@ -751,7 +751,7 @@ async def get_order(
         order_id = UUID(id)
     except ValueError:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail="Invalid order ID format"
         )
 
@@ -762,7 +762,7 @@ async def get_order(
 
     if not invoice_record:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=http_status.HTTP_404_NOT_FOUND,
             detail="Order not found"
         )
 
@@ -812,7 +812,7 @@ async def get_order(
 @router.get("/viewcustomerorder")
 async def view_customer_order(
     searchString: str = None,
-    status: str = None,
+    order_status: str = None,
     skip: int = 0,
     limit: int = 100,
     current_user: User = Depends(cashier_required_from_session()),
@@ -844,14 +844,14 @@ async def view_customer_order(
         count_statement = count_statement.where(CustomerInvoice.items.ilike(f"%{sanitized_search}%"))
 
     # Apply status filter if provided - using the status field from CustomerInvoice
-    if status:
+    if order_status:
         from ..models.customer_invoice import CustomerInvoiceStatus
         try:
-            status_enum = CustomerInvoiceStatus(status.lower())
+            status_enum = CustomerInvoiceStatus(order_status.upper())
             count_statement = count_statement.where(CustomerInvoice.status == status_enum)
         except ValueError:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=http_status.HTTP_400_BAD_REQUEST,
                 detail="Invalid status value"
             )
 
@@ -867,13 +867,13 @@ async def view_customer_order(
         sanitized_search = searchString.replace('%', '\\%').replace('_', '\\_')
         statement = statement.where(CustomerInvoice.items.ilike(f"%{sanitized_search}%"))
 
-    if status:
+    if order_status:
         try:
-            status_enum = CustomerInvoiceStatus(status.lower())
+            status_enum = CustomerInvoiceStatus(order_status.upper())
             statement = statement.where(CustomerInvoice.status == status_enum)
         except ValueError:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=http_status.HTTP_400_BAD_REQUEST,
                 detail="Invalid status value"
             )
 
@@ -1025,7 +1025,7 @@ async def delete_custom_order_endpoint(
         invoice_id = UUID(id)
     except ValueError:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail="Invalid invoice ID format"
         )
 
@@ -1036,7 +1036,7 @@ async def delete_custom_order_endpoint(
 
     if not invoice:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=http_status.HTTP_404_NOT_FOUND,
             detail="Invoice not found"
         )
 
@@ -1070,7 +1070,7 @@ async def update_customer_invoice(
         invoice_id = UUID(id)
     except ValueError:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail="Invalid invoice ID format"
         )
 
@@ -1081,7 +1081,7 @@ async def update_customer_invoice(
 
     if not invoice:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=http_status.HTTP_404_NOT_FOUND,
             detail="Invoice not found"
         )
 
@@ -1140,22 +1140,22 @@ async def create_customer_from_modal(
     # Validate required fields
     if not cus_name:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail="Customer name is required"
         )
     if not cus_phone:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail="Customer phone is required"
         )
     if not cus_address:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail="Customer address is required"
         )
     if not cus_cnic:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail="Customer CNIC is required"
         )
 
@@ -1248,7 +1248,7 @@ async def customer_balance(
     cus_name = request_data.get('cus_name')
     if not cus_name:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail="Customer name is required"
         )
 
@@ -1276,7 +1276,7 @@ async def customer_balance(
         }
     else:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=http_status.HTTP_404_NOT_FOUND,
             detail="Customer not found"
         )
 
@@ -1298,7 +1298,7 @@ async def get_customer_balance(
         customer_uuid = UUID(customer_id)
     except ValueError:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail="Invalid customer ID format"
         )
 
@@ -1372,7 +1372,7 @@ async def get_customer_orders(
         customer_uuid = UUID(customer_id)
     except ValueError:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail="Invalid customer ID format"
         )
 
@@ -1477,7 +1477,7 @@ async def get_order_details(
         order_uuid = UUID(order_id)
     except ValueError:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail="Invalid order ID format"
         )
 
@@ -1491,7 +1491,7 @@ async def get_order_details(
 
     if not invoice:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=http_status.HTTP_404_NOT_FOUND,
             detail="Order not found"
         )
 
@@ -1548,7 +1548,7 @@ async def process_payment(
         order_uuid = UUID(order_id)
     except ValueError:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail="Invalid order ID format"
         )
 
@@ -1562,7 +1562,7 @@ async def process_payment(
 
     if not invoice:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=http_status.HTTP_404_NOT_FOUND,
             detail="Order not found"
         )
 
@@ -1575,21 +1575,21 @@ async def process_payment(
     # Validate required fields
     if amount is None:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail="Amount is required in payment data"
         )
 
     # Validate payment amount
     if amount <= 0:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail="Payment amount must be greater than zero"
         )
 
     # Ensure amount doesn't exceed balance due
     if amount > float(invoice.balance_due):
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail=f"Payment amount ({amount}) exceeds balance due ({float(invoice.balance_due)})"
         )
 
@@ -1629,7 +1629,7 @@ async def process_payment(
     # Validate and sanitize inputs
     if not payment_method or len(payment_method) > 50:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail="Invalid payment method"
         )
 
@@ -1685,7 +1685,7 @@ async def get_payment_history(
         order_uuid = UUID(order_id)
     except ValueError:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail="Invalid order ID format"
         )
 
@@ -1696,7 +1696,7 @@ async def get_payment_history(
 
     if not invoice:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=http_status.HTTP_404_NOT_FOUND,
             detail="Invoice not found"
         )
 
@@ -1735,7 +1735,7 @@ async def update_order_status(
         order_uuid = UUID(order_id)
     except ValueError:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail="Invalid order ID format"
         )
 
@@ -1746,7 +1746,7 @@ async def update_order_status(
 
     if not invoice:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=http_status.HTTP_404_NOT_FOUND,
             detail="Invoice not found"
         )
 
@@ -1754,7 +1754,7 @@ async def update_order_status(
     new_status = request_data.get('status')
     if not new_status:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail="Status is required"
         )
 
@@ -1763,7 +1763,7 @@ async def update_order_status(
         invoice.status = CustomerInvoiceStatus(new_status.upper())
     except ValueError:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid status. Must be one of: PENDING, DELIVERED, COMPLETED, CANCEL"
         )
 
@@ -1797,7 +1797,7 @@ async def daily_collection_report(
         target_date = datetime.strptime(date, "%Y-%m-%d").date()
     except ValueError:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail="Invalid date format. Use YYYY-MM-DD."
         )
 
@@ -1865,7 +1865,7 @@ async def get_payment_history(
         order_uuid = UUID(order_id)
     except ValueError:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail="Invalid order ID format"
         )
 
@@ -1879,7 +1879,7 @@ async def get_payment_history(
 
     if not invoice:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=http_status.HTTP_404_NOT_FOUND,
             detail="Order not found"
         )
 
@@ -1909,7 +1909,7 @@ async def get_customer_invoices_by_date(
         target_date = datetime.strptime(date, "%Y-%m-%d").date()
     except ValueError:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail="Invalid date format. Use YYYY-MM-DD."
         )
 

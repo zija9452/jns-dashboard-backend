@@ -31,10 +31,21 @@ async def create_walkin_invoice(
     """
     # Extract data from request body
     order_items = request_data.get('items', [])
-    customer_name = request_data.get('customer_name', 'Walk-in Customer')  # Use customer_name for walk-in invoices
-    # NOTE: No customer_id for walk-in invoices since they are from walk-in customers without accounts
-    # NOTE: No salesman_id for walk-in invoices since they are direct sales
+    customer_id = request_data.get('customer_id')  # Customer ID with foreign key reference
+    salesman_id = request_data.get('salesman_id')  # Salesman ID with foreign key reference (optional)
     payment_method = request_data.get('payment_method', 'cash')
+    # Parse payment_date - can be string or datetime
+    payment_date_str = request_data.get('payment_date', datetime.now().isoformat())
+    if isinstance(payment_date_str, str):
+        try:
+            payment_date = datetime.fromisoformat(payment_date_str)
+        except ValueError:
+            # Handle date-only strings like "2026-02-26"
+            from datetime import date
+            payment_date = datetime.combine(date.fromisoformat(payment_date_str), datetime.min.time())
+    else:
+        payment_date = payment_date_str
+    manual_discount = float(request_data.get('manual_discount', 0))  # Additional discount at payment time
     notes = request_data.get('notes', '')
 
     # Validate that order items exist
@@ -44,11 +55,27 @@ async def create_walkin_invoice(
             detail="Order items are required"
         )
 
-    # NOTE: No customer validation needed for walk-in invoices since they are from walk-in customers without accounts
-    # All walk-in invoices use the default customer_name provided in the request or "Walk-in Customer"
+    # Validate customer if provided
+    customer_name = "Walk-in Customer"
+    if customer_id:
+        customer_result = await db.execute(select(Customer).where(Customer.id == customer_id))
+        customer = customer_result.scalar_one_or_none()
+        if not customer:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Customer with ID '{customer_id}' not found"
+            )
+        customer_name = customer.name  # Use 'name' attribute from Customer model
 
-    # NOTE: No salesman validation needed for walk-in invoices since they are direct sales
-    # All walk-in invoices are processed directly without a specific salesman assignment
+    # Validate salesman if provided
+    if salesman_id:
+        salesman_result = await db.execute(select(Salesman).where(Salesman.id == salesman_id))
+        salesman = salesman_result.scalar_one_or_none()
+        if not salesman:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Salesman with ID '{salesman_id}' not found"
+            )
 
     # Process each order item and update inventory
     items_list = []
@@ -131,9 +158,11 @@ async def create_walkin_invoice(
         product.stock_level = new_stock_level
         await db.commit()
 
-    # For immediate payment invoices, amount paid equals total amount
-    amount_paid = total_amount
-    balance_due = Decimal('0')
+    # Add manual discount to total discount
+    total_discount += manual_discount
+
+    # For immediate payment invoices, amount paid equals total amount minus discount
+    amount_paid = total_amount - Decimal(str(total_discount))
 
     # Generate unique invoice number with database-level locking for concurrency safety
     # Use database advisory lock to prevent race conditions
@@ -156,7 +185,7 @@ async def create_walkin_invoice(
                     existing_seq = parts[-1]  # Get the last part (sequence number)
                     if existing_seq.isdigit():
                         next_seq = int(existing_seq) + 1
-                        seq_number = f"{next_seq:04d}"  # Format as 3-digit sequence (001, 002, etc.)
+                        seq_number = f"{next_seq:04d}"  # Format as 4-digit sequence (0001, 0002, etc.)
                     else:
                         seq_number = "0001"  # Default if parsing fails
                 else:
@@ -178,7 +207,7 @@ async def create_walkin_invoice(
             if existing_invoice:
                 # Invoice number exists, increment and try again
                 next_seq_int = int(seq_number) + 1
-                seq_number = f"{next_seq_int:03d}"
+                seq_number = f"{next_seq_int:04d}"
                 invoice_no = f"SIN-{seq_number}"
                 counter += 1
             else:
@@ -190,19 +219,17 @@ async def create_walkin_invoice(
                 detail="Could not generate unique invoice number"
             )
 
-        # Calculate amount paid after discount
-        amount_paid = total_amount - Decimal(str(total_discount))
-        
         # Create invoice object
         invoice_obj = Invoice(
             invoice_no=invoice_no,
-            customer_name=customer_name,  # Use customer name for walk-in invoices
-            # NOTE: No salesman_id for walk-in invoices since they are direct sales
+            customer_id=customer_id if customer_id else None,  # Customer ID with foreign key reference
+            customer_name=customer_name,  # Customer name
+            salesman_id=salesman_id if salesman_id else None,  # Salesman ID with foreign key reference (optional)
             items=json.dumps(items_list),
             totals=json.dumps({
                 "subtotal": float(total_amount),  # Original total before discounts
                 "tax": 0.0,
-                "discount": total_discount,  # Total discount amount
+                "discount": float(total_discount),  # Total discount amount (item + manual)
                 "total": float(total_amount),  # Original total before discount
                 "amount_paid": float(amount_paid),  # Amount actually paid (after discount)
                 "balance_due": 0.0,  # Always 0 for immediate payment
@@ -210,18 +237,16 @@ async def create_walkin_invoice(
             }),
             total_amount=Decimal(str(total_amount)),  # Original total before discount
             amount_paid=Decimal(str(amount_paid)),  # Amount actually paid
-            balance_due=Decimal('0'),  # Always 0 for immediate payment
             payment_status="paid",  # Always "paid" for immediate payment
             payments_history=json.dumps([{
                 "amount": float(amount_paid),
                 "payment_method": payment_method,
-                "date": datetime.now().isoformat(),
+                "date": payment_date.isoformat() if hasattr(payment_date, 'isoformat') else str(payment_date),
                 "description": "Full payment at invoice creation"
             }]),
-            taxes=Decimal('0'),  # Default to 0 for walk-in invoices
             discounts=Decimal(str(total_discount)),  # Total discount amount
-            status=InvoiceStatus.ISSUED,
             payment_method=payment_method,
+            payment_date=payment_date,  # Payment date
             notes=notes,
             created_by=current_user.id
         )
