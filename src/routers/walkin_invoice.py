@@ -257,37 +257,41 @@ async def create_walkin_invoice(
         await db.refresh(invoice_obj)
 
         # Update daily_cash sales_amount for the payment date (payment method-wise)
+        # Use amount_paid (actual amount received) instead of total_amount
         payment_date_obj = payment_date.date() if hasattr(payment_date, 'date') else payment_date
         daily_cash_result = await db.execute(select(DailyCash).where(DailyCash.date == payment_date_obj))
         daily_cash = daily_cash_result.scalar_one_or_none()
-        
+
         # Map payment_method to column names
         payment_method_lower = payment_method.lower() if payment_method else 'cash'
-        
+
         if daily_cash:
-            # Update the specific payment method's sales
+            # Update the specific payment method's sales with actual amount paid
             if payment_method_lower == 'cash':
-                daily_cash.cash_sales = daily_cash.cash_sales + Decimal(str(total_amount))
+                daily_cash.cash_sales = daily_cash.cash_sales + Decimal(str(amount_paid))
             elif payment_method_lower == 'easypaisa zohaib':
-                daily_cash.easypaisa_zohaib_sales = daily_cash.easypaisa_zohaib_sales + Decimal(str(total_amount))
+                daily_cash.easypaisa_zohaib_sales = daily_cash.easypaisa_zohaib_sales + Decimal(str(amount_paid))
             elif payment_method_lower == 'easypaisa yasir':
-                daily_cash.easypaisa_yasir_sales = daily_cash.easypaisa_yasir_sales + Decimal(str(total_amount))
+                daily_cash.easypaisa_yasir_sales = daily_cash.easypaisa_yasir_sales + Decimal(str(amount_paid))
             elif payment_method_lower == 'faysal bank':
-                daily_cash.bank_sales = daily_cash.bank_sales + Decimal(str(total_amount))
+                daily_cash.bank_sales = daily_cash.bank_sales + Decimal(str(amount_paid))
             else:
                 # Default to cash for unknown methods
-                daily_cash.cash_sales = daily_cash.cash_sales + Decimal(str(total_amount))
-            
+                daily_cash.cash_sales = daily_cash.cash_sales + Decimal(str(amount_paid))
+
+            # Always update total_sales with actual amount paid
+            daily_cash.total_sales = daily_cash.total_sales + Decimal(str(amount_paid))
             daily_cash.updated_at = date.today()
             await db.commit()
         else:
             # If no daily_cash record exists for that date, create one with just sales
             new_daily_cash = DailyCash(
                 date=payment_date_obj,
-                cash_sales=Decimal(str(total_amount)) if payment_method_lower == 'cash' else 0.00,
-                easypaisa_zohaib_sales=Decimal(str(total_amount)) if payment_method_lower == 'easypaisa zohaib' else 0.00,
-                easypaisa_yasir_sales=Decimal(str(total_amount)) if payment_method_lower == 'easypaisa yasir' else 0.00,
-                bank_sales=Decimal(str(total_amount)) if payment_method_lower == 'faysal bank' else 0.00,
+                cash_sales=Decimal(str(amount_paid)) if payment_method_lower == 'cash' else 0.00,
+                easypaisa_zohaib_sales=Decimal(str(amount_paid)) if payment_method_lower == 'easypaisa zohaib' else 0.00,
+                easypaisa_yasir_sales=Decimal(str(amount_paid)) if payment_method_lower == 'easypaisa yasir' else 0.00,
+                bank_sales=Decimal(str(amount_paid)) if payment_method_lower == 'faysal bank' else 0.00,
+                total_sales=Decimal(str(amount_paid)),
                 created_at=date.today(),
                 updated_at=date.today()
             )
@@ -1025,12 +1029,14 @@ async def save_opening_balance(
     
     if daily_cash:
         daily_cash.cash_opening = Decimal(str(amount))
+        daily_cash.total_opening = Decimal(str(amount))  # Total opening = cash opening
         daily_cash.opening_notes = notes
         daily_cash.updated_at = date.today()
     else:
         daily_cash = DailyCash(
             date=date_obj,
             cash_opening=Decimal(str(amount)),
+            total_opening=Decimal(str(amount)),  # Total opening = cash opening
             opening_notes=notes,
             created_at=date.today(),
             updated_at=date.today()
@@ -1054,47 +1060,48 @@ async def save_closing_balance(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Save closing balance for the day (cash only)
+    Save closing balance for the day (total of all payment methods)
+    Expected = total_opening + total_sales
     """
     date_str = request_data.get('date')
     amount = float(request_data.get('amount', 0))
     notes = request_data.get('notes', '')
-    
+
     if not date_str:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Date is required")
-    
+
     try:
         date_obj = date.fromisoformat(date_str)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid date format")
-    
+
     existing = await db.execute(select(DailyCash).where(DailyCash.date == date_obj))
     daily_cash = existing.scalar_one_or_none()
-    
+
     if not daily_cash:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No opening balance found for this date. Please save opening first."
         )
-    
-    # Calculate expected and difference
-    expected = float(daily_cash.cash_opening) + float(daily_cash.cash_sales)
+
+    # Calculate expected and difference (total based)
+    expected = float(daily_cash.total_opening) + float(daily_cash.total_sales)
     difference = amount - expected
-    
-    daily_cash.cash_closing = Decimal(str(amount))
-    daily_cash.cash_expected = Decimal(str(expected))
-    daily_cash.cash_difference = Decimal(str(difference))
+
+    daily_cash.total_closing = Decimal(str(amount))
+    daily_cash.total_expected = Decimal(str(expected))
+    daily_cash.total_difference = Decimal(str(difference))
     daily_cash.closing_notes = notes
     daily_cash.updated_at = date.today()
-    
+
     await db.commit()
     await db.refresh(daily_cash)
-    
+
     return {
         "message": "Closing balance saved successfully",
         "date": date_str,
-        "opening": float(daily_cash.cash_opening),
-        "sales": float(daily_cash.cash_sales),
+        "opening": float(daily_cash.total_opening),
+        "sales": float(daily_cash.total_sales),
         "expected": expected,
         "closing": amount,
         "difference": difference,
@@ -1115,25 +1122,93 @@ async def get_daily_cash(
         date_obj = date.fromisoformat(date_str)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid date format")
-    
+
     result = await db.execute(select(DailyCash).where(DailyCash.date == date_obj))
     daily_cash = result.scalar_one_or_none()
-    
+
     if not daily_cash:
         return {
             "date": date_str,
             "found": False
         }
-    
+
     return {
         "date": date_str,
         "found": True,
         "id": str(daily_cash.id),
         "cash_opening": float(daily_cash.cash_opening),
-        "cash_closing": float(daily_cash.cash_closing) if daily_cash.cash_closing else None,
         "cash_sales": float(daily_cash.cash_sales),
-        "cash_expected": float(daily_cash.cash_expected) if daily_cash.cash_expected else None,
-        "cash_difference": float(daily_cash.cash_difference) if daily_cash.cash_difference else None,
+        "easypaisa_zohaib_opening": float(daily_cash.easypaisa_zohaib_opening),
+        "easypaisa_zohaib_sales": float(daily_cash.easypaisa_zohaib_sales),
+        "easypaisa_yasir_opening": float(daily_cash.easypaisa_yasir_opening),
+        "easypaisa_yasir_sales": float(daily_cash.easypaisa_yasir_sales),
+        "bank_opening": float(daily_cash.bank_opening),
+        "bank_sales": float(daily_cash.bank_sales),
+        "total_opening": float(daily_cash.total_opening),
+        "total_sales": float(daily_cash.total_sales),
+        "total_expected": float(daily_cash.total_expected) if daily_cash.total_expected else None,
+        "total_closing": float(daily_cash.total_closing) if daily_cash.total_closing else None,
+        "total_difference": float(daily_cash.total_difference) if daily_cash.total_difference else None,
         "opening_notes": daily_cash.opening_notes,
         "closing_notes": daily_cash.closing_notes
+    }
+
+
+@router.get("/today")
+async def get_today_sales_report(
+    date_str: Optional[str] = None,
+    current_user: User = Depends(cashier_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get today's sales report with opening, sales, expenses, and cash in hand
+    """
+    from src.models.expense import Expense
+    
+    # Use provided date or today's date
+    if date_str:
+        try:
+            target_date = date.fromisoformat(date_str)
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid date format")
+    else:
+        target_date = date.today()
+
+    # Get daily cash record
+    daily_cash_result = await db.execute(select(DailyCash).where(DailyCash.date == target_date))
+    daily_cash = daily_cash_result.scalar_one_or_none()
+
+    # Get total expenses for the date
+    expenses_result = await db.execute(
+        select(func.sum(Expense.amount)).where(Expense.expense_date == target_date)
+    )
+    total_expenses = expenses_result.scalar_one_or_none() or Decimal('0.00')
+
+    # Calculate values
+    opening = float(daily_cash.total_opening) if daily_cash else 0.00
+    total_sales = float(daily_cash.total_sales) if daily_cash else 0.00
+    
+    # Payment method breakdown
+    cash_sales = float(daily_cash.cash_sales) if daily_cash else 0.00
+    easypaisa_zohaib_sales = float(daily_cash.easypaisa_zohaib_sales) if daily_cash else 0.00
+    easypaisa_yasir_sales = float(daily_cash.easypaisa_yasir_sales) if daily_cash else 0.00
+    bank_sales = float(daily_cash.bank_sales) if daily_cash else 0.00
+    
+    # Calculate cash in hand: opening + cash sales - expenses
+    # (EasyPaisa and Bank amounts are not in hand)
+    cash_in_hand = float(daily_cash.cash_opening) if daily_cash else 0.00
+    cash_in_hand += cash_sales
+    cash_in_hand -= float(total_expenses)
+
+    return {
+        "date": target_date.isoformat(),
+        "opening": opening,
+        "total_sales": total_sales,
+        "cash_sales": cash_sales,
+        "easypaisa_zohaib_sales": easypaisa_zohaib_sales,
+        "easypaisa_yasir_sales": easypaisa_yasir_sales,
+        "bank_sales": bank_sales,
+        "total_expenses": float(total_expenses),
+        "cash_in_hand": cash_in_hand,
+        "has_opening": daily_cash is not None and daily_cash.total_opening > 0
     }
