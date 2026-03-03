@@ -1794,16 +1794,15 @@ async def get_stock_adjustments_excel(
     ws.cell(row=total_row, column=1, value='TOTAL').font = Font(bold=True)
     ws.cell(row=total_row, column=4, value=total_positive + total_negative).font = Font(bold=True)
     
-    # Merge cells for TOTAL label
+    # Merge cells for TOTAL label (columns 1-3)
     ws.merge_cells(start_row=total_row, start_column=1, end_row=total_row, end_column=3)
+    # Merge empty cells (columns 5-7)
     ws.merge_cells(start_row=total_row, start_column=5, end_row=total_row, end_column=7)
     
-    # Apply border to total row
+    # Apply border to total row (only non-merged cells)
     for col in range(1, 8):
         cell = ws.cell(row=total_row, column=col)
         cell.border = thin_border
-        if col > 4:
-            cell.value = ''
     
     # Add summary section
     summary_row = total_row + 2

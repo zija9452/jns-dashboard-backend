@@ -25,8 +25,27 @@ async def get_users(
     Get list of users with pagination
     Requires admin role
     """
-    users = await UserService.get_users(db, skip=skip, limit=limit)
-    return users
+    from sqlalchemy import select
+    
+    # Get users with their role information
+    statement = select(User, Role.name.label('role_name')).join(Role, User.role_id == Role.id, isouter=True)
+    statement = statement.offset(skip).limit(limit)
+    
+    result = await db.execute(statement)
+    rows = result.all()
+    
+    # Convert to list of dicts with role_name included
+    users_with_role = []
+    for row in rows:
+        user = row[0]
+        role_name = row[1] if row[1] else 'unknown'
+        
+        # Convert to dict and add role_name
+        user_dict = user.model_dump()
+        user_dict['role_name'] = role_name
+        users_with_role.append(user_dict)
+    
+    return users_with_role
 
 @router.post("/", response_model=UserRead)
 async def create_user(
@@ -38,17 +57,46 @@ async def create_user(
     Create a new user
     Requires admin role
     """
-    # Check if role exists
     from sqlalchemy import select
-    role_statement = select(Role).where(Role.id == user_create.role_id)
-    result = await db.execute(role_statement)
-    role = result.scalar_one_or_none()
-    if not role:
+    from uuid import UUID
+    
+    # Handle role_id - can be UUID or role name (or both can be provided)
+    role_id_to_use = user_create.role_id
+    
+    # If role_name is provided instead of role_id, look up the role by name
+    if user_create.role_name:
+        role_statement = select(Role).where(Role.name == user_create.role_name.lower())
+        result = await db.execute(role_statement)
+        role = result.scalar_one_or_none()
+        if not role:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Role '{user_create.role_name}' does not exist. Available roles: admin, cashier, employee"
+            )
+        role_id_to_use = role.id
+    elif user_create.role_id:
+        # Check if role exists by UUID
+        try:
+            role_statement = select(Role).where(Role.id == user_create.role_id)
+            result = await db.execute(role_statement)
+            role = result.scalar_one_or_none()
+            if not role:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Role does not exist"
+                )
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid role_id format"
+            )
+    else:
+        # Neither role_id nor role_name provided
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Role does not exist"
+            detail="Either role_id or role_name must be provided"
         )
-
+    
     # Check if username already exists
     existing_user_by_username = await UserService.get_user_by_username(db, user_create.username)
     if existing_user_by_username:
@@ -56,8 +104,16 @@ async def create_user(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Username already taken"
         )
-
-    return await UserService.create_user(db, user_create)
+    
+    # Create user with the resolved role_id
+    user_data = user_create.model_dump()
+    user_data['role_id'] = role_id_to_use
+    
+    # Remove role_name from data as it's not a model field
+    if 'role_name' in user_data:
+        del user_data['role_name']
+    
+    return await UserService.create_user(db, UserCreate(**user_data))
 
 @router.get("/{user_id}", response_model=UserRead)
 async def get_user(
@@ -78,7 +134,20 @@ async def get_user(
             detail="Invalid user ID format"
         )
 
-    user = await UserService.get_user(db, user_uuid)
+    # Get user with role information
+    from sqlalchemy import select
+    statement = select(User, Role.name.label('role_name')).join(Role, User.role_id == Role.id, isouter=True).where(User.id == user_uuid)
+    result = await db.execute(statement)
+    row = result.first()
+    
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    user = row[0]
+    role_name = row[1] if row[1] else 'unknown'
 
     if not user:
         raise HTTPException(
@@ -92,8 +161,12 @@ async def get_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to view this user"
         )
-
-    return user
+    
+    # Convert to dict and add role_name
+    user_dict = user.model_dump()
+    user_dict['role_name'] = role_name
+    
+    return user_dict
 
 @router.put("/{user_id}", response_model=UserRead)
 async def update_user(
@@ -130,16 +203,31 @@ async def update_user(
             detail="Not authorized to update this user"
         )
 
-    # Check if trying to update role without admin privileges
-    if user_update.role_id and str(current_user.id) != user_id and current_user.role.name != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admins can update user roles"
-        )
-
-    # If updating role, verify it exists
-    if user_update.role_id:
-        from sqlalchemy import select
+    # Handle role update - check if role_name is provided in raw data
+    from sqlalchemy import select
+    import json
+    
+    # Get raw request data to check for role_name
+    update_data = user_update.model_dump(exclude_unset=True)
+    
+    # If role_name is provided, convert it to role_id
+    if 'role_name' in update_data or hasattr(user_update, 'role_name'):
+        role_name = update_data.get('role_name') or getattr(user_update, 'role_name', None)
+        if role_name:
+            role_statement = select(Role).where(Role.name == role_name.lower())
+            role_result = await db.execute(role_statement)
+            role = role_result.scalar_one_or_none()
+            if not role:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Role '{role_name}' does not exist"
+                )
+            update_data['role_id'] = role.id
+            # Remove role_name as it's not a field in UserUpdate
+            if 'role_name' in update_data:
+                del update_data['role_name']
+    elif user_update.role_id:
+        # If role_id is provided, verify it exists
         role_statement = select(Role).where(Role.id == user_update.role_id)
         role_result = await db.execute(role_statement)
         role = role_result.scalar_one_or_none()
@@ -149,7 +237,15 @@ async def update_user(
                 detail="Role does not exist"
             )
 
-    return await UserService.update_user(db, user_uuid, user_update)
+    # Only admins can update roles
+    if 'role_id' in update_data and str(current_user.id) != user_id and current_user.role.name != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admins can update user roles"
+        )
+
+    # Update user with validated data
+    return await UserService.update_user(db, user_uuid, UserUpdate(**update_data))
 
 @router.delete("/{user_id}")
 async def delete_user(

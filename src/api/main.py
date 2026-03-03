@@ -141,10 +141,10 @@ app.include_router(customer_invoice.router, prefix="/customerinvoice", tags=["cu
 app.include_router(refunds.router, prefix="/refunds", tags=["refunds"])
 app.include_router(pos.router, prefix="/pos", tags=["pos"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
-app.include_router(walkin_invoice.router, prefix="/walkin-invoice", tags=["walkin-invoice"])
-app.include_router(walkin_refund.router, prefix="/walkin-refund", tags=["walkin-refund"])
-app.include_router(expense_type.router, tags=["expense-type"])
-app.include_router(sales_view.router, prefix="/sales-view", tags=["sales-view"])
+app.include_router(walkin_invoice.router, prefix="/walkininvoice", tags=["walkininvoice"])
+app.include_router(walkin_refund.router, prefix="/walkinrefund", tags=["walkinrefund"])
+app.include_router(expense_type.router, tags=["expensetype"])
+app.include_router(sales_view.router, prefix="/salesview", tags=["salesview"])
 
 if __name__ == "__main__":
     import uvicorn

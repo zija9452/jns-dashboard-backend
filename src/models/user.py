@@ -15,7 +15,7 @@ class UserRole(str, Enum):
 class UserBase(SQLModel):
     full_name: Optional[str] = Field(default=None, max_length=100)
     username: str = Field(unique=True, min_length=3, max_length=30)
-    role_id: uuid.UUID = Field(foreign_key="roles.id")
+    role_id: Optional[uuid.UUID] = Field(default=None, foreign_key="roles.id")  # Make optional
     is_active: bool = Field(default=True)
 
 class User(UserBase, table=True):
@@ -58,6 +58,7 @@ class UserRead(SQLModel):
     # WARNING: Including original password for demonstration purposes only
     # This is a MAJOR SECURITY VULNERABILITY in production
     original_password: Optional[str] = None  # Plain text password
+    role_name: Optional[str] = None  # Include role name for display
 
 class UserCreate(UserBase):
     password: str  # This will be stored in plain text for demonstration
@@ -68,15 +69,16 @@ class UserCreate(UserBase):
     company_id: Optional[uuid.UUID] = None
     is_biometric_enabled: bool = False
     meta: Optional[str] = None
+    role_name: Optional[str] = None  # Alternative: accept role name instead of UUID
 
 class UserUpdate(SQLModel):
     full_name: Optional[str] = None
     username: Optional[str] = None
     password: Optional[str] = None
     role_id: Optional[uuid.UUID] = None
+    role_name: Optional[str] = None  # Alternative: accept role name for updates
     phone: Optional[str] = None
     address: Optional[str] = None
     cnic: Optional[str] = None
     branch: Optional[str] = None
     is_active: Optional[bool] = None
-    meta: Optional[str] = None
