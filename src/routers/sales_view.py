@@ -12,6 +12,8 @@ from src.models.invoice import Invoice
 from src.models.customer_invoice import CustomerInvoice
 from src.models.daily_cash import DailyCash
 from src.models.expense import Expense
+from src.models.stock_entry import StockEntry, StockEntryType
+from src.models.product import Product
 from src.auth.session_auth import admin_cashier_employee_required_from_session
 
 router = APIRouter()
@@ -1190,4 +1192,640 @@ async def get_customized_invoices_excel(
     return {
         "excel": encoded_excel,
         "filename": f"customer_invoices_{from_date}_to_{to_date}.xlsx"
+    }
+
+
+# ==================== EXPENSE REPORT ENDPOINTS ====================
+
+@router.get("/expenses/pdf")
+async def get_expenses_pdf(
+    from_date: str = Query(...),
+    to_date: str = Query(...),
+    branch: str = Query("European Sports Light House"),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate PDF report for expenses (date-wise)
+    """
+    import base64
+    from datetime import datetime
+    
+    try:
+        from_date_obj = datetime.fromisoformat(from_date).date()
+        to_date_obj = datetime.fromisoformat(to_date).date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format")
+    
+    # Query expenses for date range
+    statement = select(Expense).where(
+        and_(
+            Expense.expense_date >= from_date_obj,
+            Expense.expense_date <= to_date_obj
+        )
+    )
+    result = await db.execute(statement)
+    expenses = result.scalars().all()
+    
+    # Build expense rows for PDF
+    expense_rows = ""
+    total_amount = 0.0
+    
+    for exp in expenses:
+        expense_rows += f"""
+        <tr>
+            <td class="border">{exp.expense_date.strftime('%Y-%m-%d')}</td>
+            <td class="border">{exp.expense_type}</td>
+            <td class="border">{exp.expense}</td>
+            <td class="border text-right">{exp.amount:.0f}</td>
+            <td class="border">{exp.branch or 'N/A'}</td>
+        </tr>
+        """
+        total_amount += float(exp.amount)
+    
+    # Create HTML content for PDF
+    current_date = datetime.now().strftime('%d-%m-%Y %I:%M %p')
+    
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <style>
+            @page {{
+                size: A4 landscape;
+                margin: 15mm;
+            }}
+            body {{
+                font-family: Arial, sans-serif;
+                font-size: 11px;
+                margin: 0;
+                padding: 0;
+            }}
+            h1 {{
+                text-align: center;
+                color: #333;
+                margin: 0 0 10px 0;
+                font-size: 24px;
+                font-weight: bold;
+            }}
+            .date-range {{
+                text-align: center;
+                margin: 0 0 15px 0;
+                color: #666;
+                font-size: 12px;
+            }}
+            table {{
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 10px;
+            }}
+            .border {{
+                border: 1px solid #000;
+                padding: 6px;
+            }}
+            th {{
+                background-color: #444;
+                color: white;
+                font-weight: bold;
+                text-align: left;
+                padding: 8px;
+                font-size: 11px;
+            }}
+            .text-right {{
+                text-align: right;
+            }}
+            .total-row {{
+                background-color: #f0f0f0;
+                font-weight: bold;
+            }}
+        </style>
+    </head>
+    <body>
+        <h1>Expense Report</h1>
+        <p class="date-range">From: {from_date} To: {to_date} | Generated: {current_date}</p>
+        
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 15%;">Date</th>
+                    <th style="width: 20%;">Expense Type</th>
+                    <th style="width: 35%;">Description</th>
+                    <th style="width: 15%;">Amount</th>
+                    <th style="width: 15%;">Branch</th>
+                </tr>
+            </thead>
+            <tbody>
+                {expense_rows}
+                <tr class="total-row">
+                    <td class="border" colspan="3" style="text-align: left; font-weight: bold;">TOTAL</td>
+                    <td class="border text-right" style="font-weight: bold;">{total_amount:.0f}</td>
+                    <td class="border"></td>
+                </tr>
+            </tbody>
+        </table>
+        
+        <div style="margin-top: 20px; border: 2px solid #333; padding: 10px;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                <span style="font-weight: bold;">Total Expenses:</span>
+                <span>Rs. {total_amount:.0f}</span>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    
+    # Generate PDF using weasyprint
+    try:
+        from weasyprint import HTML
+        pdf_doc = HTML(string=html_content)
+        pdf_bytes = pdf_doc.write_pdf()
+        encoded_pdf = base64.b64encode(pdf_bytes).decode()
+        print(f"PDF generated, length: {len(encoded_pdf)}")
+    except Exception as e:
+        print(f"weasyprint failed: {e}")
+        pdf_content = f"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>\nendobj\nxref\n0 4\ntrailer\n<< /Size 4 /Root 1 0 R >>\n%%EOF"
+        encoded_pdf = base64.b64encode(pdf_content.encode()).decode()
+    
+    return {"pdf": encoded_pdf}
+
+
+@router.get("/expenses/excel")
+async def get_expenses_excel(
+    from_date: str = Query(...),
+    to_date: str = Query(...),
+    branch: str = Query("European Sports Light House"),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate Excel report for expenses (date-wise)
+    Returns actual .xlsx file
+    """
+    import io
+    import base64
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
+    
+    try:
+        from_date_obj = datetime.fromisoformat(from_date).date()
+        to_date_obj = datetime.fromisoformat(to_date).date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format")
+    
+    # Query expenses for date range
+    statement = select(Expense).where(
+        and_(
+            Expense.expense_date >= from_date_obj,
+            Expense.expense_date <= to_date_obj
+        )
+    )
+    result = await db.execute(statement)
+    expenses = result.scalars().all()
+    
+    # Create Excel workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Expenses"
+    
+    # Define styles
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    header_fill = PatternFill(start_color="444444", end_color="444444", fill_type="solid")
+    header_alignment = Alignment(horizontal="left", vertical="center")
+    cell_alignment = Alignment(vertical="center")
+    right_alignment = Alignment(horizontal="right", vertical="center")
+    
+    thin_border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
+    
+    # Write header
+    headers = [
+        'Date',
+        'Expense Type',
+        'Description',
+        'Amount',
+        'Branch'
+    ]
+    
+    for col, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_alignment
+        cell.border = thin_border
+    
+    # Set column widths
+    column_widths = [15, 20, 40, 15, 25]
+    for col, width in enumerate(column_widths, 1):
+        ws.column_dimensions[chr(64 + col)].width = width
+    
+    total_amount = 0.0
+    row_num = 2
+    
+    # Write data rows
+    for exp in expenses:
+        ws.cell(row=row_num, column=1, value=exp.expense_date.strftime('%Y-%m-%d')).border = thin_border
+        ws.cell(row=row_num, column=2, value=exp.expense_type).border = thin_border
+        ws.cell(row=row_num, column=3, value=exp.expense).border = thin_border
+        ws.cell(row=row_num, column=4, value=round(float(exp.amount), 2)).border = thin_border
+        ws.cell(row=row_num, column=5, value=exp.branch or 'N/A').border = thin_border
+        
+        # Apply alignments
+        for col in range(1, 6):
+            if col in [4]:  # Amount column
+                ws.cell(row=row_num, column=col).alignment = right_alignment
+            else:
+                ws.cell(row=row_num, column=col).alignment = cell_alignment
+        
+        total_amount += float(exp.amount)
+        row_num += 1
+    
+    # Write total row
+    total_row = row_num
+    ws.cell(row=total_row, column=1, value='TOTAL').font = Font(bold=True)
+    ws.cell(row=total_row, column=4, value=round(total_amount, 2)).font = Font(bold=True)
+    
+    # Merge cells for TOTAL label
+    ws.merge_cells(start_row=total_row, start_column=1, end_row=total_row, end_column=3)
+    ws.merge_cells(start_row=total_row, start_column=5, end_row=total_row, end_column=5)
+    
+    # Apply border to total row
+    for col in range(1, 6):
+        cell = ws.cell(row=total_row, column=col)
+        cell.border = thin_border
+        if col > 4:
+            cell.value = ''
+    
+    # Add summary section
+    summary_row = total_row + 2
+    ws.cell(row=summary_row, column=1, value='Total Expenses:').font = Font(bold=True)
+    ws.cell(row=summary_row, column=2, value=round(total_amount, 2)).font = Font(bold=True)
+    
+    # Save to bytes
+    excel_buffer = io.BytesIO()
+    wb.save(excel_buffer)
+    excel_buffer.seek(0)
+    excel_bytes = excel_buffer.read()
+    
+    # Encode to base64
+    encoded_excel = base64.b64encode(excel_bytes).decode()
+    
+    return {
+        "excel": encoded_excel,
+        "filename": f"expenses_{from_date}_to_{to_date}.xlsx"
+    }
+
+
+# ==================== STOCK ADJUSTMENT REPORT ENDPOINTS ====================
+
+@router.get("/stock-adjustments/pdf")
+async def get_stock_adjustments_pdf(
+    from_date: str = Query(...),
+    to_date: str = Query(...),
+    branch: str = Query("European Sports Light House"),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate PDF report for stock adjustments (date-wise)
+    """
+    import base64
+    from datetime import datetime
+    
+    try:
+        from_date_obj = datetime.fromisoformat(from_date).date()
+        to_date_obj = datetime.fromisoformat(to_date).date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format")
+    
+    # Query stock adjustments for date range
+    statement = select(StockEntry).where(
+        and_(
+            StockEntry.type == StockEntryType.ADJUST,
+            func.date(StockEntry.created_at) >= from_date_obj,
+            func.date(StockEntry.created_at) <= to_date_obj
+        )
+    )
+    result = await db.execute(statement)
+    adjustments = result.scalars().all()
+    
+    # Build adjustment rows for PDF
+    adjustment_rows = ""
+    total_positive = 0
+    total_negative = 0
+    
+    for adj in adjustments:
+        # Get product name
+        product_result = await db.execute(select(Product).where(Product.id == adj.product_id))
+        product = product_result.scalar_one_or_none()
+        product_name = product.name if product else 'Unknown'
+        
+        # Determine if positive or negative adjustment
+        adj_type = "Increase" if adj.qty > 0 else "Decrease"
+        abs_qty = abs(adj.qty)
+        
+        if adj.qty > 0:
+            total_positive += adj.qty
+        else:
+            total_negative += abs(adj.qty)
+        
+        adjustment_rows += f"""
+        <tr>
+            <td class="border">{adj.created_at.strftime('%Y-%m-%d')}</td>
+            <td class="border">{product_name}</td>
+            <td class="border">{adj_type}</td>
+            <td class="border text-right">{abs_qty}</td>
+            <td class="border">{adj.location or 'N/A'}</td>
+            <td class="border">{adj.batch or '-'}</td>
+            <td class="border">{adj.created_at.strftime('%I:%M %p')}</td>
+        </tr>
+        """
+    
+    # Create HTML content for PDF
+    current_date = datetime.now().strftime('%d-%m-%Y %I:%M %p')
+    
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <style>
+            @page {{
+                size: A4 landscape;
+                margin: 15mm;
+            }}
+            body {{
+                font-family: Arial, sans-serif;
+                font-size: 10px;
+                margin: 0;
+                padding: 0;
+            }}
+            h1 {{
+                text-align: center;
+                color: #333;
+                margin: 0 0 10px 0;
+                font-size: 24px;
+                font-weight: bold;
+            }}
+            .date-range {{
+                text-align: center;
+                margin: 0 0 15px 0;
+                color: #666;
+                font-size: 12px;
+            }}
+            table {{
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 10px;
+            }}
+            .border {{
+                border: 1px solid #000;
+                padding: 6px;
+            }}
+            th {{
+                background-color: #444;
+                color: white;
+                font-weight: bold;
+                text-align: left;
+                padding: 8px;
+                font-size: 10px;
+            }}
+            .text-right {{
+                text-align: right;
+            }}
+            .total-row {{
+                background-color: #f0f0f0;
+                font-weight: bold;
+            }}
+            .summary {{
+                margin-top: 20px;
+                border: 2px solid #333;
+                padding: 10px;
+            }}
+            .summary-row {{
+                display: flex;
+                justify-content: space-between;
+                margin-bottom: 5px;
+            }}
+        </style>
+    </head>
+    <body>
+        <h1>Stock Adjustment Report</h1>
+        <p class="date-range">From: {from_date} To: {to_date} | Generated: {current_date}</p>
+        
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 12%;">Date</th>
+                    <th style="width: 25%;">Product</th>
+                    <th style="width: 12%;">Type</th>
+                    <th style="width: 10%;">Qty</th>
+                    <th style="width: 15%;">Location</th>
+                    <th style="width: 13%;">Batch</th>
+                    <th style="width: 13%;">Time</th>
+                </tr>
+            </thead>
+            <tbody>
+                {adjustment_rows}
+                <tr class="total-row">
+                    <td class="border" colspan="3" style="text-align: left; font-weight: bold;">TOTAL</td>
+                    <td class="border text-right" style="font-weight: bold;">{total_positive + total_negative}</td>
+                    <td class="border" colspan="3"></td>
+                </tr>
+            </tbody>
+        </table>
+        
+        <div class="summary">
+            <div class="summary-row">
+                <span style="font-weight: bold;">Stock Increases:</span>
+                <span>{total_positive} units</span>
+            </div>
+            <div class="summary-row">
+                <span style="font-weight: bold;">Stock Decreases:</span>
+                <span>{total_negative} units</span>
+            </div>
+            <div class="summary-row">
+                <span style="font-weight: bold;">Net Adjustment:</span>
+                <span>{total_positive - total_negative} units</span>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    
+    # Generate PDF using weasyprint
+    try:
+        from weasyprint import HTML
+        pdf_doc = HTML(string=html_content)
+        pdf_bytes = pdf_doc.write_pdf()
+        encoded_pdf = base64.b64encode(pdf_bytes).decode()
+        print(f"PDF generated, length: {len(encoded_pdf)}")
+    except Exception as e:
+        print(f"weasyprint failed: {e}")
+        pdf_content = f"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>\nendobj\nxref\n0 4\ntrailer\n<< /Size 4 /Root 1 0 R >>\n%%EOF"
+        encoded_pdf = base64.b64encode(pdf_content.encode()).decode()
+    
+    return {"pdf": encoded_pdf}
+
+
+@router.get("/stock-adjustments/excel")
+async def get_stock_adjustments_excel(
+    from_date: str = Query(...),
+    to_date: str = Query(...),
+    branch: str = Query("European Sports Light House"),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate Excel report for stock adjustments (date-wise)
+    Returns actual .xlsx file
+    """
+    import io
+    import base64
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
+    
+    try:
+        from_date_obj = datetime.fromisoformat(from_date).date()
+        to_date_obj = datetime.fromisoformat(to_date).date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format")
+    
+    # Query stock adjustments for date range
+    statement = select(StockEntry).where(
+        and_(
+            StockEntry.type == StockEntryType.ADJUST,
+            func.date(StockEntry.created_at) >= from_date_obj,
+            func.date(StockEntry.created_at) <= to_date_obj
+        )
+    )
+    result = await db.execute(statement)
+    adjustments = result.scalars().all()
+    
+    # Create Excel workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Stock Adjustments"
+    
+    # Define styles
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    header_fill = PatternFill(start_color="444444", end_color="444444", fill_type="solid")
+    header_alignment = Alignment(horizontal="left", vertical="center")
+    cell_alignment = Alignment(vertical="center")
+    right_alignment = Alignment(horizontal="right", vertical="center")
+    
+    thin_border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
+    
+    # Write header
+    headers = [
+        'Date',
+        'Product Name',
+        'Adjustment Type',
+        'Quantity',
+        'Location',
+        'Batch',
+        'Time'
+    ]
+    
+    for col, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_alignment
+        cell.border = thin_border
+    
+    # Set column widths
+    column_widths = [15, 30, 15, 12, 20, 15, 12]
+    for col, width in enumerate(column_widths, 1):
+        ws.column_dimensions[chr(64 + col)].width = width
+    
+    total_positive = 0
+    total_negative = 0
+    row_num = 2
+    
+    # Write data rows
+    for adj in adjustments:
+        # Get product name
+        try:
+            product_result = await db.execute(select(Product).where(Product.id == adj.product_id))
+            product = product_result.scalar_one_or_none()
+            product_name = product.name if product else 'Unknown'
+        except:
+            product_name = 'Unknown'
+        
+        # Determine adjustment type
+        adj_type = "Increase" if adj.qty > 0 else "Decrease"
+        abs_qty = abs(adj.qty)
+        
+        if adj.qty > 0:
+            total_positive += adj.qty
+        else:
+            total_negative += abs(adj.qty)
+        
+        # Write row data
+        ws.cell(row=row_num, column=1, value=adj.created_at.strftime('%Y-%m-%d')).border = thin_border
+        ws.cell(row=row_num, column=2, value=product_name).border = thin_border
+        ws.cell(row=row_num, column=3, value=adj_type).border = thin_border
+        ws.cell(row=row_num, column=4, value=abs_qty).border = thin_border
+        ws.cell(row=row_num, column=5, value=adj.location or 'N/A').border = thin_border
+        ws.cell(row=row_num, column=6, value=adj.batch or '-').border = thin_border
+        ws.cell(row=row_num, column=7, value=adj.created_at.strftime('%I:%M %p')).border = thin_border
+        
+        # Apply alignments
+        for col in range(1, 8):
+            if col in [4]:  # Quantity column
+                ws.cell(row=row_num, column=col).alignment = right_alignment
+            else:
+                ws.cell(row=row_num, column=col).alignment = cell_alignment
+        
+        row_num += 1
+    
+    # Write total row
+    total_row = row_num
+    ws.cell(row=total_row, column=1, value='TOTAL').font = Font(bold=True)
+    ws.cell(row=total_row, column=4, value=total_positive + total_negative).font = Font(bold=True)
+    
+    # Merge cells for TOTAL label
+    ws.merge_cells(start_row=total_row, start_column=1, end_row=total_row, end_column=3)
+    ws.merge_cells(start_row=total_row, start_column=5, end_row=total_row, end_column=7)
+    
+    # Apply border to total row
+    for col in range(1, 8):
+        cell = ws.cell(row=total_row, column=col)
+        cell.border = thin_border
+        if col > 4:
+            cell.value = ''
+    
+    # Add summary section
+    summary_row = total_row + 2
+    ws.cell(row=summary_row, column=1, value='Stock Increases:').font = Font(bold=True)
+    ws.cell(row=summary_row, column=2, value=total_positive)
+    
+    ws.cell(row=summary_row + 1, column=1, value='Stock Decreases:').font = Font(bold=True)
+    ws.cell(row=summary_row + 1, column=2, value=total_negative)
+    
+    ws.cell(row=summary_row + 2, column=1, value='Net Adjustment:').font = Font(bold=True)
+    ws.cell(row=summary_row + 2, column=2, value=total_positive - total_negative)
+    
+    # Save to bytes
+    excel_buffer = io.BytesIO()
+    wb.save(excel_buffer)
+    excel_buffer.seek(0)
+    excel_bytes = excel_buffer.read()
+    
+    # Encode to base64
+    encoded_excel = base64.b64encode(excel_bytes).decode()
+    
+    return {
+        "excel": encoded_excel,
+        "filename": f"stock_adjustments_{from_date}_to_{to_date}.xlsx"
     }
