@@ -541,9 +541,14 @@ async def get_walkin_invoices(
     statement = select(Invoice)
 
     # Apply filters
-    if customer_id:  # Keep the parameter name for compatibility but filter by customer_name
-        # For walk-in invoices, we can search by customer name instead of ID
-        statement = statement.where(Invoice.customer_name.ilike(f"%{customer_id}%"))
+    if customer_id:  # Search by invoice number OR customer name
+        from sqlalchemy import or_
+        statement = statement.where(
+            or_(
+                Invoice.invoice_no.ilike(f"%{customer_id}%"),
+                Invoice.customer_name.ilike(f"%{customer_id}%")
+            )
+        )
 
     if status:
         try:
@@ -584,6 +589,9 @@ async def get_walkin_invoices(
             quantity = item.get('quantity', 0)
             total_quantity += int(quantity) if quantity else 0
 
+        # Calculate balance
+        balance = float(inv.total_amount) - float(inv.amount_paid)
+        
         invoice_list.append({
             "invoice_id": str(inv.id),
             "invoice_no": inv.invoice_no,
@@ -592,8 +600,10 @@ async def get_walkin_invoices(
             "team_name": getattr(inv, 'team_name', ''),  # Assuming team name if available
             "quantity": total_quantity,
             "total_amount": float(inv.total_amount),
+            "amount_paid": float(inv.amount_paid),
+            "balance": balance,
             "date": inv.created_at.strftime("%Y-%m-%d"),
-            "status": inv.status.value if hasattr(inv.status, 'value') else inv.status,
+            "status": getattr(inv, 'payment_status', 'paid'),  # Use payment_status instead of status
             "items": items_data,
             "created_at": inv.created_at.isoformat(),
             "updated_at": inv.updated_at.isoformat()

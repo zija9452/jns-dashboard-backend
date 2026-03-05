@@ -89,7 +89,7 @@ async def create_walkin_invoice_refund(
     if Decimal(str(refund_amount)) > invoice.amount_paid:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Refund amount ({refund_amount}) exceeds amount paid ({float(invoice.amount_paid)})"
+            detail=f"Refund amount ({refund_amount}) exceeds remaining paid amount ({float(invoice.amount_paid)}). This invoice may have already been refunded."
         )
 
     # Parse original invoice items to validate refund items
@@ -146,15 +146,11 @@ async def create_walkin_invoice_refund(
     # Update the original invoice's payment status and amounts
     # Calculate new amounts after refund
     remaining_amount_paid = invoice.amount_paid - Decimal(str(refund_amount))
-    new_balance_due = invoice.balance_due + Decimal(str(refund_amount))  # Add refunded amount back to balance due
 
     # Update payment status based on remaining amount
     if float(remaining_amount_paid) <= 0 and float(invoice.total_amount) > 0:
-        # If all paid amount is refunded but there was still a balance, status goes back to unpaid
-        if float(new_balance_due) > 0:
-            invoice.payment_status = "unpaid"
-        else:
-            invoice.payment_status = "refunded"
+        # If all paid amount is refunded, mark as refunded
+        invoice.payment_status = "refunded"
     elif remaining_amount_paid > 0:
         # Partial payment remains after refund
         invoice.payment_status = "partial"
@@ -163,7 +159,6 @@ async def create_walkin_invoice_refund(
 
     # Update invoice amounts
     invoice.amount_paid = remaining_amount_paid
-    invoice.balance_due = new_balance_due
     invoice.updated_at = datetime.now()
     await db.commit()
 
