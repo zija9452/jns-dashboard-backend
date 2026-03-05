@@ -463,10 +463,44 @@ async def get_sales_summary(
     total_expenses = float(expenses_result.scalar_one_or_none() or 0)
 
     # Calculate net cash
+    total_cash_sales = walkin_cash_sales + customer_total_collection
+    
     net_cash = opening + total_cash_sales - total_expenses
 
     # Calculate net profit = Gross Profit - Expenses
     net_profit = gross_profit - total_expenses
+    
+    # Calculate total refund amount for the date range (Walk-in invoices only - SIN- prefix)
+    total_refund_amount = 0.0
+    
+    try:
+        # Query refunds for walk-in invoices only (SIN- prefix)
+        from ..models.refund import Refund
+        # Convert to datetime for proper comparison
+        from_date_datetime = datetime.combine(from_date_obj, datetime.min.time())
+        to_date_datetime = datetime.combine(to_date_obj, datetime.max.time())
+        
+        # Join refunds with invoices and filter by SIN- prefix
+        refunds_statement = select(Refund).join(
+            Invoice, Refund.invoice_id == Invoice.id
+        ).where(
+            and_(
+                Refund.created_at >= from_date_datetime,
+                Refund.created_at <= to_date_datetime,
+                Invoice.invoice_no.like('SIN-%')  # Only walk-in invoices
+            )
+        )
+        refunds_result = await db.execute(refunds_statement)
+        refunds = refunds_result.scalars().all()
+        
+        for refund in refunds:
+            try:
+                total_refund_amount += float(refund.amount)
+            except:
+                continue
+    except Exception as e:
+        print(f"Error calculating refunds: {e}")
+        total_refund_amount = 0.0
 
     return {
         "opening": opening,
@@ -477,7 +511,7 @@ async def get_sales_summary(
         "vendorPayments": 0.0,
         "netCash": net_cash,
         "totalPurchase": total_purchase,  # Now actual cost from walk-in invoices
-        "totalRefund": 0.0,
+        "totalRefund": total_refund_amount,
         "netProfit": net_profit,
         # Breakdown for reference
         "walkin_sales": walkin_total_sales,
@@ -1827,4 +1861,357 @@ async def get_stock_adjustments_excel(
     return {
         "excel": encoded_excel,
         "filename": f"stock_adjustments_{from_date}_to_{to_date}.xlsx"
+    }
+
+
+# ==================== REFUND REPORT ENDPOINTS ====================
+
+@router.get("/refunds/pdf")
+async def get_refunds_pdf(
+    from_date: str = Query(...),
+    to_date: str = Query(...),
+    branch: str = Query("European Sports Light House"),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate PDF report for refunds in date range
+    """
+    import base64
+    from datetime import datetime
+
+    try:
+        from_date_obj = datetime.fromisoformat(from_date).date()
+        to_date_obj = datetime.fromisoformat(to_date).date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format")
+
+    # Query refunds for walk-in invoices only (SIN- prefix)
+    from ..models.refund import Refund
+    # Convert to datetime for proper comparison
+    from_date_datetime = datetime.combine(from_date_obj, datetime.min.time())
+    to_date_datetime = datetime.combine(to_date_obj, datetime.max.time())
+    
+    # Join refunds with invoices and filter by SIN- prefix
+    refunds_statement = select(Refund).join(
+        Invoice, Refund.invoice_id == Invoice.id
+    ).where(
+        and_(
+            Refund.created_at >= from_date_datetime,
+            Refund.created_at <= to_date_datetime,
+            Invoice.invoice_no.like('SIN-%')  # Only walk-in invoices
+        )
+    ).order_by(Refund.created_at.desc())
+    
+    refunds_result = await db.execute(refunds_statement)
+    refunds = refunds_result.scalars().all()
+
+    # Build refund rows for PDF
+    refund_rows = ""
+    total_refund_amount = 0.0
+
+    for refund in refunds:
+        try:
+            # Get invoice number (already filtered to SIN- prefix)
+            invoice_result = await db.execute(select(Invoice).where(Invoice.id == refund.invoice_id))
+            invoice = invoice_result.scalar_one_or_none()
+            invoice_no = invoice.invoice_no if invoice else "N/A"
+            
+            # Parse refund items to get product details
+            refund_items = json.loads(refund.items) if refund.items else []
+            
+            for item in refund_items:
+                product_name = item.get('product_name', 'N/A')
+                quantity = item.get('quantity_returned', 0)
+                unit_price = item.get('unit_price', 0)
+                item_total = quantity * unit_price
+                item_cost = item_total * 0.7  # 70% cost calculation
+                
+                refund_amount = float(refund.amount)
+                total_refund_amount += refund_amount
+                
+                refund_rows += f"""
+                <tr>
+                    <td class="border">{invoice_no}</td>
+                    <td class="border">{refund.created_at.strftime('%d-%m-%Y') if refund.created_at else ''}</td>
+                    <td class="border">{product_name}</td>
+                    <td class="border text-right">{quantity}</td>
+                    <td class="border text-right">{unit_price:.0f}</td>
+                    <td class="border text-right">{item_total:.0f}</td>
+                    <td class="border text-right">{item_cost:.0f}</td>
+                </tr>
+                """
+        except:
+            continue
+
+    # Create HTML content for PDF
+    current_date = datetime.now().strftime('%d-%m-%Y %I:%M %p')
+
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <style>
+            @page {{
+                size: A4 landscape;
+                margin: 15mm;
+            }}
+            body {{
+                font-family: Arial, sans-serif;
+                font-size: 14px;
+                margin: 0;
+                padding: 0;
+            }}
+            h1 {{
+                text-align: center;
+                color: #333;
+                margin: 0 0 10px 0;
+                font-size: 28px;
+                font-weight: bold;
+            }}
+            .date-range {{
+                text-align: center;
+                margin: 0 0 15px 0;
+                color: #666;
+                font-size: 15px;
+            }}
+            table {{
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 10px;
+            }}
+            .border {{
+                border: 1px solid #000;
+                padding: 10px;
+            }}
+            th {{
+                background-color: #444;
+                color: white;
+                font-weight: bold;
+                text-align: left;
+                padding: 12px;
+                font-size: 14px;
+            }}
+            .text-right {{
+                text-align: right;
+            }}
+            .total-row {{
+                background-color: #f0f0f0;
+                font-weight: bold;
+                font-size: 15px;
+            }}
+        </style>
+    </head>
+    <body>
+        <h1>Refund Report</h1>
+        <p class="date-range">From: {from_date} To: {to_date} | Generated: {current_date}</p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 15%;">Invoice No</th>
+                    <th style="width: 12%;">Date</th>
+                    <th style="width: 28%;">Product</th>
+                    <th style="width: 8%;">Quantity</th>
+                    <th style="width: 10%;">Price</th>
+                    <th style="width: 12%;">Amount</th>
+                    <th style="width: 12%;">Cost</th>
+                </tr>
+            </thead>
+            <tbody>
+                {refund_rows}
+                <tr class="total-row">
+                    <td class="border" colspan="5" style="text-align: left; font-weight: bold;">TOTAL REFUND</td>
+                    <td class="border text-right" style="font-weight: bold;">{total_refund_amount:.0f}</td>
+                    <td class="border"></td>
+                </tr>
+            </tbody>
+        </table>
+    </body>
+    </html>
+    """
+
+    # Generate PDF using weasyprint (same as customer_invoice.py)
+    try:
+        from weasyprint import HTML
+        pdf_doc = HTML(string=html_content)
+        pdf_bytes = pdf_doc.write_pdf()
+        encoded_pdf = base64.b64encode(pdf_bytes).decode()
+        print(f"Refund PDF generated, length: {len(encoded_pdf)}")
+    except Exception as e:
+        print(f"weasyprint failed: {e}")
+        # Fallback - minimal PDF
+        encoded_pdf = base64.b64encode(b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>\nendobj\nxref\n0 4\ntrailer\n<< /Size 4 /Root 1 0 R >>\n%%EOF").decode()
+
+    return {
+        "pdf": encoded_pdf,
+        "filename": f"refund_report_{from_date}_to_{to_date}.pdf"
+    }
+
+
+@router.get("/refunds/excel")
+async def get_refunds_excel(
+    from_date: str = Query(...),
+    to_date: str = Query(...),
+    branch: str = Query("European Sports Light House"),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate Excel report for refunds in date range
+    """
+    import base64
+    import io
+    from datetime import datetime
+    from ..models.refund import Refund
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
+
+    try:
+        from_date_obj = datetime.fromisoformat(from_date).date()
+        to_date_obj = datetime.fromisoformat(to_date).date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format")
+
+    # Query refunds for walk-in invoices only (SIN- prefix)
+    from ..models.refund import Refund
+    # Convert to datetime for proper comparison
+    from_date_datetime = datetime.combine(from_date_obj, datetime.min.time())
+    to_date_datetime = datetime.combine(to_date_obj, datetime.max.time())
+    
+    # Join refunds with invoices and filter by SIN- prefix
+    refunds_statement = select(Refund).join(
+        Invoice, Refund.invoice_id == Invoice.id
+    ).where(
+        and_(
+            Refund.created_at >= from_date_datetime,
+            Refund.created_at <= to_date_datetime,
+            Invoice.invoice_no.like('SIN-%')  # Only walk-in invoices
+        )
+    ).order_by(Refund.created_at.desc())
+    
+    refunds_result = await db.execute(refunds_statement)
+    refunds = refunds_result.scalars().all()
+
+    # Create Excel workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Refund Report"
+
+    # Define styles (matching other reports)
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    header_fill = PatternFill(start_color="444444", end_color="444444", fill_type="solid")
+    header_alignment = Alignment(horizontal="left", vertical="center")
+    cell_alignment = Alignment(vertical="center")
+    right_alignment = Alignment(horizontal="right", vertical="center")
+
+    thin_border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
+
+    # Write header
+    headers = [
+        'Invoice No',
+        'Date',
+        'Product Name',
+        'Quantity',
+        'Unit Price',
+        'Amount',
+        'Cost'
+    ]
+
+    for col, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_alignment
+        cell.border = thin_border
+
+    # Set column widths
+    column_widths = [15, 12, 30, 10, 12, 12, 12]
+    for col, width in enumerate(column_widths, 1):
+        ws.column_dimensions[chr(64 + col)].width = width
+
+    total_refund_amount = 0.0
+    total_cost = 0.0
+    row_num = 2
+
+    # Write data rows
+    for refund in refunds:
+        try:
+            # Get invoice number (already filtered to SIN- prefix)
+            invoice_result = await db.execute(select(Invoice).where(Invoice.id == refund.invoice_id))
+            invoice = invoice_result.scalar_one_or_none()
+            invoice_no = invoice.invoice_no if invoice else "N/A"
+            
+            # Parse refund items
+            refund_items = json.loads(refund.items) if refund.items else []
+            
+            for item in refund_items:
+                product_name = item.get('product_name', 'N/A')
+                quantity = item.get('quantity_returned', 0)
+                unit_price = item.get('unit_price', 0)
+                item_total = quantity * unit_price
+                item_cost = item_total * 0.7  # 70% cost calculation
+                
+                refund_amount = float(refund.amount)
+                total_refund_amount += refund_amount
+                total_cost += item_cost
+
+                # Write row data
+                ws.cell(row=row_num, column=1, value=invoice_no).border = thin_border
+                ws.cell(row=row_num, column=2, value=refund.created_at.strftime('%d-%m-%Y') if refund.created_at else '').border = thin_border
+                ws.cell(row=row_num, column=3, value=product_name).border = thin_border
+                ws.cell(row=row_num, column=4, value=quantity).border = thin_border
+                ws.cell(row=row_num, column=5, value=round(unit_price, 2)).border = thin_border
+                ws.cell(row=row_num, column=6, value=round(item_total, 2)).border = thin_border
+                ws.cell(row=row_num, column=7, value=round(item_cost, 2)).border = thin_border
+
+                # Apply alignments
+                for col in range(1, 8):
+                    if col == 4:  # Quantity
+                        ws.cell(row=row_num, column=col).alignment = cell_alignment
+                    elif col in [5, 6, 7]:  # Numeric columns
+                        ws.cell(row=row_num, column=col).alignment = right_alignment
+                    else:
+                        ws.cell(row=row_num, column=col).alignment = cell_alignment
+
+                row_num += 1
+        except:
+            continue
+
+    # Write total row
+    total_row = row_num
+    ws.cell(row=total_row, column=1, value='TOTAL REFUND').font = Font(bold=True)
+    ws.cell(row=total_row, column=6, value=round(total_refund_amount, 2)).font = Font(bold=True)
+    ws.cell(row=total_row, column=7, value=round(total_cost, 2)).font = Font(bold=True)
+
+    # Merge cells for TOTAL label
+    ws.merge_cells(start_row=total_row, start_column=1, end_row=total_row, end_column=5)
+
+    # Style total row
+    total_fill = PatternFill(start_color="f0f0f0", end_color="f0f0f0", fill_type="solid")
+    for col in range(1, 8):
+        cell = ws.cell(row=total_row, column=col)
+        cell.border = thin_border
+        if col <= 7:
+            cell.fill = total_fill
+        cell.alignment = cell_alignment
+
+    # Save to bytes
+    excel_buffer = io.BytesIO()
+    wb.save(excel_buffer)
+    excel_buffer.seek(0)
+    excel_bytes = excel_buffer.read()
+
+    # Encode to base64
+    encoded_excel = base64.b64encode(excel_bytes).decode()
+
+    return {
+        "excel": encoded_excel,
+        "filename": f"refund_report_{from_date}_to_{to_date}.xlsx"
     }

@@ -12,6 +12,7 @@ class Refund(SQLModel, table=True):
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     invoice_id: uuid.UUID = Field(foreign_key="invoices.id")
+    invoice_no: str = Field(default="N/A", index=True)  # Store invoice number directly for performance
     items: str = Field()  # JSON string for refunded items
     amount: Decimal = Field(sa_column=Column(Numeric(10, 2), nullable=False))
     reason: str  # Text field for reason

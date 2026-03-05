@@ -67,6 +67,9 @@ async def create_walkin_invoice_refund(
             detail="Invoice not found"
         )
 
+    # Get invoice number for storing in refund record
+    invoice_number = invoice.invoice_no
+
     # Validate customer exists if provided
     customer_id_uuid = None
     if customer_id:
@@ -189,6 +192,7 @@ async def create_walkin_invoice_refund(
     # Create refund object
     refund_obj = Refund(
         invoice_id=invoice_uuid,
+        invoice_no=invoice_number,  # Store invoice number directly
         items=json.dumps(refunded_items),
         amount=Decimal(str(refund_amount)),
         reason=refund_reason,
@@ -385,6 +389,7 @@ async def get_walkin_invoice_refunds(
         refund_list.append({
             "refund_id": str(rf.id),
             "invoice_id": str(rf.invoice_id),
+            "invoice_no": rf.invoice_no,  # Include invoice number
             "refunded_items": items_data,
             "refund_amount": float(rf.amount),
             "refund_reason": rf.reason,
