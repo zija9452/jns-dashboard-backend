@@ -85,11 +85,24 @@ async def create_walkin_invoice_refund(
                 detail="Invalid customer ID format"
             )
 
-    # Validate refund amount doesn't exceed amount paid
-    if Decimal(str(refund_amount)) > invoice.amount_paid:
+    # Validate refund amount doesn't exceed the item's total price
+    # Get the total price of the refunded items
+    total_refund_items_price = sum(
+        item.get('quantity_returned', 0) * item.get('unit_price', 0) 
+        for item in refunded_items
+    )
+    
+    if Decimal(str(refund_amount)) > Decimal(str(total_refund_items_price)):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Refund amount ({refund_amount}) exceeds remaining paid amount ({float(invoice.amount_paid)}). This invoice may have already been refunded."
+            detail=f"Refund amount ({refund_amount}) exceeds the total price of refunded items ({total_refund_items_price})."
+        )
+
+    # Check if invoice is already fully refunded
+    if invoice.payment_status == 'refunded':
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This invoice has already been fully refunded."
         )
 
     # Parse original invoice items to validate refund items
@@ -99,13 +112,38 @@ async def create_walkin_invoice_refund(
     except (json.JSONDecodeError, TypeError):
         original_items = []
 
-    # Process each refunded item and update inventory
+    # Get all previous refunds for this invoice to calculate already refunded quantities
+    from ..models.refund import Refund
+    
+    refunds_statement = select(Refund).where(Refund.invoice_id == invoice_uuid).order_by(Refund.created_at.desc())
+    refunds_result = await db.execute(refunds_statement)
+    previous_refunds = refunds_result.scalars().all()
+    
+    # Calculate already refunded quantities per product
+    already_refunded_qty = {}
+    for refund in previous_refunds:
+        try:
+            refund_items = json.loads(refund.items)
+            for item in refund_items:
+                product_name = item.get('product_name')
+                qty_returned = item.get('quantity_returned', 0)
+                if product_name in already_refunded_qty:
+                    already_refunded_qty[product_name] += qty_returned
+                else:
+                    already_refunded_qty[product_name] = qty_returned
+        except:
+            pass
+    
+    # Validate each refunded item
     for refund_item in refunded_items:
         product_name = refund_item.get('product_name')
         quantity_returned = int(refund_item.get('quantity_returned', 0))
 
         if quantity_returned <= 0:
-            continue  # Skip items with zero or negative quantity
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Quantity for product '{product_name}' must be positive"
+            )
 
         # Find the product in the original invoice
         original_item = None
@@ -118,6 +156,25 @@ async def create_walkin_invoice_refund(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Product '{product_name}' not found in original invoice"
+            )
+
+        # Check original quantity
+        original_qty = int(original_item.get('quantity', 0))
+        
+        # Check if already refunded
+        already_refunded = already_refunded_qty.get(product_name, 0)
+        remaining_qty = original_qty - already_refunded
+        
+        if remaining_qty <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Already refunded! Product '{product_name}' was fully refunded. Original qty: {original_qty}, Already refunded: {already_refunded}"
+            )
+        
+        if quantity_returned > remaining_qty:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot refund {quantity_returned} of '{product_name}'. Only {remaining_qty} remaining (Original: {original_qty}, Already refunded: {already_refunded})"
             )
 
         # Update product inventory (add back the returned quantity)
@@ -143,82 +200,26 @@ async def create_walkin_invoice_refund(
     await db.commit()
     await db.refresh(refund_obj)
 
-    # Update the original invoice's payment status and amounts
-    # Calculate new amounts after refund
-    remaining_amount_paid = invoice.amount_paid - Decimal(str(refund_amount))
-
-    # Update payment status based on remaining amount
-    if float(remaining_amount_paid) <= 0 and float(invoice.total_amount) > 0:
-        # If all paid amount is refunded, mark as refunded
-        invoice.payment_status = "refunded"
-    elif remaining_amount_paid > 0:
-        # Partial payment remains after refund
-        invoice.payment_status = "partial"
-    else:
-        invoice.payment_status = "paid"  # If there was no payment to refund
-
-    # Update invoice amounts
-    invoice.amount_paid = remaining_amount_paid
+    # Update the original invoice's payment status
+    # Note: We don't reduce amount_paid as it represents the original payment
+    # Just update the status based on remaining inventory
+    
+    # Check if all items have been refunded (compare stock levels)
+    # For now, just mark as partial if there was a partial refund
+    if invoice.payment_status != 'refunded':
+        invoice.payment_status = 'partial'
+    
     invoice.updated_at = datetime.now()
     await db.commit()
 
-    # Generate a PDF receipt as response
-    pdf_content = f"""%PDF-1.4
-1 0 obj
-<<
-/Type /Catalog
-/Pages 2 0 R
->>
-endobj
-2 0 obj
-<<
-/Type /Pages
-/Kids [3 0 R]
-/Count 1
->>
-endobj
-3 0 obj
-<<
-/Type /Page
-/Parent 2 0 R
-/MediaBox [0 0 612 792]
-/Contents 4 0 R
->>
-endobj
-4 0 obj
-<<
-/Length 200
->>
-stream
-BT
-/F1 16 Tf
-72 750 Td
-(Refund Receipt - {str(refund_obj.id)}) Tj
-T* 15 -15 Td
-(Invoice No: {invoice.invoice_no}) Tj
-T* 15 -15 Td
-(Date: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}) Tj
-T* 15 -15 Td
-(Refund Amount: ${refund_amount:.2f}) Tj
-T* 15 -15 Td
-(Reason: {refund_reason}) Tj
-T* 15 -15 Td
-(Processed by: {current_user.username or current_user.id}) Tj
-ET
-endstream
-endobj
-xref
-0 5
-trailer
-<<
-/Size 5
-/Root 1 0 R
->>
-%%EOF"""
-
-    encoded_pdf = base64.b64encode(pdf_content.encode()).decode()
-
-    return encoded_pdf
+    # Return success message instead of PDF
+    return {
+        "success": True,
+        "message": "Refund processed successfully",
+        "refund_id": str(refund_obj.id),
+        "invoice_id": str(invoice_uuid),
+        "refunded_amount": float(refund_amount)
+    }
 
 
 @router.get("/refunds/walkin-invoice/{refund_id}")
