@@ -526,6 +526,16 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
     current_date = created_at.strftime('%d-%m-%Y %I:%M %p')
     team_line = f"<p>Team: {team_name}</p>" if team_name else ""
 
+    # Logo path - using SVG for better quality
+    import os
+    import base64
+    logo_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'Images', 'European Sports.svg')
+    logo_base64 = ''
+    if os.path.exists(logo_path):
+        with open(logo_path, 'rb') as f:
+            logo_data = f.read()
+            logo_base64 = base64.b64encode(logo_data).decode()
+
     html_content = f"""
     <!DOCTYPE html>
     <html>
@@ -539,9 +549,10 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             body {{
                 width: 216px;
                 font-family: Arial, Helvetica, sans-serif;
-                font-size: 11px;
+                font-size: 10px;
                 margin: 0;
-                padding: 5px;
+                padding: 3px;
+                box-sizing: border-box;
             }}
             .header {{
                 text-align: center;
@@ -550,15 +561,21 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
                 padding-bottom: 5px;
             }}
             .header h1 {{
-                font-size: 16px;
-                margin: 0;
+                font-size: 14px;
+                margin: 2px 0;
                 font-weight: bold;
                 text-transform: uppercase;
                 letter-spacing: 1px;
             }}
             .logo {{
-                font-size: 20px;
                 margin: 2px 0;
+                text-align: center;
+            }}
+            .logo img {{
+                max-width: 60px;
+                max-height: 60px;
+                display: block;
+                margin: 0 auto;
             }}
             .contact {{
                 font-size: 9px;
@@ -586,18 +603,19 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             table {{
                 width: 100%;
                 border-collapse: collapse;
+                font-size: 9px;
             }}
             th {{
                 border-top: 2px solid #000;
                 border-bottom: 2px solid #000;
-                font-size: 9px;
-                padding: 3px 2px;
+                font-size: 8px;
+                padding: 2px 1px;
                 text-align: left;
                 font-weight: bold;
             }}
             td {{
-                font-size: 10px;
-                padding: 2px 2px;
+                font-size: 9px;
+                padding: 1px 1px;
             }}
             .text-center {{ text-align: center; }}
             .text-right {{ text-align: right; }}
@@ -634,7 +652,9 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
     </head>
     <body>
         <div class="header">
-            <div class="logo">🏆</div>
+            <div class="logo">
+                <img src="data:image/svg+xml;base64,{logo_base64}" alt="Logo" />
+            </div>
             <h1>EUROPEAN SPORTS</h1>
             <p class="contact">Contact: 0315-2263745</p>
             <p class="contact">Shop#8, Mazar Wali Gali, Light House, Khi</p>
@@ -649,11 +669,11 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
         <table>
             <thead>
                 <tr>
-                    <th style="width: 38%;">Item</th>
-                    <th style="width: 16%;" class="text-right">Price</th>
+                    <th style="width: 35%;">Item</th>
+                    <th style="width: 15%;" class="text-right">Price</th>
                     <th style="width: 12%;" class="text-center">Qty</th>
-                    <th style="width: 12%;" class="text-right">Disc</th>
-                    <th style="width: 22%;" class="text-right">Amount</th>
+                    <th style="width: 13%;" class="text-right">Disc</th>
+                    <th style="width: 25%;" class="text-right">Amount</th>
                 </tr>
             </thead>
             <tbody>
