@@ -677,7 +677,16 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             .total-row {{
                 font-weight: bold;
                 font-size: 11px;
-                margin: 4px 0;
+                margin: 3px 0;
+            }}
+            .total-label {{
+                display: inline-block;
+                min-width: 160px;
+                font-weight: bold;
+            }}
+            .total-value {{
+                font-weight: bold;
+                text-align: right;
             }}
             .payment {{
                 border-top: 2px solid #000;
@@ -733,12 +742,12 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             </tbody>
         </table>
         <div class="totals">
-            <p class="total-row">Total Bill: {total_amount:.0f}</p>
-            <p class="total-row">Amount Paid: {amount_paid:.0f}</p>
-            <p class="total-row">Balance: {balance_due:.0f}</p>
-            <p class="total-row">Item Discount: 0</p>
-            <p class="total-row">Total Discount(Rs): {total_discount:.0f}</p>
-            <p class="total-row">Grand Total: {total_amount:.0f}</p>
+            <p class="total-row"><span class="total-label">Total Bill:</span><span class="total-value">{total_amount:.0f}</span></p>
+            <p class="total-row"><span class="total-label">Amount Paid:</span><span class="total-value">{amount_paid:.0f}</span></p>
+            <p class="total-row"><span class="total-label">Balance:</span><span class="total-value">{balance_due:.0f}</span></p>
+            <p class="total-row"><span class="total-label">Item Discount:</span><span class="total-value">0</span></p>
+            <p class="total-row"><span class="total-label">Total Discount(Rs):</span><span class="total-value">{total_discount:.0f}</span></p>
+            <p class="total-row"><span class="total-label">Grand Total:</span><span class="total-value">{total_amount:.0f}</span></p>
         </div>
         <div class="payment">
             <p>Payment Mode: {payment_method.upper()}</p>
