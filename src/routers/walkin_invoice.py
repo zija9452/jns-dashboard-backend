@@ -591,7 +591,7 @@ async def get_walkin_invoices(
 
         # Calculate balance
         balance = float(inv.total_amount) - float(inv.amount_paid)
-        
+
         invoice_list.append({
             "invoice_id": str(inv.id),
             "invoice_no": inv.invoice_no,
