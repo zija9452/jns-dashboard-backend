@@ -526,15 +526,19 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
     current_date = created_at.strftime('%d-%m-%Y %I:%M %p')
     team_line = f"<p>Team: {team_name}</p>" if team_name else ""
 
-    # Logo path - using SVG for better quality
+    # Logo path - using JPG for better WeasyPrint compatibility
     import os
-    import base64
-    logo_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'Images', 'European Sports.svg')
-    logo_base64 = ''
+    logo_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'Images', 'European Sports-01.jpg')
+    
+    # Check if logo exists and get absolute path
+    logo_html = '🏆'  # Default fallback
     if os.path.exists(logo_path):
-        with open(logo_path, 'rb') as f:
-            logo_data = f.read()
-            logo_base64 = base64.b64encode(logo_data).decode()
+        # Convert to absolute file URL for WeasyPrint
+        abs_logo_path = os.path.abspath(logo_path).replace('\\', '/')
+        logo_html = f'<img src="file:///{abs_logo_path}" alt="Logo" />'
+        print(f"Logo path: {abs_logo_path}")
+    else:
+        print(f"Logo file not found: {logo_path}")
 
     html_content = f"""
     <!DOCTYPE html>
@@ -570,10 +574,11 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             .logo {{
                 margin: 2px 0;
                 text-align: center;
+                font-size: 32px;
             }}
             .logo img {{
-                max-width: 60px;
-                max-height: 60px;
+                max-width: 50px;
+                max-height: 50px;
                 display: block;
                 margin: 0 auto;
             }}
@@ -653,7 +658,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
     <body>
         <div class="header">
             <div class="logo">
-                <img src="data:image/svg+xml;base64,{logo_base64}" alt="Logo" />
+                {logo_html}
             </div>
             <h1>EUROPEAN SPORTS</h1>
             <p class="contact">Contact: 0315-2263745</p>
