@@ -556,11 +556,11 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
         <meta charset="UTF-8">
         <style>
             @page {{
-                size: 250px 1000px;
+                size: 300px 1000px;
                 margin: 0;
             }}
             body {{
-                width: 250px;
+                width: 300px;
                 font-family: Arial, Helvetica, sans-serif;
                 font-size: 12px;
                 margin: 0;
