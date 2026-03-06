@@ -564,14 +564,16 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
                 font-family: Arial, Helvetica, sans-serif;
                 font-size: 12px;
                 margin: 0;
-                padding: 3px;
+                padding: 8px 5px;
                 box-sizing: border-box;
+                line-height: 1.5;
             }}
             .header {{
                 text-align: center;
-                margin-bottom: 5px;
+                margin-bottom: 10px;
                 border-bottom: 2px solid #000;
-                padding-bottom: 5px;
+                padding-bottom: 10px;
+                padding-top: 5px;
             }}
             .header h1 {{
                 font-size: 16px;
@@ -581,28 +583,28 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
                 letter-spacing: 1px;
             }}
             .logo {{
-                margin: 5px 0;
+                margin: 8px 0;
                 text-align: center;
             }}
             .logo svg {{
-                max-width: 80px;
-                max-height: 80px;
+                max-width: 70px;
+                max-height: 70px;
                 width: auto;
                 height: auto;
                 display: block;
                 margin: 0 auto;
             }}
             .contact {{
-                font-size: 11px;
-                margin: 1px 0;
-                font-weight: 500;
+                font-size: 10px;
+                margin: 3px 0;
                 text-align: center;
             }}
             .info {{
                 font-size: 10px;
-                margin: 6px 0;
-                border-bottom: 1px dashed #000;
-                padding-bottom: 6px;
+                margin: 8px 0;
+                border-bottom: 2px solid #000;
+                padding-bottom: 8px;
+                padding-top: 5px;
             }}
             .info p {{
                 margin: 3px 0;
@@ -613,30 +615,32 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             }}
             .duplicate {{
                 text-align: center;
-                font-size: 14px;
+                font-size: 12px;
                 font-weight: bold;
-                margin: 4px 0;
+                margin: 8px 0;
                 border-bottom: 2px solid #000;
-                padding-bottom: 4px;
+                padding-bottom: 8px;
+                padding-top: 5px;
                 letter-spacing: 1px;
             }}
             table {{
                 width: 100%;
                 border-collapse: collapse;
-                font-size: 11px;
-                font-weight: 500;
+                font-size: 10px;
+                margin: 8px 0;
             }}
             th {{
                 border-top: 2px solid #000;
                 border-bottom: 2px solid #000;
-                font-size: 12px;
-                padding: 2px 1px;
+                font-size: 10px;
+                font-weight: 600;
+                padding: 5px 2px;
                 text-align: left;
                 font-weight: 500;
             }}
             td {{
                 font-size: 10px;
-                padding: 2px 1px;
+                padding: 5px 2px;
                 vertical-align: top;
                 text-align: center;
                 border-bottom: 1px dashed #000;
@@ -666,31 +670,34 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             .text-right {{ text-align: right; }}
             .totals {{
                 border-top: 2px solid #000;
-                margin-top: 5px;
-                padding-top: 4px;
+                margin-top: 10px;
+                padding-top: 8px;
+                padding-bottom: 5px;
             }}
             .total-row {{
                 font-weight: bold;
                 font-size: 11px;
-                margin: 2px 0;
+                margin: 4px 0;
             }}
             .payment {{
                 border-top: 2px solid #000;
-                margin-top: 5px;
+                margin-top: 10px;
                 padding-top: 4px;
+                padding-bottom: 4px;
                 text-align: center;
                 font-size: 10px;
                 font-weight: bold;
             }}
             .footer {{
                 border-top: 2px solid #000;
-                margin-top: 5px;
-                padding-top: 4px;
+                margin-top: 10px;
+                padding-top: 8px;
+                padding-bottom: 8px;
                 text-align: center;
                 font-size: 9px;
             }}
             .footer p {{
-                margin: 2px 0;
+                margin: 4px 0;
                 font-weight: bold;
             }}
         </style>
