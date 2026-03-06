@@ -532,48 +532,125 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
     <head>
         <meta charset="UTF-8">
         <style>
-            @page {{ size: A4; margin: 10mm; }}
-            body {{ font-family: Arial, sans-serif; font-size: 12px; }}
-            h1 {{ text-align: center; color: #333; }}
-            table {{ width: 100%; border-collapse: collapse; }}
-            th, td {{ border: 1px solid #000; padding: 8px; text-align: left; }}
-            th {{ background-color: #444; color: white; }}
-            .total {{ font-weight: bold; font-size: 14px; }}
+            @page {{
+                size: 216px 1000px;
+                margin: 0;
+            }}
+            body {{
+                width: 216px;
+                font-family: "Courier New", Courier, monospace;
+                font-size: 10px;
+                margin: 0;
+                padding: 8px;
+            }}
+            .header {{
+                text-align: center;
+                margin-bottom: 4px;
+            }}
+            .header h1 {{
+                font-size: 13px;
+                margin: 0;
+                font-weight: bold;
+            }}
+            .info {{
+                font-size: 9px;
+                margin: 2px 0;
+            }}
+            .info p {{
+                margin: 1px 0;
+            }}
+            .team {{
+                text-align: center;
+                font-size: 9px;
+                margin: 2px 0;
+            }}
+            table {{
+                width: 100%;
+                border-collapse: collapse;
+            }}
+            th {{
+                border-top: 1px dashed black;
+                border-bottom: 1px dashed black;
+                font-size: 9px;
+                padding: 2px 0;
+                text-align: left;
+                font-weight: bold;
+            }}
+            td {{
+                font-size: 9px;
+                padding: 1px 0;
+            }}
+            .text-center {{ text-align: center; }}
+            .text-right {{ text-align: right; }}
+            .totals {{
+                border-top: 1px dashed black;
+                margin-top: 4px;
+                padding-top: 3px;
+            }}
+            .total-row {{
+                font-weight: bold;
+                font-size: 10px;
+                margin: 1px 0;
+            }}
+            .footer {{
+                border-top: 1px dashed black;
+                margin-top: 4px;
+                padding-top: 3px;
+                text-align: center;
+                font-size: 8px;
+            }}
         </style>
     </head>
     <body>
-        <h1>INVOICE</h1>
-        <p><strong>Bill No:</strong> {invoice_no}</p>
-        <p><strong>Date:</strong> {current_date}</p>
-        <p><strong>Customer:</strong> {customer_name}</p>
+        <div class="header">
+            <h1>INVOICE</h1>
+        </div>
+        <div class="info">
+            <p><strong>Bill:</strong> {invoice_no}</p>
+            <p><strong>Date:</strong> {current_date}</p>
+            <p><strong>Cust:</strong> {customer_name}</p>
+        </div>
         {team_line}
         <table>
             <thead>
-                <tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th></tr>
+                <tr>
+                    <th style="width: 45%;">Item</th>
+                    <th style="width: 15%;" class="text-center">Qty</th>
+                    <th style="width: 18%;" class="text-right">Price</th>
+                    <th style="width: 22%;" class="text-right">Total</th>
+                </tr>
             </thead>
             <tbody>
                 {items_rows}
             </tbody>
         </table>
-        <p class="total">Total: {total_amount:.0f}</p>
-        <p class="total">Paid: {amount_paid:.0f}</p>
-        <p class="total">Balance: {balance_due:.0f}</p>
-        <p>Payment: {payment_method.upper()} | Status: {payment_status.upper()}</p>
+        <div class="totals">
+            <p class="total-row">Total: {total_amount:.0f}</p>
+            <p class="total-row">Paid: {amount_paid:.0f}</p>
+            <p class="total-row">Bal: {balance_due:.0f}</p>
+        </div>
+        <div class="footer">
+            <p>{payment_method.upper()} | {payment_status.upper()}</p>
+        </div>
     </body>
     </html>
     """
 
-    # Generate PDF using weasyprint (same as customers.py)
+    # Generate PDF using weasyprint
     try:
-        from weasyprint import HTML
-        pdf_doc = HTML(string=html_content)
-        pdf_bytes = pdf_doc.write_pdf()
+        from weasyprint import HTML, CSS
+        
+        # Create HTML document
+        html_doc = HTML(string=html_content)
+        
+        # Write PDF with custom page size (57mm = 216 CSS pixels at 96 DPI)
+        pdf_bytes = html_doc.write_pdf()
         encoded_pdf = base64.b64encode(pdf_bytes).decode()
         print(f"PDF generated, length: {len(encoded_pdf)}")
     except Exception as e:
         print(f"weasyprint failed: {e}")
-        # Fallback
-        encoded_pdf = base64.b64encode(b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>\nendobj\nxref\n0 4\ntrailer\n<< /Size 4 /Root 1 0 R >>\n%%EOF").decode()
+        # Fallback - narrow page (57mm approx = 216px width, height auto)
+        encoded_pdf = base64.b64encode(b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 216 400] >>\nendobj\nxref\n0 4\ntrailer\n<< /Size 4 /Root 1 0 R >>\n%%EOF").decode()
 
     return encoded_pdf  # Return string, NOT Response
 
