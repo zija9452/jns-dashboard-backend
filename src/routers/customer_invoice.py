@@ -517,28 +517,37 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
     # Create simple HTML for PDF (same pattern as customers.py)
     items_rows = ""
     for item in items[:10]:
-        name = str(item.get('product_name', ''))[:20]
+        name = str(item.get('product_name', ''))[:30]
         qty = int(item.get('quantity', 0))
         price = float(item.get('unit_price', 0))
+        disc = float(item.get('discount', 0))
         total = float(item.get('total_price', 0))
-        items_rows += f"<tr><td>{name}</td><td>{qty}</td><td>{price:.0f}</td><td>{total:.0f}</td></tr>\n"
+        items_rows += f'<tr><td style="width: 40%; border-bottom: 1px dashed #000; padding: 2px;"><div style="font-weight: bold; margin-bottom: 3px;">{name}</div></td><td style="width: 15%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{price:.0f}</td><td style="width: 12%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{qty}</td><td style="width: 13%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{disc:.0f}</td><td style="width: 20%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{total:.0f}</td></tr>\n'
 
     current_date = created_at.strftime('%d-%m-%Y %I:%M %p')
     team_line = f"<p>Team: {team_name}</p>" if team_name else ""
 
-    # Logo path - using JPG for better WeasyPrint compatibility
+    # Logo - use SVG for better WeasyPrint compatibility
     import os
-    logo_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'Images', 'European Sports-01.jpg')
+    logo_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+        'Images',
+        'European Sports.svg'
+    )
     
-    # Check if logo exists and get absolute path
     logo_html = '🏆'  # Default fallback
-    if os.path.exists(logo_path):
-        # Convert to absolute file URL for WeasyPrint
-        abs_logo_path = os.path.abspath(logo_path).replace('\\', '/')
-        logo_html = f'<img src="file:///{abs_logo_path}" alt="Logo" />'
-        print(f"Logo path: {abs_logo_path}")
-    else:
-        print(f"Logo file not found: {logo_path}")
+    try:
+        if os.path.exists(logo_path):
+            with open(logo_path, 'r', encoding='utf-8') as f:
+                svg_content = f.read()
+                # Embed SVG directly in HTML
+                logo_html = f'<div style="text-align:center;margin:5px 0;">{svg_content}</div>'
+                print(f"✓ SVG Logo loaded ({len(svg_content)} chars)")
+        else:
+            print(f"✗ SVG Logo file not found: {logo_path}")
+    except Exception as e:
+        print(f"✗ Logo load error: {e}")
+        logo_html = '🏆'
 
     html_content = f"""
     <!DOCTYPE html>
@@ -547,13 +556,13 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
         <meta charset="UTF-8">
         <style>
             @page {{
-                size: 216px 1000px;
+                size: 250px 1000px;
                 margin: 0;
             }}
             body {{
-                width: 216px;
+                width: 250px;
                 font-family: Arial, Helvetica, sans-serif;
-                font-size: 10px;
+                font-size: 12px;
                 margin: 0;
                 padding: 3px;
                 box-sizing: border-box;
@@ -572,33 +581,39 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
                 letter-spacing: 1px;
             }}
             .logo {{
-                margin: 2px 0;
+                margin: 5px 0;
                 text-align: center;
-                font-size: 32px;
             }}
-            .logo img {{
-                max-width: 50px;
-                max-height: 50px;
+            .logo svg {{
+                max-width: 80px;
+                max-height: 80px;
+                width: auto;
+                height: auto;
                 display: block;
                 margin: 0 auto;
             }}
             .contact {{
-                font-size: 9px;
+                font-size: 11px;
                 margin: 1px 0;
+                font-weight: 500;
                 text-align: center;
             }}
             .info {{
-                font-size: 9px;
-                margin: 4px 0;
+                font-size: 10px;
+                margin: 6px 0;
                 border-bottom: 1px dashed #000;
-                padding-bottom: 4px;
+                padding-bottom: 6px;
             }}
             .info p {{
-                margin: 2px 0;
+                margin: 3px 0;
+                font-weight: normal;
+            }}
+            .info strong {{
+                font-weight: 600;
             }}
             .duplicate {{
                 text-align: center;
-                font-size: 11px;
+                font-size: 14px;
                 font-weight: bold;
                 margin: 4px 0;
                 border-bottom: 2px solid #000;
@@ -608,19 +623,44 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             table {{
                 width: 100%;
                 border-collapse: collapse;
-                font-size: 9px;
+                font-size: 11px;
+                font-weight: 500;
             }}
             th {{
                 border-top: 2px solid #000;
                 border-bottom: 2px solid #000;
-                font-size: 8px;
+                font-size: 12px;
                 padding: 2px 1px;
                 text-align: left;
-                font-weight: bold;
+                font-weight: 500;
             }}
             td {{
-                font-size: 9px;
-                padding: 1px 1px;
+                font-size: 10px;
+                padding: 2px 1px;
+                vertical-align: top;
+                text-align: center;
+                border-bottom: 1px dashed #000;
+            }}
+            td:first-child {{
+                text-align: left;
+            }}
+            .item-name {{
+                font-weight: bold;
+                display: block;
+                width: 100%;
+            }}
+            .item-values {{
+                display: flex;
+                justify-content: space-around;
+                width: 100%;
+                margin-top: 2px;
+                padding-top: 2px;
+                border-top: 1px dashed #000;
+            }}
+            .item-value {{
+                text-align: center;
+                min-width: 45px;
+                flex: 1;
             }}
             .text-center {{ text-align: center; }}
             .text-right {{ text-align: right; }}
