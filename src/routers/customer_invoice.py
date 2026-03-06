@@ -538,24 +538,26 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             }}
             body {{
                 width: 216px;
-                font-family: "Courier New", Courier, monospace;
-                font-size: 10px;
+                font-family: Arial, Helvetica, sans-serif;
+                font-size: 11px;
                 margin: 0;
-                padding: 4px;
+                padding: 5px;
             }}
             .header {{
                 text-align: center;
-                margin-bottom: 4px;
-                border-bottom: 1px dashed #000;
-                padding-bottom: 4px;
+                margin-bottom: 5px;
+                border-bottom: 2px solid #000;
+                padding-bottom: 5px;
             }}
             .header h1 {{
-                font-size: 12px;
+                font-size: 16px;
                 margin: 0;
                 font-weight: bold;
+                text-transform: uppercase;
+                letter-spacing: 1px;
             }}
             .logo {{
-                font-size: 16px;
+                font-size: 20px;
                 margin: 2px 0;
             }}
             .contact {{
@@ -565,63 +567,64 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             }}
             .info {{
                 font-size: 9px;
-                margin: 3px 0;
+                margin: 4px 0;
                 border-bottom: 1px dashed #000;
-                padding-bottom: 3px;
+                padding-bottom: 4px;
             }}
             .info p {{
-                margin: 1px 0;
+                margin: 2px 0;
             }}
             .duplicate {{
                 text-align: center;
-                font-size: 10px;
+                font-size: 11px;
                 font-weight: bold;
-                margin: 3px 0;
-                border-bottom: 1px dashed #000;
-                padding-bottom: 3px;
+                margin: 4px 0;
+                border-bottom: 2px solid #000;
+                padding-bottom: 4px;
+                letter-spacing: 1px;
             }}
             table {{
                 width: 100%;
                 border-collapse: collapse;
             }}
             th {{
-                border-top: 1px dashed black;
-                border-bottom: 1px dashed black;
-                font-size: 8px;
-                padding: 2px 0;
+                border-top: 2px solid #000;
+                border-bottom: 2px solid #000;
+                font-size: 9px;
+                padding: 3px 2px;
                 text-align: left;
                 font-weight: bold;
             }}
             td {{
-                font-size: 9px;
-                padding: 1px 0;
+                font-size: 10px;
+                padding: 2px 2px;
             }}
             .text-center {{ text-align: center; }}
             .text-right {{ text-align: right; }}
             .totals {{
-                border-top: 1px dashed black;
-                margin-top: 3px;
-                padding-top: 3px;
+                border-top: 2px solid #000;
+                margin-top: 5px;
+                padding-top: 4px;
             }}
             .total-row {{
                 font-weight: bold;
-                font-size: 10px;
-                margin: 1px 0;
+                font-size: 11px;
+                margin: 2px 0;
             }}
             .payment {{
-                border-top: 1px dashed black;
-                margin-top: 3px;
-                padding-top: 3px;
+                border-top: 2px solid #000;
+                margin-top: 5px;
+                padding-top: 4px;
                 text-align: center;
-                font-size: 9px;
+                font-size: 10px;
                 font-weight: bold;
             }}
             .footer {{
-                border-top: 1px dashed black;
-                margin-top: 3px;
-                padding-top: 3px;
+                border-top: 2px solid #000;
+                margin-top: 5px;
+                padding-top: 4px;
                 text-align: center;
-                font-size: 8px;
+                font-size: 9px;
             }}
             .footer p {{
                 margin: 2px 0;
@@ -646,11 +649,11 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
         <table>
             <thead>
                 <tr>
-                    <th style="width: 40%;">Item</th>
-                    <th style="width: 18%;" class="text-right">Price</th>
+                    <th style="width: 38%;">Item</th>
+                    <th style="width: 16%;" class="text-right">Price</th>
                     <th style="width: 12%;" class="text-center">Qty</th>
                     <th style="width: 12%;" class="text-right">Disc</th>
-                    <th style="width: 18%;" class="text-right">Amount</th>
+                    <th style="width: 22%;" class="text-right">Amount</th>
                 </tr>
             </thead>
             <tbody>
