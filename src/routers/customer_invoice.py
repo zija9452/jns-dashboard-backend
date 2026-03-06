@@ -541,28 +541,44 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
                 font-family: "Courier New", Courier, monospace;
                 font-size: 10px;
                 margin: 0;
-                padding: 8px;
+                padding: 4px;
             }}
             .header {{
                 text-align: center;
                 margin-bottom: 4px;
+                border-bottom: 1px dashed #000;
+                padding-bottom: 4px;
             }}
             .header h1 {{
-                font-size: 13px;
+                font-size: 12px;
                 margin: 0;
                 font-weight: bold;
             }}
+            .logo {{
+                font-size: 16px;
+                margin: 2px 0;
+            }}
+            .contact {{
+                font-size: 9px;
+                margin: 1px 0;
+                text-align: center;
+            }}
             .info {{
                 font-size: 9px;
-                margin: 2px 0;
+                margin: 3px 0;
+                border-bottom: 1px dashed #000;
+                padding-bottom: 3px;
             }}
             .info p {{
                 margin: 1px 0;
             }}
-            .team {{
+            .duplicate {{
                 text-align: center;
-                font-size: 9px;
-                margin: 2px 0;
+                font-size: 10px;
+                font-weight: bold;
+                margin: 3px 0;
+                border-bottom: 1px dashed #000;
+                padding-bottom: 3px;
             }}
             table {{
                 width: 100%;
@@ -571,7 +587,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             th {{
                 border-top: 1px dashed black;
                 border-bottom: 1px dashed black;
-                font-size: 9px;
+                font-size: 8px;
                 padding: 2px 0;
                 text-align: left;
                 font-weight: bold;
@@ -584,7 +600,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             .text-right {{ text-align: right; }}
             .totals {{
                 border-top: 1px dashed black;
-                margin-top: 4px;
+                margin-top: 3px;
                 padding-top: 3px;
             }}
             .total-row {{
@@ -592,32 +608,49 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
                 font-size: 10px;
                 margin: 1px 0;
             }}
+            .payment {{
+                border-top: 1px dashed black;
+                margin-top: 3px;
+                padding-top: 3px;
+                text-align: center;
+                font-size: 9px;
+                font-weight: bold;
+            }}
             .footer {{
                 border-top: 1px dashed black;
-                margin-top: 4px;
+                margin-top: 3px;
                 padding-top: 3px;
                 text-align: center;
                 font-size: 8px;
+            }}
+            .footer p {{
+                margin: 2px 0;
+                font-weight: bold;
             }}
         </style>
     </head>
     <body>
         <div class="header">
-            <h1>INVOICE</h1>
+            <div class="logo">🏆</div>
+            <h1>EUROPEAN SPORTS</h1>
+            <p class="contact">Contact: 0315-2263745</p>
+            <p class="contact">Shop#8, Mazar Wali Gali, Light House, Khi</p>
         </div>
         <div class="info">
-            <p><strong>Bill:</strong> {invoice_no}</p>
             <p><strong>Date:</strong> {current_date}</p>
-            <p><strong>Cust:</strong> {customer_name}</p>
+            <p><strong>Bill No:</strong> {invoice_no}</p>
+            <p><strong>User:</strong> Admin | <strong>Name:</strong> {customer_name}</p>
+            <p><strong>Ph:</strong> 00 | <strong>Remarks:</strong> 0</p>
         </div>
-        {team_line}
+        <div class="duplicate">*** DUPLICATE BILL ***</div>
         <table>
             <thead>
                 <tr>
-                    <th style="width: 45%;">Item</th>
-                    <th style="width: 15%;" class="text-center">Qty</th>
+                    <th style="width: 40%;">Item</th>
                     <th style="width: 18%;" class="text-right">Price</th>
-                    <th style="width: 22%;" class="text-right">Total</th>
+                    <th style="width: 12%;" class="text-center">Qty</th>
+                    <th style="width: 12%;" class="text-right">Disc</th>
+                    <th style="width: 18%;" class="text-right">Amount</th>
                 </tr>
             </thead>
             <tbody>
@@ -625,12 +658,19 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             </tbody>
         </table>
         <div class="totals">
-            <p class="total-row">Total: {total_amount:.0f}</p>
-            <p class="total-row">Paid: {amount_paid:.0f}</p>
-            <p class="total-row">Bal: {balance_due:.0f}</p>
+            <p class="total-row">Total Bill: {total_amount:.0f}</p>
+            <p class="total-row">Amount Paid: {amount_paid:.0f}</p>
+            <p class="total-row">Balance: {balance_due:.0f}</p>
+            <p class="total-row">Item Discount: 0</p>
+            <p class="total-row">Total Discount(Rs): {total_discount:.0f}</p>
+            <p class="total-row">Grand Total: {total_amount:.0f}</p>
+        </div>
+        <div class="payment">
+            <p>Payment Mode: {payment_method.upper()}</p>
         </div>
         <div class="footer">
-            <p>{payment_method.upper()} | {payment_status.upper()}</p>
+            <p>Thankyou For Shopping. Come Again.</p>
+            <p>No Return No Exchange Without Bill</p>
         </div>
     </body>
     </html>
