@@ -574,7 +574,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
                 padding-bottom: 5px;
             }}
             .header h1 {{
-                font-size: 14px;
+                font-size: 16px;
                 margin: 2px 0;
                 font-weight: bold;
                 text-transform: uppercase;
