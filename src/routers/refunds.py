@@ -5,7 +5,7 @@ from uuid import UUID
 import uuid
 import json
 import base64
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
@@ -203,7 +203,7 @@ async def create_refund(
 
         # Update invoice amounts
         invoice.amount_paid = remaining_amount_paid
-        invoice.updated_at = datetime.now()
+        invoice.updated_at = datetime.now(timezone.utc)
 
         await db.commit()
 
@@ -303,8 +303,8 @@ async def update_refund(
         if hasattr(refund, field):
             setattr(refund, field, value)
 
-    # Update timestamp
-    refund.updated_at = datetime.now()
+    # Update timestamp with timezone-aware datetime
+    refund.updated_at = datetime.now(timezone.utc)
 
     await db.commit()
     await db.refresh(refund)

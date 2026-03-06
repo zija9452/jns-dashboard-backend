@@ -2,7 +2,8 @@ from sqlmodel import SQLModel, Field, Relationship
 from sqlalchemy import Column, Numeric
 from typing import Optional
 from decimal import Decimal
-from datetime import datetime
+from datetime import datetime, timezone
+from pydantic import field_validator
 import uuid
 import json
 from enum import Enum
@@ -17,8 +18,8 @@ class Refund(SQLModel, table=True):
     amount: Decimal = Field(sa_column=Column(Numeric(10, 2), nullable=False))
     reason: str  # Text field for reason
     processed_by: uuid.UUID = Field(foreign_key="users.id")
-    created_at: datetime = Field(default_factory=lambda: datetime.now())
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(), index=True)  # Last updated with index
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)  # Last updated with index
 
 class RefundRead(SQLModel):
     id: uuid.UUID
@@ -43,3 +44,20 @@ class RefundUpdate(SQLModel):
     reason: Optional[str] = None
     created_at: Optional[datetime] = None  # Allow updating the date of the refund
     updated_at: Optional[datetime] = None
+
+    @field_validator('created_at', 'updated_at', mode='before')
+    @classmethod
+    def normalize_datetime(cls, v):
+        if v is None:
+            return v
+        if isinstance(v, str):
+            # Parse ISO string and convert to UTC, removing timezone info
+            dt = datetime.fromisoformat(v.replace('Z', '+00:00'))
+            # Convert to naive datetime in UTC
+            if dt.tzinfo is not None:
+                dt = dt.replace(tzinfo=None)
+            return dt
+        if isinstance(v, datetime) and v.tzinfo is not None:
+            # Convert timezone-aware to naive UTC
+            return v.replace(tzinfo=None)
+        return v

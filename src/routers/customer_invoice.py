@@ -439,7 +439,6 @@ async def get_invoice_receipt(
     """
     from sqlalchemy import select
     import json
-    import base64
     from uuid import UUID
 
     try:
@@ -480,9 +479,8 @@ async def get_invoice_receipt(
         created_at=invoice.created_at
     )
 
-    encoded_pdf = base64.b64encode(pdf_content.encode()).decode()
-
-    return {"pdf": encoded_pdf}
+    # generate_simple_receipt_pdf already returns base64-encoded string, use directly
+    return {"pdf": pdf_content}
 
 
 def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, total_amount,
