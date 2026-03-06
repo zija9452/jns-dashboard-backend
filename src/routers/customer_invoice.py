@@ -488,6 +488,17 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
                                   payment_status, created_at):
     """Generate thermal receipt style PDF using weasyprint (same as customers.py)"""
     
+    # Simplify payment method name (e.g., "EasyPaisa Sir Yasir" -> "EasyPaisa")
+    display_payment_method = payment_method or "Cash"
+    if "easypaisa" in display_payment_method.lower():
+        display_payment_method = "EasyPaisa"
+    elif "faysal" in display_payment_method.lower():
+        display_payment_method = "Faysal Bank"
+    elif "cash" in display_payment_method.lower():
+        display_payment_method = "Cash"
+    elif "credit" in display_payment_method.lower():
+        display_payment_method = "Credit"
+
     # Format date
     date_str = created_at.strftime("%m-%d-%Y %I:%M %p")
     
@@ -750,7 +761,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             <p class="total-row"><span class="total-label">Grand Total:</span><span class="total-value">{total_amount:.0f}</span></p>
         </div>
         <div class="payment">
-            <p>Payment Mode: {payment_method.upper()}</p>
+            <p>Payment Mode: {display_payment_method}</p>
         </div>
         <div class="footer">
             <p>Thankyou For Shopping. Come Again.</p>
