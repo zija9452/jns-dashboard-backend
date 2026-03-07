@@ -485,7 +485,7 @@ async def get_invoice_receipt(
 
 def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, total_amount,
                                   total_discount, amount_paid, balance_due, payment_method,
-                                  payment_status, created_at):
+                                  payment_status, created_at, bill_type: str = "SALE RECEIPT"):
     """Generate thermal receipt style PDF using weasyprint (same as customers.py)"""
     
     # Simplify payment method name (e.g., "EasyPaisa Sir Yasir" -> "EasyPaisa")
@@ -737,7 +737,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             <p><strong>User:</strong> Admin | <strong>Name:</strong> {customer_name}</p>
             <p><strong>Ph:</strong> 00 | <strong>Remarks:</strong> 0</p>
         </div>
-        <div class="duplicate">*** SALE RECEIPT ***</div>
+        <div class="duplicate">*** {bill_type} ***</div>
         <table>
             <thead>
                 <tr>

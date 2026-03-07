@@ -1213,9 +1213,6 @@ def generate_walkin_receipt_pdf(invoice_no, customer_name, team_name, items, tot
         print(f"✗ Logo load error: {e}")
         logo_html = '🏆'
 
-    # Dynamic bill type styling
-    bill_type_color = "red" if bill_type == "DUPLICATE BILL" else "black"
-
     html_content = f"""
     <!DOCTYPE html>
     <html>
@@ -1285,7 +1282,7 @@ def generate_walkin_receipt_pdf(invoice_no, customer_name, team_name, items, tot
                 font-size: 14px;
                 font-weight: bold;
                 margin: 8px 0;
-                border-bottom: 2px solid {bill_type_color};
+                border-bottom: 2px solid #000;
                 padding-bottom: 6px;
                 padding-top: 3px;
                 letter-spacing: 1px;
