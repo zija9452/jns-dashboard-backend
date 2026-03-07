@@ -626,12 +626,12 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             }}
             .duplicate {{
                 text-align: center;
-                font-size: 12px;
+                font-size: 14px;
                 font-weight: bold;
                 margin: 8px 0;
                 border-bottom: 2px solid #000;
-                padding-bottom: 8px;
-                padding-top: 5px;
+                padding-bottom: 6px;
+                padding-top: 3px;
                 letter-spacing: 1px;
             }}
             table {{
@@ -701,16 +701,16 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             }}
             .payment {{
                 border-top: 2px solid #000;
-                margin-top: 10px;
-                padding-top: 4px;
-                padding-bottom: 4px;
+                margin-top: 8px;
+                padding-top: 2px;
+                padding-bottom: 0px;
                 text-align: center;
                 font-size: 10px;
                 font-weight: bold;
             }}
             .footer {{
                 border-top: 2px solid #000;
-                margin-top: 10px;
+                margin-top: 8px;
                 padding-top: 8px;
                 padding-bottom: 8px;
                 text-align: center;
@@ -737,7 +737,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             <p><strong>User:</strong> Admin | <strong>Name:</strong> {customer_name}</p>
             <p><strong>Ph:</strong> 00 | <strong>Remarks:</strong> 0</p>
         </div>
-        <div class="duplicate">*** DUPLICATE BILL ***</div>
+        <div class="duplicate">*** SALE RECEIPT ***</div>
         <table>
             <thead>
                 <tr>
@@ -754,11 +754,12 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
         </table>
         <div class="totals">
             <p class="total-row"><span class="total-label">Total Bill:</span><span class="total-value">{total_amount:.0f}</span></p>
-            <p class="total-row"><span class="total-label">Amount Paid:</span><span class="total-value">{amount_paid:.0f}</span></p>
-            <p class="total-row"><span class="total-label">Balance:</span><span class="total-value">{balance_due:.0f}</span></p>
             <p class="total-row"><span class="total-label">Item Discount:</span><span class="total-value">0</span></p>
             <p class="total-row"><span class="total-label">Total Discount(Rs):</span><span class="total-value">{total_discount:.0f}</span></p>
             <p class="total-row"><span class="total-label">Grand Total:</span><span class="total-value">{total_amount:.0f}</span></p>
+            <p class="total-row"><span class="total-label">Amount Paid:</span><span class="total-value">{amount_paid:.0f}</span></p>
+            <p class="total-row"><span class="total-label">Balance:</span><span class="total-value">-{balance_due:.0f}</span></p>
+            
         </div>
         <div class="payment">
             <p>Payment Mode: {display_payment_method}</p>
