@@ -32,20 +32,23 @@ async def create_walkin_invoice(
     """
     # Extract data from request body
     order_items = request_data.get('items', [])
-    customer_id = request_data.get('customer_id')  # Customer ID with foreign key reference
-    salesman_id = request_data.get('salesman_id')  # Salesman ID with foreign key reference (optional)
+    customer_id = request_data.get('customer_id')
+    salesman_id = request_data.get('salesman_id')
     payment_method = request_data.get('payment_method', 'cash')
-    # Parse payment_date - can be string or datetime
+    
+    # Get date from frontend, combine with PC current time
     payment_date_str = request_data.get('payment_date', datetime.now().isoformat())
-    if isinstance(payment_date_str, str):
-        try:
-            payment_date = datetime.fromisoformat(payment_date_str)
-        except ValueError:
-            # Handle date-only strings like "2026-02-26"
-            payment_date = datetime.combine(datetime.fromisoformat(payment_date_str).date(), datetime.min.time())
-    else:
-        payment_date = payment_date_str
-    manual_discount = float(request_data.get('manual_discount', 0))  # Additional discount at payment time
+    
+    # Parse date and combine with current time
+    selected_date = datetime.fromisoformat(payment_date_str).date()
+    current_time = datetime.now().time()
+    payment_date = datetime.combine(selected_date, current_time)
+    
+    print(f"📅 Selected Date: {selected_date}")
+    print(f"⏰ Current Time: {current_time}")
+    print(f"✅ Payment DateTime: {payment_date}")
+    
+    manual_discount = float(request_data.get('manual_discount', 0))
     notes = request_data.get('notes', '')
 
     # Validate that order items exist
@@ -222,39 +225,46 @@ async def create_walkin_invoice(
         # Create invoice object
         invoice_obj = Invoice(
             invoice_no=invoice_no,
-            customer_id=customer_id if customer_id else None,  # Customer ID with foreign key reference
-            customer_name=customer_name,  # Customer name
-            salesman_id=salesman_id if salesman_id else None,  # Salesman ID with foreign key reference (optional)
+            customer_id=customer_id if customer_id else None,
+            customer_name=customer_name,
+            salesman_id=salesman_id if salesman_id else None,
             items=json.dumps(items_list),
             totals=json.dumps({
-                "subtotal": float(total_amount),  # Original total before discounts
+                "subtotal": float(total_amount),
                 "tax": 0.0,
-                "discount": float(total_discount),  # Total discount amount (item + manual)
-                "total": float(total_amount),  # Original total before discount
-                "amount_paid": float(amount_paid),  # Amount actually paid (after discount)
-                "balance_due": 0.0,  # Always 0 for immediate payment
-                "payment_status": "paid"  # Always "paid" for immediate payment
+                "discount": float(total_discount),
+                "total": float(total_amount),
+                "amount_paid": float(amount_paid),
+                "balance_due": 0.0,
+                "payment_status": "paid"
             }),
-            total_amount=Decimal(str(total_amount)),  # Original total before discount
-            amount_paid=Decimal(str(amount_paid)),  # Amount actually paid
-            payment_status="paid",  # Always "paid" for immediate payment
+            total_amount=Decimal(str(total_amount)),
+            amount_paid=Decimal(str(amount_paid)),
+            payment_status="paid",
             payments_history=json.dumps([{
                 "amount": float(amount_paid),
                 "payment_method": payment_method,
                 "date": payment_date.isoformat() if hasattr(payment_date, 'isoformat') else str(payment_date),
                 "description": "Full payment at invoice creation"
             }]),
-            discounts=Decimal(str(total_discount)),  # Total discount amount
+            discounts=Decimal(str(total_discount)),
             payment_method=payment_method,
             payment_date=payment_date,  # Payment date
             notes=notes,
             created_by=current_user.id
         )
+        
+        # Debug log - before saving
+        print(f"💾 SAVING payment_date: {payment_date}")
+        print(f"💾 SAVING payment_date type: {type(payment_date)}")
 
         # Add to database
         db.add(invoice_obj)
         await db.commit()
         await db.refresh(invoice_obj)
+        
+        # Debug log - after saving
+        print(f"✅ SAVED payment_date: {invoice_obj.payment_date}")
 
         # Update daily_cash sales_amount for the payment date (payment method-wise)
         # Use amount_paid (actual amount received) instead of total_amount
@@ -524,7 +534,8 @@ async def get_walkin_invoices(
     if date:
         try:
             target_date = datetime.strptime(date, "%Y-%m-%d").date()
-            statement = statement.where(func.date(Invoice.created_at) == target_date)
+            # Use payment_date for accurate filtering (matches what user selects)
+            statement = statement.where(func.date(Invoice.payment_date) == target_date)
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -648,9 +659,10 @@ async def get_walkin_invoices_by_date(
             detail="Invalid date format. Use YYYY-MM-DD."
         )
 
-    # Query invoices created on the specific date
+    # Query invoices on the specific date
+    # Use payment_date for accurate filtering (matches what user selects)
     statement = select(Invoice).where(
-        func.date(Invoice.created_at) == target_date
+        func.date(Invoice.payment_date) == target_date
     )
 
     result = await db.execute(statement)
@@ -857,9 +869,10 @@ async def get_daily_invoice_report(
             detail="Invalid date format. Use YYYY-MM-DD."
         )
 
-    # Query invoices created on the specific date
+    # Query invoices on the specific date
+    # Use payment_date for accurate filtering (matches what user selects)
     statement = select(Invoice).where(
-        func.date(Invoice.created_at) == target_date
+        func.date(Invoice.payment_date) == target_date
     )
 
     result = await db.execute(statement)

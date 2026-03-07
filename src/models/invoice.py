@@ -29,7 +29,7 @@ class Invoice(SQLModel, table=True):
     payments_history: str = Field(default="[]")  # JSON array of payment records
     discounts: Optional[Decimal] = Field(default=0.00, sa_column=Column(Numeric(10, 2)))  # Total discount amount
     payment_method: str = Field(default="cash", index=True)  # Payment method used with index
-    payment_date: datetime = Field(default_factory=datetime.now, index=True)  # Payment date with index
+    payment_date: Optional[datetime] = Field(default=None, index=True)  # Payment date with index
     notes: Optional[str] = Field(default=None)
     created_by: uuid.UUID = Field(foreign_key="users.id", index=True)  # Who created the invoice with index
     created_at: datetime = Field(default_factory=datetime.now, index=True)  # When created with index

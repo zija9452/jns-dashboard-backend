@@ -37,11 +37,12 @@ async def get_walkin_invoices(
         raise HTTPException(status_code=400, detail="Invalid date format")
 
     # Query walk-in invoices (SIN- prefix)
+    # Use payment_date for accurate date filtering (matches what user selects)
     statement = select(Invoice).where(
         and_(
             Invoice.invoice_no.like("SIN-%"),
-            func.date(Invoice.created_at) >= from_date_obj,
-            func.date(Invoice.created_at) <= to_date_obj
+            func.date(Invoice.payment_date) >= from_date_obj,
+            func.date(Invoice.payment_date) <= to_date_obj
         )
     )
 
@@ -414,11 +415,12 @@ async def get_sales_summary(
     walkin_total_cost = 0.0
     
     # Query walk-in invoices (SIN- prefix) for the date range
+    # Use payment_date instead of created_at for accurate date filtering
     walkin_statement = select(Invoice).where(
         and_(
             Invoice.invoice_no.like("SIN-%"),
-            func.date(Invoice.created_at) >= from_date_obj,
-            func.date(Invoice.created_at) <= to_date_obj
+            func.date(Invoice.payment_date) >= from_date_obj,
+            func.date(Invoice.payment_date) <= to_date_obj
         )
     )
     walkin_result = await db.execute(walkin_statement)
@@ -543,16 +545,17 @@ async def get_walkin_invoices_pdf(
         raise HTTPException(status_code=400, detail="Invalid date format")
     
     # Query walk-in invoices
+    # Use payment_date for accurate date filtering (matches what user selects)
     statement = select(Invoice).where(
         and_(
             Invoice.invoice_no.like("SIN-%"),
-            func.date(Invoice.created_at) >= from_date_obj,
-            func.date(Invoice.created_at) <= to_date_obj
+            func.date(Invoice.payment_date) >= from_date_obj,
+            func.date(Invoice.payment_date) <= to_date_obj
         )
     )
     result = await db.execute(statement)
     invoices = result.scalars().all()
-    
+
     # Build invoice rows for PDF
     invoice_rows = ""
     total_amount = 0.0
@@ -753,16 +756,17 @@ async def get_walkin_invoices_excel(
         raise HTTPException(status_code=400, detail="Invalid date format")
     
     # Query walk-in invoices
+    # Use payment_date for accurate date filtering (matches what user selects)
     statement = select(Invoice).where(
         and_(
             Invoice.invoice_no.like("SIN-%"),
-            func.date(Invoice.created_at) >= from_date_obj,
-            func.date(Invoice.created_at) <= to_date_obj
+            func.date(Invoice.payment_date) >= from_date_obj,
+            func.date(Invoice.payment_date) <= to_date_obj
         )
     )
     result = await db.execute(statement)
     invoices = result.scalars().all()
-    
+
     # Create Excel workbook
     wb = Workbook()
     ws = wb.active
