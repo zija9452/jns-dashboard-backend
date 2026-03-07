@@ -298,63 +298,24 @@ async def create_walkin_invoice(
             db.add(new_daily_cash)
             await db.commit()
 
-        # Generate a PDF receipt as response
-        pdf_content = f"""%PDF-1.4
-1 0 obj
-<<
-/Type /Catalog
-/Pages 2 0 R
->>
-endobj
-2 0 obj
-<<
-/Type /Pages
-/Kids [3 0 R]
-/Count 1
->>
-endobj
-3 0 obj
-<<
-/Type /Page
-/Parent 2 0 R
-/MediaBox [0 0 612 792]
-/Contents 4 0 R
->>
-endobj
-4 0 obj
-<<
-/Length 200
->>
-stream
-BT
-/F1 16 Tf
-72 750 Td
-(Walk-in Invoice Receipt - {invoice_no}) Tj
-T* 15 -15 Td
-(Date: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}) Tj
-T* 15 -15 Td
-(Total Amount: ${float(total_amount):.2f}) Tj
-T* 15 -15 Td
-(Payment Method: {payment_method}) Tj
-T* 15 -15 Td
-(Status: PAID) Tj
-T* 15 -15 Td
-(Thank you for your purchase!) Tj
-ET
-endstream
-endobj
-xref
-0 5
-trailer
-<<
-/Size 5
-/Root 1 0 R
->>
-%%EOF"""
-
-        encoded_pdf = base64.b64encode(pdf_content.encode()).decode()
-
-        return encoded_pdf
+        # Generate PDF receipt using WeasyPrint (same as customer_invoice.py)
+        pdf_data = generate_walkin_receipt_pdf(
+            invoice_no=invoice_no,
+            customer_name=customer_name,
+            team_name="",  # No team for walk-in
+            items=items_list,
+            total_amount=float(total_amount),
+            total_discount=float(total_discount),
+            amount_paid=float(amount_paid),
+            balance_due=0.0,
+            payment_method=payment_method,
+            payment_status="paid",
+            created_at=payment_date,  # Use payment_date from request
+            bill_type="SALE RECEIPT"  # Show SALE RECEIPT for new invoices
+        )
+        
+        # Return PDF as JSON (same as customer_invoice.py)
+        return {"pdf": pdf_data}
     finally:
         # Release the advisory lock
         unlock_result = await db.execute(select(func.pg_advisory_unlock(123459)))
@@ -650,63 +611,24 @@ async def get_walkin_invoice_receipt(
     except:
         totals_data = {}
 
-    # Generate duplicate PDF receipt
-    pdf_content = f"""%PDF-1.4
-1 0 obj
-<<
-/Type /Catalog
-/Pages 2 0 R
->>
-endobj
-2 0 obj
-<<
-/Type /Pages
-/Kids [3 0 R]
-/Count 1
->>
-endobj
-3 0 obj
-<<
-/Type /Page
-/Parent 2 0 R
-/MediaBox [0 0 612 792]
-/Contents 4 0 R
->>
-endobj
-4 0 obj
-<<
-/Length 200
->>
-stream
-BT
-/F1 16 Tf
-72 750 Td
-(Duplicate Invoice Receipt - {invoice.invoice_no}) Tj
-T* 15 -15 Td
-(Date: {invoice.created_at.strftime("%Y-%m-%d %H:%M:%S")}) Tj
-T* 15 -15 Td
-(Total Amount: ${float(invoice.total_amount):.2f}) Tj
-T* 15 -15 Td
-(Amount Paid: ${float(invoice.amount_paid):.2f}) Tj
-T* 15 -15 Td
-(Payment Method: {invoice.payment_method}) Tj
-T* 15 -15 Td
-(Status: {invoice.payment_status.upper()}) Tj
-ET
-endstream
-endobj
-xref
-0 5
-trailer
-<<
-/Size 5
-/Root 1 0 R
->>
-%%EOF"""
-
-    encoded_pdf = base64.b64encode(pdf_content.encode()).decode()
-
-    return encoded_pdf
+    # Generate duplicate PDF receipt using WeasyPrint with "DUPLICATE BILL" text
+    pdf_data = generate_walkin_receipt_pdf(
+        invoice_no=invoice.invoice_no,
+        customer_name=invoice.customer_name,
+        team_name="",
+        items=items_data,
+        total_amount=float(invoice.total_amount),
+        total_discount=float(invoice.discounts or 0),
+        amount_paid=float(invoice.amount_paid),
+        balance_due=0.0,
+        payment_method=invoice.payment_method,
+        payment_status=invoice.payment_status,
+        created_at=invoice.created_at,
+        bill_type="DUPLICATE BILL"  # Show DUPLICATE BILL for duplicate requests
+    )
+    
+    # Return PDF as JSON (same as customer_invoice.py)
+    return {"pdf": pdf_data}
 
 
 @router.get("/date/{date_str}")
@@ -1222,3 +1144,275 @@ async def get_today_sales_report(
         "cash_in_hand": cash_in_hand,
         "has_opening": daily_cash is not None and daily_cash.total_opening > 0
     }
+
+
+def generate_walkin_receipt_pdf(invoice_no, customer_name, team_name, items, total_amount,
+                                  total_discount, amount_paid, balance_due, payment_method,
+                                  payment_status, created_at, bill_type: str = "SALE RECEIPT"):
+    """Generate thermal receipt style PDF using weasyprint (same as customer_invoice.py)"""
+
+    # Simplify payment method name (e.g., "EasyPaisa Sir Yasir" -> "EasyPaisa")
+    display_payment_method = payment_method or "Cash"
+    if "easypaisa" in display_payment_method.lower():
+        display_payment_method = "EasyPaisa"
+    elif "faysal" in display_payment_method.lower():
+        display_payment_method = "Faysal Bank"
+    elif "cash" in display_payment_method.lower():
+        display_payment_method = "Cash"
+    elif "credit" in display_payment_method.lower():
+        display_payment_method = "Credit"
+
+    # Format date
+    date_str = created_at.strftime("%m-%d-%Y %I:%M %p")
+
+    # Build items rows (same as customer_invoice.py)
+    items_rows = ""
+    for item in items[:10]:
+        name = str(item.get('product_name', ''))  # No truncation - show full name
+        qty = int(item.get('quantity', 0))
+        price = float(item.get('unit_price', 0))
+        disc = float(item.get('discount', 0))
+        total = float(item.get('total_price', 0))
+        items_rows += f'<tr><td style="width: 40%; border-bottom: 1px dashed #000; padding: 2px;"><div style="font-weight: bold; margin-bottom: 3px;">{name}</div></td><td style="width: 15%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{price:.0f}</td><td style="width: 12%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{qty}</td><td style="width: 13%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{disc:.0f}</td><td style="width: 20%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{total:.0f}</td></tr>\n'
+
+    current_date = created_at.strftime('%d-%m-%Y %I:%M %p')
+    team_line = f"<p>Team: {team_name}</p>" if team_name else ""
+
+    # Logo - use SVG for better WeasyPrint compatibility
+    import os
+    logo_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+        'Images',
+        'European Sports.svg'
+    )
+
+    logo_html = '🏆'  # Default fallback
+    try:
+        if os.path.exists(logo_path):
+            with open(logo_path, 'r', encoding='utf-8') as f:
+                svg_content = f.read()
+                # Embed SVG directly in HTML
+                logo_html = f'<div style="text-align:center;margin:5px 0;">{svg_content}</div>'
+                print(f"✓ SVG Logo loaded ({len(svg_content)} chars)")
+        else:
+            print(f"✗ SVG Logo file not found: {logo_path}")
+    except Exception as e:
+        print(f"✗ Logo load error: {e}")
+        logo_html = '🏆'
+
+    # Dynamic bill type styling
+    bill_type_color = "red" if bill_type == "DUPLICATE BILL" else "black"
+
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <style>
+            @page {{
+                size: 300px 1000px;
+                margin: 0;
+            }}
+            body {{
+                width: 300px;
+                font-family: Arial, Helvetica, sans-serif;
+                font-size: 12px;
+                margin: 0;
+                padding: 8px 5px;
+                box-sizing: border-box;
+                line-height: 1.5;
+            }}
+            .header {{
+                text-align: center;
+                margin-bottom: 10px;
+                border-bottom: 2px solid #000;
+                padding-bottom: 10px;
+                padding-top: 5px;
+            }}
+            .header h1 {{
+                font-size: 16px;
+                margin: 2px 0;
+                font-weight: bold;
+                text-transform: uppercase;
+                letter-spacing: 1px;
+            }}
+            .logo {{
+                margin: 8px 0;
+                text-align: center;
+            }}
+            .logo svg {{
+                max-width: 70px;
+                max-height: 70px;
+                width: auto;
+                height: auto;
+                display: block;
+                margin: 0 auto;
+            }}
+            .contact {{
+                font-size: 10px;
+                margin: 3px 0;
+                text-align: center;
+            }}
+            .info {{
+                font-size: 10px;
+                margin: 8px 0;
+                border-bottom: 2px solid #000;
+                padding-bottom: 8px;
+                padding-top: 5px;
+            }}
+            .info p {{
+                margin: 3px 0;
+                font-weight: normal;
+            }}
+            .info strong {{
+                font-weight: 600;
+            }}
+            .duplicate {{
+                text-align: center;
+                font-size: 14px;
+                font-weight: bold;
+                margin: 8px 0;
+                border-bottom: 2px solid {bill_type_color};
+                padding-bottom: 6px;
+                padding-top: 3px;
+                letter-spacing: 1px;
+            }}
+            table {{
+                width: 100%;
+                border-collapse: collapse;
+                font-size: 10px;
+                margin: 8px 0;
+            }}
+            th {{
+                border-top: 2px solid #000;
+                border-bottom: 2px solid #000;
+                font-size: 10px;
+                font-weight: 600;
+                padding: 5px 2px;
+                text-align: left;
+                font-weight: 500;
+            }}
+            td {{
+                font-size: 10px;
+                padding: 5px 2px;
+                vertical-align: top;
+                text-align: center;
+                border-bottom: 1px dashed #000;
+            }}
+            td:first-child {{
+                text-align: left;
+            }}
+            .item-name {{
+                font-weight: bold;
+                display: block;
+                width: 100%;
+            }}
+            .totals {{
+                border-top: 2px solid #000;
+                margin-top: 10px;
+                padding-top: 8px;
+                padding-bottom: 5px;
+            }}
+            .total-row {{
+                font-weight: bold;
+                font-size: 11px;
+                margin: 3px 0;
+            }}
+            .total-label {{
+                display: inline-block;
+                min-width: 160px;
+                font-weight: bold;
+            }}
+            .total-value {{
+                font-weight: bold;
+                text-align: right;
+            }}
+            .payment {{
+                border-top: 2px solid #000;
+                margin-top: 8px;
+                padding-top: 2px;
+                padding-bottom: 0px;
+                text-align: center;
+                font-size: 10px;
+                font-weight: bold;
+            }}
+            .footer {{
+                border-top: 2px solid #000;
+                margin-top: 8px;
+                padding-top: 8px;
+                padding-bottom: 8px;
+                text-align: center;
+                font-size: 9px;
+            }}
+            .footer p {{
+                margin: 4px 0;
+                font-weight: bold;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <div class="logo">
+                {logo_html}
+            </div>
+            <h1>EUROPEAN SPORTS</h1>
+            <p class="contact">Contact: 0315-2263745</p>
+            <p class="contact">Shop#8, Mazar Wali Gali, Light House, Khi</p>
+        </div>
+        <div class="info">
+            <p><strong>Date:</strong> {current_date}</p>
+            <p><strong>Bill No:</strong> {invoice_no}</p>
+            <p><strong>User:</strong> Admin | <strong>Name:</strong> {customer_name}</p>
+            <p><strong>Ph:</strong> 00 | <strong>Remarks:</strong> 0</p>
+        </div>
+        <div class="duplicate">*** {bill_type} ***</div>
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 35%;">Item</th>
+                    <th style="width: 15%;" class="text-right">Price</th>
+                    <th style="width: 12%;" class="text-center">Qty</th>
+                    <th style="width: 13%;" class="text-right">Disc</th>
+                    <th style="width: 25%;" class="text-right">Amount</th>
+                </tr>
+            </thead>
+            <tbody>
+                {items_rows}
+            </tbody>
+        </table>
+        <div class="totals">
+            <p class="total-row"><span class="total-label">Total Bill:</span><span class="total-value">{total_amount:.0f}</span></p>
+            <p class="total-row"><span class="total-label">Item Discount:</span><span class="total-value">0</span></p>
+            <p class="total-row"><span class="total-label">Total Discount(Rs):</span><span class="total-value">{total_discount:.0f}</span></p>
+            <p class="total-row"><span class="total-label">Grand Total:</span><span class="total-value">{total_amount - total_discount:.0f}</span></p>
+            <p class="total-row"><span class="total-label">Amount Paid:</span><span class="total-value">{amount_paid:.0f}</span></p>
+            <p class="total-row"><span class="total-label">Balance:</span><span class="total-value">{(total_amount - total_discount) - amount_paid:.0f}</span></p>
+        </div>
+        <div class="payment">
+            <p>Payment Mode: {display_payment_method}</p>
+        </div>
+        <div class="footer">
+            <p>Thankyou For Shopping. Come Again.</p>
+            <p>No Return No Exchange Without Bill</p>
+        </div>
+    </body>
+    </html>
+    """
+
+    # Generate PDF using weasyprint
+    try:
+        from weasyprint import HTML, CSS
+
+        # Create HTML document
+        html_doc = HTML(string=html_content)
+
+        # Write PDF with custom page size (57mm = 216 CSS pixels at 96 DPI)
+        pdf_bytes = html_doc.write_pdf()
+        encoded_pdf = base64.b64encode(pdf_bytes).decode()
+        print(f"Walk-in PDF generated, length: {len(encoded_pdf)}")
+    except Exception as e:
+        print(f"weasyprint failed: {e}")
+        # Fallback - narrow page (57mm approx = 216px width, height auto)
+        encoded_pdf = base64.b64encode(b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 216 400] >>\nendobj\nxref\n0 4\ntrailer\n<< /Size 4 /Root 1 0 R >>\n%%EOF").decode()
+
+    return encoded_pdf  # Return string, NOT Response
