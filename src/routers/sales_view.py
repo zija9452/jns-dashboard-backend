@@ -353,21 +353,40 @@ async def get_sales_summary(
     daily_cash = daily_cash_result.scalar_one_or_none()
     opening = float(daily_cash.total_opening) if daily_cash else 0.0
 
-    # Get total sales from daily_cash table (walk-in sales)
+    # Calculate WALK-IN SALES directly from Invoice table (NOT DailyCash)
+    # Query walk-in invoices (SIN- prefix) for the date range
     walkin_total_sales = 0.0
     walkin_cash_sales = 0.0
-
-    daily_cash_all = await db.execute(
-        select(DailyCash).where(
-            and_(
-                DailyCash.date >= from_date_obj,
-                DailyCash.date <= to_date_obj
-            )
+    walkin_total_cost = 0.0  # Calculate cost in same loop
+    
+    walkin_statement = select(Invoice).where(
+        and_(
+            Invoice.invoice_no.like("SIN-%"),
+            func.date(Invoice.payment_date) >= from_date_obj,
+            func.date(Invoice.payment_date) <= to_date_obj
         )
     )
-    for dc in daily_cash_all.scalars().all():
-        walkin_total_sales += float(dc.total_sales)
-        walkin_cash_sales += float(dc.cash_sales)
+    walkin_result = await db.execute(walkin_statement)
+    walkin_invoices_for_sales = walkin_result.scalars().all()
+
+    for inv in walkin_invoices_for_sales:
+        # Calculate sales
+        walkin_total_sales += float(inv.amount_paid)
+        if inv.payment_method.lower() == 'cash':
+            walkin_cash_sales += float(inv.amount_paid)
+        
+        # Calculate cost (70% of selling price, same as walk-in invoice display)
+        try:
+            items = json.loads(inv.items) if inv.items else []
+            for item in items:
+                quantity = item.get('quantity', 0)
+                unit_price = item.get('unit_price', 0)
+                item_discount = float(item.get('discount', 0))
+                item_total = quantity * unit_price - item_discount
+                item_cost = item_total * 0.7  # 70% cost
+                walkin_total_cost += item_cost
+        except:
+            continue
 
     # Get customer invoice payments in date range
     customer_statement = select(CustomerInvoice).where(
@@ -411,42 +430,13 @@ async def get_sales_summary(
         except:
             continue
 
-    # Calculate WALK-IN COST from invoice items (same as walk-in invoice display: 70% of selling price)
-    walkin_total_cost = 0.0
-    
-    # Query walk-in invoices (SIN- prefix) for the date range
-    # Use payment_date instead of created_at for accurate date filtering
-    walkin_statement = select(Invoice).where(
-        and_(
-            Invoice.invoice_no.like("SIN-%"),
-            func.date(Invoice.payment_date) >= from_date_obj,
-            func.date(Invoice.payment_date) <= to_date_obj
-        )
-    )
-    walkin_result = await db.execute(walkin_statement)
-    walkin_invoices = walkin_result.scalars().all()
-    
-    for inv in walkin_invoices:
-        try:
-            items = json.loads(inv.items) if inv.items else []
-            for item in items:
-                # Same calculation as walk-in invoice display (line 69)
-                quantity = item.get('quantity', 0)
-                unit_price = item.get('unit_price', 0)
-                item_discount = float(item.get('discount', 0))
-                item_total = quantity * unit_price - item_discount
-                item_cost = item_total * 0.7  # 70% cost (same as display)
-                walkin_total_cost += item_cost
-        except:
-            continue
-
     # Combined totals (walk-in + customer payments)
     total_sales = walkin_total_sales + customer_total_collection
-    
+
     # Calculate gross profit using ACTUAL walk-in cost ONLY
     # Gross Profit = Total Sales - Total Cost (customer invoices have NO cost tracking)
     gross_profit = total_sales - walkin_total_cost
-    
+
     # Total purchase/cost = ONLY walk-in cost (customer invoices don't have cost tracking)
     total_purchase = walkin_total_cost
 
@@ -466,7 +456,7 @@ async def get_sales_summary(
 
     # Calculate net cash
     total_cash_sales = walkin_cash_sales + customer_total_collection
-    
+
     net_cash = opening + total_cash_sales - total_expenses
 
     # Calculate net profit = Gross Profit - Expenses
