@@ -21,6 +21,9 @@ RUN pip install --no-cache-dir httpx
 # Copy the rest of the application
 COPY ./src /app/src
 
+# Copy Images folder for logos
+COPY ./Images /app/Images
+
 # Create a non-root user and set appropriate permissions
 RUN groupadd -r appuser && useradd -r -g appuser appuser
 RUN chown -R appuser:appuser /app

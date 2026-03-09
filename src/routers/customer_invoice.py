@@ -538,14 +538,14 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
     current_date = created_at.strftime('%d-%m-%Y %I:%M %p')
     team_line = f"<p>Team: {team_name}</p>" if team_name else ""
 
-    # Logo - use SVG for better WeasyPrint compatibility
+    # Logo - use European Sports logo from backend Images folder
     import os
     logo_path = os.path.join(
         os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
         'Images',
-        'European Sports.svg'
+        'european-logo-blk.svg'
     )
-    
+
     logo_html = '🏆'  # Default fallback
     try:
         if os.path.exists(logo_path):
@@ -553,9 +553,19 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
                 svg_content = f.read()
                 # Embed SVG directly in HTML
                 logo_html = f'<div style="text-align:center;margin:5px 0;">{svg_content}</div>'
-                print(f"✓ SVG Logo loaded ({len(svg_content)} chars)")
+                print(f"✓ SVG Logo loaded from: {logo_path}")
         else:
             print(f"✗ SVG Logo file not found: {logo_path}")
+            # Try without Images folder (root src folder)
+            alt_logo_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+                'european-logo-blk.svg'
+            )
+            if os.path.exists(alt_logo_path):
+                with open(alt_logo_path, 'r', encoding='utf-8') as f:
+                    svg_content = f.read()
+                    logo_html = f'<div style="text-align:center;margin:5px 0;">{svg_content}</div>'
+                    print(f"✓ SVG Logo loaded from: {alt_logo_path}")
     except Exception as e:
         print(f"✗ Logo load error: {e}")
         logo_html = '🏆'
@@ -575,7 +585,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
                 font-family: Arial, Helvetica, sans-serif;
                 font-size: 12px;
                 margin: 0;
-                padding: 8px 5px;
+                padding: 0 5px;
                 box-sizing: border-box;
                 line-height: 1.5;
             }}
@@ -594,24 +604,24 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
                 letter-spacing: 1px;
             }}
             .logo {{
-                margin: 8px 0;
+                margin: 0 0 8px 0;
                 text-align: center;
             }}
             .logo svg {{
-                max-width: 70px;
-                max-height: 70px;
+                max-width: 140px;
+                max-height: 140px;
                 width: auto;
                 height: auto;
                 display: block;
                 margin: 0 auto;
             }}
             .contact {{
-                font-size: 10px;
+                font-size: 12px;
                 margin: 3px 0;
                 text-align: center;
             }}
             .info {{
-                font-size: 10px;
+                font-size: 11px;
                 margin: 8px 0;
                 border-bottom: 2px solid #000;
                 padding-bottom: 8px;
@@ -727,7 +737,6 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             <div class="logo">
                 {logo_html}
             </div>
-            <h1>EUROPEAN SPORTS</h1>
             <p class="contact">Contact: 0315-2263745</p>
             <p class="contact">Shop#8, Mazar Wali Gali, Light House, Khi</p>
         </div>
