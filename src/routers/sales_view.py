@@ -1,10 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from decimal import Decimal
 from typing import Optional, List, Dict, Any
 import json
+from calendar import monthrange
 
 from src.database import get_db
 from src.models.user import User
@@ -14,9 +15,267 @@ from src.models.daily_cash import DailyCash
 from src.models.expense import Expense
 from src.models.stock_entry import StockEntry, StockEntryType
 from src.models.product import Product
+from src.models.refund import Refund
 from src.auth.session_auth import admin_cashier_employee_required_from_session
 
 router = APIRouter()
+
+
+@router.get("/dashboard/stats")
+async def get_dashboard_stats(
+    month: int = None,
+    year: int = None,
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get dashboard statistics for a specific month.
+    Returns sales, expenses, purchases, stock data, and daily chart data.
+    
+    Query params:
+    - month: Month number (1-12), defaults to current month
+    - year: Year number (e.g., 2026), defaults to current year
+    
+    Note: Chart data shows only up to today's date (not future dates)
+    """
+    # Get current date or specified month/year
+    today = datetime.now().date()
+    
+    if month is None:
+        month = today.month
+    if year is None:
+        year = today.year
+    
+    # Validate month and year
+    if month < 1 or month > 12:
+        raise HTTPException(status_code=400, detail="Invalid month. Must be 1-12")
+    
+    # Get first and last day of the month
+    first_day = date(year, month, 1)
+    last_day = date(year, month, monthrange(year, month)[1])
+    
+    # IMPORTANT: If viewing current month, limit to today's date
+    # If viewing past/future month, show full month
+    is_current_month = (month == today.month and year == today.year)
+    if is_current_month:
+        data_end_date = today  # Show data only up to today
+    else:
+        data_end_date = last_day  # Show full month for past/future months
+    
+    # ==================== SALES CALCULATION ====================
+    # Calculate total sales from walk-in invoices (SIN- prefix)
+    # Use data_end_date to limit to today for current month
+    walkin_statement = select(
+        func.sum(Invoice.amount_paid)
+    ).where(
+        and_(
+            Invoice.invoice_no.like("SIN-%"),
+            func.date(Invoice.payment_date) >= first_day,
+            func.date(Invoice.payment_date) <= data_end_date  # Use data_end_date instead of last_day
+        )
+    )
+    walkin_result = await db.execute(walkin_statement)
+    walkin_total_sales = float(walkin_result.scalar_one_or_none() or 0)
+    
+    # Calculate total sales from customer invoice payments (CIN- prefix)
+    customer_statement = select(CustomerInvoice).where(
+        CustomerInvoice.invoice_no.like("CIN-%")
+    )
+    customer_result = await db.execute(customer_statement)
+    all_customer_invoices = customer_result.scalars().all()
+    
+    customer_total_collection = 0.0
+    for inv in all_customer_invoices:
+        try:
+            payment_history = []
+            if inv.payments_history:
+                try:
+                    payment_history = json.loads(inv.payments_history)
+                except:
+                    payment_history = []
+            
+            for payment in payment_history:
+                payment_date_str = payment.get('date', '')
+                if payment_date_str:
+                    try:
+                        if 'T' in payment_date_str:
+                            payment_date = datetime.fromisoformat(payment_date_str).date()
+                        else:
+                            payment_date = datetime.strptime(payment_date_str, '%Y-%m-%d').date()
+                        
+                        # Filter payments up to data_end_date
+                        if first_day <= payment_date <= data_end_date:
+                            customer_total_collection += float(payment.get('amount', 0))
+                    except:
+                        continue
+        except:
+            continue
+    
+    total_sales = walkin_total_sales + customer_total_collection
+    
+    # ==================== EXPENSES CALCULATION ====================
+    expenses_result = await db.execute(
+        select(func.sum(Expense.amount)).where(
+            and_(
+                Expense.expense_date >= first_day,
+                Expense.expense_date <= data_end_date  # Use data_end_date
+            )
+        )
+    )
+    total_expenses = float(expenses_result.scalar_one_or_none() or 0)
+    
+    # ==================== PURCHASE/COST CALCULATION ====================
+    # Calculate cost from walk-in invoices (70% of selling price)
+    walkin_cost_statement = select(Invoice).where(
+        and_(
+            Invoice.invoice_no.like("SIN-%"),
+            func.date(Invoice.payment_date) >= first_day,
+            func.date(Invoice.payment_date) <= data_end_date  # Use data_end_date
+        )
+    )
+    walkin_cost_result = await db.execute(walkin_cost_statement)
+    walkin_invoices = walkin_cost_result.scalars().all()
+    
+    total_purchase = 0.0
+    for inv in walkin_invoices:
+        try:
+            items = json.loads(inv.items) if inv.items else []
+            for item in items:
+                quantity = item.get('quantity', 0)
+                unit_price = item.get('unit_price', 0)
+                item_discount = float(item.get('discount', 0))
+                item_total = quantity * unit_price - item_discount
+                item_cost = item_total * 0.7  # 70% cost
+                total_purchase += item_cost
+        except:
+            continue
+    
+    # ==================== STOCK DATA ====================
+    # Count out of stock products (stock_level = 0)
+    out_of_stock_result = await db.execute(
+        select(func.count(Product.id)).where(Product.stock_level <= 0)
+    )
+    out_of_stock = int(out_of_stock_result.scalar_one_or_none() or 0)
+    
+    # Count short stock products (stock_level > 0 but < min_stock_level or < 10)
+    short_stock_result = await db.execute(
+        select(func.count(Product.id)).where(
+            and_(
+                Product.stock_level > 0,
+                Product.stock_level < 10  # Consider short stock if less than 10 items
+            )
+        )
+    )
+    short_stock = int(short_stock_result.scalar_one_or_none() or 0)
+    
+    # ==================== OPENING BALANCE ====================
+    # Get opening balance from first day of month
+    daily_cash_result = await db.execute(
+        select(DailyCash).where(DailyCash.date == first_day)
+    )
+    daily_cash = daily_cash_result.scalar_one_or_none()
+    opening_balance = float(daily_cash.total_opening) if daily_cash else 0.0
+    
+    # ==================== DAILY CHART DATA ====================
+    # Get daily sales and expenses for the month (up to today for current month)
+    daily_sales = {}
+    daily_expenses = {}
+    
+    # Initialize days from 1 to data_end_date.day (today for current month)
+    for day in range(1, data_end_date.day + 1):
+        daily_sales[day] = 0.0
+        daily_expenses[day] = 0.0
+    
+    # Get daily walk-in sales (only up to data_end_date)
+    for inv in walkin_invoices:
+        try:
+            if inv.payment_date:
+                day = inv.payment_date.day
+                if day in daily_sales:  # Only include if within range
+                    daily_sales[day] += float(inv.amount_paid)
+        except:
+            continue
+    
+    # Get daily customer invoice payments (only up to data_end_date)
+    for inv in all_customer_invoices:
+        try:
+            payment_history = []
+            if inv.payments_history:
+                try:
+                    payment_history = json.loads(inv.payments_history)
+                except:
+                    payment_history = []
+            
+            for payment in payment_history:
+                payment_date_str = payment.get('date', '')
+                if payment_date_str:
+                    try:
+                        if 'T' in payment_date_str:
+                            payment_date = datetime.fromisoformat(payment_date_str).date()
+                        else:
+                            payment_date = datetime.strptime(payment_date_str, '%Y-%m-%d').date()
+                        
+                        # Only include payments up to data_end_date
+                        if first_day <= payment_date <= data_end_date:
+                            day = payment_date.day
+                            if day in daily_sales:  # Only include if within range
+                                daily_sales[day] += float(payment.get('amount', 0))
+                    except:
+                        continue
+        except:
+            continue
+    
+    # Get daily expenses (only up to data_end_date)
+    expenses_daily_result = await db.execute(
+        select(Expense).where(
+            and_(
+                Expense.expense_date >= first_day,
+                Expense.expense_date <= data_end_date
+            )
+        )
+    )
+    expenses_list = expenses_daily_result.scalars().all()
+    
+    for expense in expenses_list:
+        try:
+            if expense.expense_date:
+                day = expense.expense_date.day
+                if day in daily_expenses:  # Only include if within range
+                    daily_expenses[day] += float(expense.amount)
+        except:
+            continue
+    
+    # Format chart data (only days 1 to data_end_date.day)
+    dates = [str(day).zfill(2) for day in range(1, data_end_date.day + 1)]
+    sales_data = [round(daily_sales[day], 2) for day in range(1, data_end_date.day + 1)]
+    expenses_data = [round(daily_expenses[day], 2) for day in range(1, data_end_date.day + 1)]
+    
+    # Get admin username and role
+    admin_username = current_user.username if current_user else "Admin"
+    admin_role = current_user.role.name if current_user and current_user.role else "Admin"
+    
+    return {
+        "totalSales": round(total_sales, 2),
+        "totalExpense": round(total_expenses, 2),
+        "totalPurchase": round(total_purchase, 2),
+        "outOfStock": out_of_stock,
+        "shortStock": short_stock,
+        "adminUser": admin_username,
+        "userRole": admin_role,
+        "openingBalance": round(opening_balance, 2),
+        "chartData": {
+            "dates": dates,
+            "sales": sales_data,
+            "expenses": expenses_data
+        },
+        "month": month,
+        "year": year,
+        "monthName": first_day.strftime('%B %Y'),
+        "dataRange": {
+            "start": first_day.strftime('%d/%m/%Y'),
+            "end": data_end_date.strftime('%d/%m/%Y')
+        }
+    }
 
 
 @router.get("/walkin-invoices")
