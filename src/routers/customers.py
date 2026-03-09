@@ -9,7 +9,7 @@ from ..models.user import User
 from ..models.customer import Customer, CustomerCreate, CustomerUpdate, CustomerRead
 from ..services.customer_service import CustomerService
 from ..auth.session_auth import admin_required_from_session, cashier_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, func
 import json
 
 router = APIRouter()
@@ -91,6 +91,7 @@ async def view_customers(
     customers = result.scalars().all()
 
     # Parse and format the results for the JavaScript frontend
+    # Also calculate balance from customer invoices
     result_list = []
     for customer in customers:
         contacts_data = {}
@@ -98,6 +99,16 @@ async def view_customers(
             contacts_data = json.loads(customer.contacts)
         except:
             contacts_data = {"phone": "", "email": "", "address": ""}
+
+        # Calculate balance from customer invoices
+        from ..models.customer_invoice import CustomerInvoice
+        balance_stmt = select(
+            func.sum(CustomerInvoice.balance_due)
+        ).where(
+            CustomerInvoice.customer_id == customer.id
+        )
+        balance_result = await db.execute(balance_stmt)
+        calculated_balance = balance_result.scalar_one_or_none() or 0.0
 
         customer_data = {
             "cus_id": str(customer.id),
@@ -107,7 +118,7 @@ async def view_customers(
             "cus_address": contacts_data.get("address", ""),
             "cus_sal_id_fk": str(customer.sal_id_fk) if customer.sal_id_fk else "",
             "branch": customer.branch or "",
-            "cus_balance": float(customer.cus_balance) if customer.cus_balance else 0.0
+            "cus_balance": float(calculated_balance)
         }
 
         result_list.append(customer_data)
@@ -352,13 +363,15 @@ async def customer_view_report(
     """
     import base64
     from datetime import datetime
-    
+    from sqlalchemy import select, func
+    from ..models.customer_invoice import CustomerInvoice
+
     # Fetch all customers
     customers = await CustomerService.get_customers(db, skip=0, limit=100)
-    
+
     # Calculate total balance
     total_balance = 0.0
-    
+
     # Build customer rows for PDF table
     customer_rows = ""
     for i, customer in enumerate(customers):
@@ -368,11 +381,18 @@ async def customer_view_report(
             contacts_data = json.loads(customer.contacts)
         except:
             contacts_data = {"phone": "", "email": "", "address": ""}
+
+        # Calculate balance from customer invoices
+        balance_stmt = select(
+            func.sum(CustomerInvoice.balance_due)
+        ).where(
+            CustomerInvoice.customer_id == customer.id
+        )
+        balance_result = await db.execute(balance_stmt)
+        customer_balance = float(balance_result.scalar_one_or_none() or 0.0)
         
-        # Get balance from customer
-        customer_balance = getattr(customer, 'balance', 0.0) or 0.0
         total_balance += customer_balance
-        
+
         customer_rows += f"""
         <tr>
             <td class="border" style="text-align: center;">{i+1}</td>

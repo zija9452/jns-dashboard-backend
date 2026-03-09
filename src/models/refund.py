@@ -18,8 +18,8 @@ class Refund(SQLModel, table=True):
     amount: Decimal = Field(sa_column=Column(Numeric(10, 2), nullable=False))
     reason: str  # Text field for reason
     processed_by: uuid.UUID = Field(foreign_key="users.id")
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)  # Last updated with index
+    created_at: datetime = Field(default_factory=datetime.now, index=True)  # Last updated with index
+    updated_at: datetime = Field(default_factory=datetime.now, index=True)  # Last updated with index
 
 class RefundRead(SQLModel):
     id: uuid.UUID

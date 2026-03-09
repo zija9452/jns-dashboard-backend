@@ -647,20 +647,20 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             table {{
                 width: 100%;
                 border-collapse: collapse;
-                font-size: 10px;
+                font-size: 11px;
                 margin: 8px 0;
             }}
             th {{
                 border-top: 2px solid #000;
                 border-bottom: 2px solid #000;
-                font-size: 10px;
+                font-size: 11px;
                 font-weight: 600;
                 padding: 5px 2px;
                 text-align: left;
                 font-weight: 500;
             }}
             td {{
-                font-size: 10px;
+                font-size: 11px;
                 padding: 5px 2px;
                 vertical-align: top;
                 text-align: center;
@@ -697,7 +697,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             }}
             .total-row {{
                 font-weight: bold;
-                font-size: 11px;
+                font-size: 12px;
                 margin: 3px 0;
             }}
             .total-label {{
@@ -715,7 +715,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
                 padding-top: 2px;
                 padding-bottom: 0px;
                 text-align: center;
-                font-size: 10px;
+                font-size: 11px;
                 font-weight: bold;
             }}
             .footer {{
