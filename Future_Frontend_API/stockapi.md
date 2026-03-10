@@ -1,707 +1,629 @@
-# Stock API Documentation
+# Stock Management API
 
-This document provides comprehensive documentation for all stock-related endpoints in the Regal POS Backend with session-based authentication, including curl commands for testing and integration.
+## 🔐 Authentication & Authorization
 
-## Authentication
+### Login Required
 
-All stock endpoints require session-based authentication. Obtain a session by logging in:
+Before using any of these endpoints, you **MUST** login first:
 
 ```bash
-curl -X POST http://localhost:8000/auth/session-login \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "username=admin&password=admin123"
+curl -X POST http://localhost:8000/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "admin",
+    "password": "admin123"
+  }' \
+  -c cookies.txt
 ```
 
-The login response will include a session cookie that will be automatically sent with subsequent requests when using the `-b` flag with curl or proper cookie handling in applications.
+**Save the cookie!** All subsequent requests require the session cookie (`-b cookies.txt`).
 
-## Stock Management Endpoints
+---
 
-### 1. View Stock
+### 🔑 Access Control
 
-**Endpoint**: `GET /admin/ViewStock`
+| Decorator | Allowed Roles | Used By |
+|-----------|--------------|---------|
+| `admin_cashier_employee_required_from_session()` | `admin`, `cashier`, `employee` | All stock endpoints |
 
-**Description**: View stock with search and branch filtering.
+**Important Notes**:
 
-**Authentication**: Admin role required
+All stock endpoints are accessible by **admin, cashier, and employee** roles.
 
-**Purpose**: Displays all stock items with filtering options. This is for viewing existing inventory only, no modifications made.
+---
 
-**When to use**: When you want to see current stock levels and product details.
+## API Endpoints
 
-**Query Parameters** (optional):
-- `search_string`: Search term to filter products
-- `branches`: Branch to filter by
-- `shelf`: Shelf to filter by
-- `skip`: Number of records to skip (for pagination)
-- `limit`: Maximum number of records to return (default 100)
+### Stock Management
+
+---
+
+### 1. GET /stock/viewstock - View Stock (Paginated)
+
+**Access**: `admin_cashier_employee_required_from_session()` - **Any authenticated user**
+
+**Description**: Get paginated list of stock items with search and branch filtering. Shows only products with stock > 0. This is the **main endpoint** used by the frontend.
+
+**Endpoint**: `GET /stock/viewstock?page=1&limit=8&search_string=`
+
+**Query Parameters**:
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `page` | int | 1 | Page number (1-based) |
+| `limit` | int | 8 | Items per page |
+| `search_string` | string | - | Search by product name, barcode, or SKU |
+| `branches` | string | - | Filter by branch name |
+| `shelf` | string | - | Filter by shelf (optional) |
 
 **Example**:
 ```bash
-curl -X GET "http://localhost:8000/admin/ViewStock?search_string=product&branches=MainBranch&limit=10" \
+curl -X GET "http://localhost:8000/stock/viewstock?page=1&limit=8&search_string=Nike" \
   -b cookies.txt
 ```
 
-**Response**:
-```json
-[
-  {
-    "pro_id": "uuid-string",
-    "pro_name": "Product Name",
-    "quantity": 50,
-    "branch": "MainBranch",
-    "ven_name": "Vendor Name",
-    "pro_price": 99.99,
-    "pro_cost": 79.99,
-    "pro_barcode": "1234567890123",
-    "pro_dis": 0.0,
-    "cat_id_fk": "Category Name",
-    "limitedquan": false,
-    "brand": "Brand Name",
-    "pro_image": "image-path"
-  }
-]
-```
-
-### 2. Adjust Stock
-
-**Endpoint**: `POST /admin/Adjuststock`
-
-**Description**: Adjust stock levels for multiple products.
-
-**Authentication**: Admin role required
-
-**Purpose**: Modifies existing stock quantities up or down. This is for changing existing inventory levels.
-
-**When to use**: When you need to manually adjust stock quantities (increase/decrease) for existing products.
-
-**Request Body** (as JSON array):
-```json
-[
-  {
-    "pro_name": "Product Name",
-    "quantity": 10,
-    "stock_id": "uuid-string",
-    "status": "IN",
-    "frombranch": "MainBranch",
-    "tobranch": "SecondaryBranch"
-  }
-]
-```
-
-**Example**:
-```bash
-curl -X POST http://localhost:8000/admin/Adjuststock \
-  -H "Content-Type: application/json" \
-  -b cookies.txt \
-  -d '[{"pro_name":"Product Name","quantity":10,"stock_id":"uuid-string","status":"IN","frombranch":"MainBranch","tobranch":"SecondaryBranch"}]'
-```
-
-**Response**:
-```json
-"JVBERi0xLjQKMSAwIG9iago8PAovVHlwZSAvQ2F0YWxvZwovUGFnZXMgMiAwIFIKPj4KZW5kb2JqCjIgMCBvYmoKPDwKL1R5cGUgL1BhZ2VzCi9LaWRzIFszIDAgUl0KL0NvdW50IDEKPj4KZW5kb2JqCjMgMCBvYmoKPDwKL1R5cGUgL1BhZ2UKL1BhcmVudCAyIDAgUgovTWVkaWFCb3ggWzAgMCA2MTIgNzkyXQovQ29udGVudHMgNCAwIFIKPj4KZW5kb2JqCjQgMCBvYmoKPDwKL0xlbmd0aCA2MAo+PgpzdHJlYW0KQlQKL0YxIDEyIFRmCjcyIDcyMCBUZAooU3RvY2sgQWRqdXN0bWVudCBSZXBvcnQpIFRqCkVUCmVuZHN0cmVhbQplbmRvYmoKeHJlZgowIDUKdHJhaWxlcgo8PAovU2l6ZSA1Ci9Sb290IDEgMCBSCj4+CgklJUVPRg=="
-```
-
-### 8. Save Stock In
-
-**Endpoint**: `POST /admin/SaveStockIn`
-
-**Description**: Save stock in transactions for multiple products.
-
-**Authentication**: Admin role required
-
-**Purpose**: Adds new products to inventory or increases existing stock quantities. This is for updating inventory only, no barcode printing.
-
-**When to use**: When you want to add new stock/inventory without generating barcodes for printing.
-
-**Request Body** (as JSON array):
-```json
-[
-  {
-    "ven_name": "Vendor Name",
-    "pro_name": "Product Name",
-    "pro_price": 99.99,
-    "pro_cost": 79.99,
-    "quantity": 50,
-    "totalCost": 3999.5,
-    "pro_barcode": "1234567890123",
-    "cat_name": "Category Name",
-    "brand": "Brand Name",
-    "pro_id": "uuid-string",
-    "ven_id": "uuid-string"
-  }
-]
-```
-
-**Example**:
-```bash
-curl -X POST http://localhost:8000/admin/SaveStockIn \
-  -H "Content-Type: application/json" \
-  -b cookies.txt \
-  -d '[{"ven_name":"Vendor Name","pro_name":"Product Name","pro_price":99.99,"pro_cost":79.99,"quantity":50,"totalCost":3999.5,"pro_barcode":"1234567890123","cat_name":"Category Name","brand":"Brand Name","pro_id":"uuid-string","ven_id":"uuid-string"}]'
-```
-
-**Response**:
+**Response** (200 OK):
 ```json
 {
-  "message": "Stock in transactions saved successfully",
+  "data": [
+    {
+      "pro_id": "uuid-string",
+      "vendor_name": "Ali Traders",
+      "product_name": "Nike Air Max",
+      "category": "Shoes",
+      "stock": 50,
+      "price": 99.99,
+      "cost": 79.99,
+      "barcode": "1234567890123",
+      "margin": 25.0,
+      "brand": "Nike",
+      "branch": "European Sports Light House"
+    }
+  ],
+  "page": 1,
+  "limit": 8,
+  "total": 150,
+  "total_pages": 19,
+  "has_more": true
+}
+```
+
+**Response Fields**:
+- `data`: Array of stock items (max 8 per page)
+- `vendor_name`: Latest vendor from stock entries
+- `product_name`: Product name
+- `category`: Product category
+- `stock`: Current stock level
+- `price`: Selling price
+- `cost`: Cost price
+- `barcode`: Product barcode
+- `margin`: Profit margin percentage `((price - cost) / price * 100)`
+- `brand`: Brand name
+- `branch`: Branch location
+
+**Important**: Only returns products with `stock_level > 0`.
+
+**Error** (401 Unauthorized):
+```json
+{
+  "detail": "Not authenticated"
+}
+```
+
+---
+
+### 2. GET /stock/searchstock - Search Stock
+
+**Access**: `admin_cashier_employee_required_from_session()` - **Any authenticated user**
+
+**Description**: Search stock by branch and search term. Returns all matching products (no pagination).
+
+**Endpoint**: `GET /stock/searchstock?branches=&search_string=`
+
+**Query Parameters**:
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `branches` | string | - | Filter by branch name |
+| `search_string` | string | - | Search by product name |
+
+**Example**:
+```bash
+curl -X GET "http://localhost:8000/stock/searchstock?branches=Light%20House&search_string=Nike" \
+  -b cookies.txt
+```
+
+**Response** (200 OK):
+```json
+[
+  {
+    "stock_id": "uuid-string",
+    "product_name": "Nike Air Max",
+    "stock": 50,
+    "branch": "European Sports Light House"
+  }
+]
+```
+
+---
+
+### 3. POST /stock/adjuststock - Adjust Stock
+
+**Access**: `admin_cashier_employee_required_from_session()` - **Any authenticated user**
+
+**Description**: Adjust stock levels for multiple products (increase or decrease). Creates stock entry with type ADJUST.
+
+**Endpoint**: `POST /stock/adjuststock`
+
+**Request Body**:
+```json
+[
+  {
+    "product_id": "uuid-string",
+    "quantity": 5,
+    "action": "increase",
+    "reason": "Stock count adjustment"
+  },
+  {
+    "product_id": "uuid-string-2",
+    "quantity": 3,
+    "action": "decrease",
+    "reason": "Damaged goods"
+  }
+]
+```
+
+**Request Fields**:
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `product_id` | string | ✅ Yes | Product UUID |
+| `quantity` | int | ✅ Yes | Quantity to adjust |
+| `action` | string | ✅ Yes | `increase` or `decrease` |
+| `reason` | string | ❌ No | Reason for adjustment |
+
+**Example**:
+```bash
+curl -X POST "http://localhost:8000/stock/adjuststock" \
+  -H "Content-Type: application/json" \
+  -b cookies.txt \
+  -d '[
+    {
+      "product_id": "uuid-string",
+      "quantity": 5,
+      "action": "increase",
+      "reason": "Stock count adjustment"
+    }
+  ]'
+```
+
+**Response** (200 OK):
+```json
+{
+  "message": "Stock adjustment completed successfully",
   "results": [
     {
-      "pro_name": "Product Name",
-      "new_stock_level": 50,
+      "product_id": "uuid-string",
+      "product_name": "Nike Air Max",
+      "action": "increase",
+      "quantity_adjusted": 5,
+      "old_stock": 50,
+      "new_stock": 55,
       "status": "success"
     }
   ]
 }
 ```
 
-### 9. Search Stock
+**Important**: Stock cannot go below 0. If decrease would result in negative stock, it's set to 0.
 
-**Endpoint**: `GET /admin/searchstock`
+---
 
-**Description**: Search stock by branch.
+### 4. POST /stock/savestockin - Save Stock In
 
-**Authentication**: Employee role or higher required
+**Access**: `admin_cashier_employee_required_from_session()` - **Any authenticated user**
 
-**Purpose**: Finds specific products in stock based on branch/location. This is for searching existing inventory only.
+**Description**: Save stock in transactions for multiple products. Creates stock entry with type IN.
 
-**When to use**: When you need to locate products in specific branches or locations.
+**Endpoint**: `POST /stock/savestockin`
 
-**Query Parameters** (optional):
-- `branches`: Branch to filter by
-- `search_string`: Search term to filter products
-
-**Example**:
-```bash
-curl -X GET "http://localhost:8000/admin/searchstock?branches=MainBranch&search_string=product" \
-  -b cookies.txt
-```
-
-**Response**:
+**Request Body**:
 ```json
 [
   {
-    "stock_id": "uuid-string",
-    "pro_name": "Product Name",
+    "product_id": "uuid-string",
+    "vendor_id": "uuid-string",
     "quantity": 50,
-    "branch": "MainBranch"
+    "cost_price": 79.99,
+    "date": "2026-03-10"
   }
 ]
 ```
 
-### 10. Stock Report
-
-**Endpoint**: `POST /admin/StockReport`
-
-**Description**: Generate stock report in PDF format.
-
-**Authentication**: Admin role required
-
-**Purpose**: Creates a comprehensive stock report in PDF format. This is for reporting only, no inventory changes.
-
-**When to use**: When you need to generate a PDF report of current stock levels and inventory.
-
-**Request Body** (as form data):
-- `cat_name`: Category name to filter by
-- `pro_name`: Product name to filter by
-- `ven_name`: Vendor name to filter by
-- `timezone`: Timezone for the report
-- `branches`: Branch to filter by
-- `shelf`: Shelf to filter by
+**Request Fields**:
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `product_id` | string | ✅ Yes | Product UUID |
+| `vendor_id` | string | ✅ Yes | Vendor UUID |
+| `quantity` | int | ✅ Yes | Quantity to add |
+| `cost_price` | number | ❌ No | Cost price per unit |
+| `date` | string | ❌ No | Date of stock in (YYYY-MM-DD) |
 
 **Example**:
 ```bash
-curl -X POST http://localhost:8000/admin/StockReport \
-  -H "Content-Type: application/x-www-form-urlencoded" \
+curl -X POST "http://localhost:8000/stock/savestockin" \
+  -H "Content-Type: application/json" \
   -b cookies.txt \
-  -d "cat_name=Electronics&pro_name=Phone&ven_name=Supplier&timezone=UTC&branches=MainBranch&shelf=A1"
+  -d '[
+    {
+      "product_id": "uuid-string",
+      "vendor_id": "uuid-string",
+      "quantity": 50,
+      "cost_price": 79.99
+    }
+  ]'
 ```
 
-**Response**:
-```json
-"JVBERi0xLjQKMSAwIG9iago8PAovVHlwZSAvQ2F0YWxvZwovUGFnZXMgMiAwIFIKPj4KZW5kb2JqCjIgMCBvYmoKPDwKL1R5cGUgL1BhZ2VzCi9LaWRzIFszIDAgUl0KL0NvdW50IDEKPj4KZW5kb2JqCjMgMCBvYmoKPDwKL1R5cGUgL1BhZ2UKL1BhcmVudCAyIDAgUgovTWVkaWFCb3ggWzAgMCA2MTIgNzkyXQovQ29udGVudHMgNCAwIFIKPj4KZW5kb2JqCjQgMCBvYmoKPDwKL0xlbmd0aCA0NAo+PgpzdHJlYW0KQlQKL0YxIDEyIFRmCjcyIDcyMCBUZAooU3RvY2sgUmVwb3J0KSBUagoKRVQKZW5kc3RyZWFtCmVuZG9iagp4cmVmCjAgNQp0cmFpbGVyCjw8Ci9TaXplIDUKL1Jvb3QgMSAwIFIKPj4KJSVFT0Y="
-```
-
-### 11. Stock Report Excel
-
-**Endpoint**: `POST /admin/StockReportexcel`
-
-**Description**: Generate stock report in Excel format.
-
-**Authentication**: Admin role required
-
-**Purpose**: Creates a comprehensive stock report in Excel format. This is for reporting only, no inventory changes.
-
-**When to use**: When you need to generate an Excel spreadsheet report of current stock levels and inventory.
-
-**Request Body** (as form data):
-- `cat_name`: Category name to filter by
-- `pro_name`: Product name to filter by
-- `ven_name`: Vendor name to filter by
-- `timezone`: Timezone for the report
-- `branches`: Branch to filter by
-- `shelf`: Shelf to filter by
-
-**Example**:
-```bash
-curl -X POST http://localhost:8000/admin/StockReportexcel \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -b cookies.txt \
-  -d "cat_name=Electronics&pro_name=Phone&ven_name=Supplier&timezone=UTC&branches=MainBranch&shelf=A1"
-```
-
-**Response**:
-Base64-encoded Excel file content.
-
-### 12. Daily Inventory Report
-
-**Endpoint**: `POST /admin/Dailyinventoryreport`
-
-**Description**: Generate daily inventory report in PDF format.
-
-**Authentication**: Admin role required
-
-**Purpose**: Creates a daily inventory summary report in PDF format. This is for reporting only, no inventory changes.
-
-**When to use**: When you need to generate a daily summary report of inventory.
-
-**Example**:
-```bash
-curl -X POST http://localhost:8000/admin/Dailyinventoryreport \
-  -b cookies.txt
-```
-
-**Response**:
-```json
-"JVBERi0xLjQKMSAwIG9iago8PAovVHlwZSAvQ2F0YWxvZwovUGFnZXMgMiAwIFIKPj4KZW5kb2JqCjIgMCBvYmoKPDwKL1R5cGUgL1BhZ2VzCi9LaWRzIFszIDAgUl0KL0NvdW50IDEKPj4KZW5kb2JqCjMgMCBvYmoKPDwKL1R5cGUgL1BhZ2UKL1BhcmVudCAyIDAgUgovTWVkaWFCb3ggWzAgMCA2MTIgNzkyXQovQ29udGVudHMgNCAwIFIKPj4KZW5kb2JqCjQgMCBvYmoKPDwKL0xlbmd0aCA2MQo+PgpzdHJlYW0KQlQKL0YxIDEyIFRmCjcyIDcyMCBUZAooRGFpbHkgSW52ZW50b3J5IFJlcG9ydCkgVGoKRVQKZW5kc3RyZWFtCmVuZG9iagp4cmVmCjAgNQp0cmFpbGVyCjw8Ci9TaXplIDUKL1Jvb3QgMSAwIFIKPj4KJSVFT0Y="
-```
-
-### 13. Print Barcodes (ZPL)
-
-**Endpoint**: `POST /admin/PrintBarcodes`
-
-**Description**: Generate ZPL commands for printing barcodes for a product using Zebra printers.
-
-**Authentication**: Admin role required
-
-**Purpose**: Generates ZPL commands for barcode printing ONLY. This does NOT add or modify any stock data.
-
-**When to use**: When you want to print barcodes for an existing product without changing inventory. Call this endpoint when you want to generate ZPL commands to send to a Zebra printer for physical barcode labels.
-
-**Query Parameters**:
-- `pro_name`: Product name to print barcodes for
-- `quantity`: Number of barcodes to print (based on quantity)
-- `barcode`: Specific barcode to use (optional, will use product's barcode if not provided)
-
-**Example**:
-```bash
-curl -X POST "http://localhost:8000/admin/PrintBarcodes?pro_name=Laptop&quantity=5&barcode=LAPTOP123" \
-  -b cookies.txt
-```
-
-**Response**:
+**Response** (200 OK):
 ```json
 {
-  "zpl_commands": "^XA^FO50,50^BY2,3,100^BCN,100,Y,N,N,A^FDLAPTOP123^FS^FO50,150^A0N,25,25^FDLaptop^FS^XZ",
-  "product": "Laptop",
-  "quantity": 5,
-  "barcode": "LAPTOP123",
-  "message": "Generated ZPL for 5 barcode(s) of Laptop"
+  "message": "Stock in completed successfully",
+  "results": [
+    {
+      "product_id": "uuid-string",
+      "product_name": "Nike Air Max",
+      "quantity_added": 50,
+      "new_stock_level": 100,
+      "vendor_id": "uuid-string",
+      "status": "success"
+    }
+  ]
 }
 ```
 
-### 14. Save Stock In With Barcode Printing
+---
 
-**Endpoint**: `POST /admin/SaveStockInWithBarcodes`
+### 5. POST /stock/savestockinwithbarcode - Save Stock In with Barcodes
 
-**Description**: Save stock in transactions and optionally generate ZPL commands for barcode printing.
+**Access**: `admin_cashier_employee_required_from_session()` - **Any authenticated user**
 
-**Authentication**: Admin role required
+**Description**: Save stock in transactions AND generate ZPL barcode commands for printing.
 
-**Purpose**: Combines both inventory update and barcode printing. Updates stock data in database AND generates ZPL commands for printing barcodes.
+**Endpoint**: `POST /stock/savestockinwithbarcode`
 
-**When to use**: When you want to add new stock/inventory AND simultaneously generate barcodes for printing. Use with `print_barcodes=true` parameter to generate ZPL commands, or `print_barcodes=false` to just update inventory like the basic SaveStockIn endpoint.
-
-**Query Parameters** (optional):
-- `print_barcodes`: Whether to generate ZPL commands for barcode printing (default: false)
-
-**Request Body** (as JSON array):
+**Request Body**:
 ```json
 [
   {
-    "ven_name": "Vendor Name",
-    "pro_name": "Product Name",
-    "pro_price": 99.99,
-    "pro_cost": 79.99,
+    "product_id": "uuid-string",
+    "vendor_id": "uuid-string",
     "quantity": 50,
-    "totalCost": 3999.5,
-    "pro_barcode": "1234567890123",
-    "cat_name": "Category Name",
-    "brand": "Brand Name",
-    "pro_id": "uuid-string",
-    "ven_id": "uuid-string"
+    "cost_price": 79.99,
+    "selling_price": 99.99,
+    "date": "2026-03-10"
   }
 ]
 ```
 
+**Request Fields**:
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `product_id` | string | ✅ Yes | Product UUID |
+| `vendor_id` | string | ✅ Yes | Vendor UUID |
+| `quantity` | int | ✅ Yes | Quantity to add |
+| `cost_price` | number | ❌ No | Cost price per unit |
+| `selling_price` | number | ❌ No | Selling price for barcode |
+| `date` | string | ❌ No | Date of stock in (YYYY-MM-DD) |
+
 **Example**:
 ```bash
-curl -X POST "http://localhost:8000/admin/SaveStockInWithBarcodes?print_barcodes=true" \
+curl -X POST "http://localhost:8000/stock/savestockinwithbarcode" \
   -H "Content-Type: application/json" \
   -b cookies.txt \
-  -d '[{"ven_name":"Vendor Name","pro_name":"Product Name","pro_price":99.99,"pro_cost":79.99,"quantity":50,"totalCost":3999.5,"pro_barcode":"1234567890123","cat_name":"Category Name","brand":"Brand Name","pro_id":"uuid-string","ven_id":"uuid-string"}]'
+  -d '[
+    {
+      "product_id": "uuid-string",
+      "vendor_id": "uuid-string",
+      "quantity": 50,
+      "selling_price": 99.99
+    }
+  ]'
 ```
 
-**Response**:
+**Response** (200 OK):
 ```json
 {
-  "message": "Stock in transactions saved successfully",
+  "message": "Stock in completed successfully with barcodes",
   "results": [
     {
-      "pro_name": "Product Name",
-      "new_stock_level": 50,
+      "product_id": "uuid-string",
+      "product_name": "Nike Air Max",
+      "quantity_added": 50,
+      "new_stock_level": 100,
+      "vendor_id": "uuid-string",
       "status": "success"
     }
   ],
   "zpl_commands": [
     {
-      "product": "Product Name",
-      "zpl_commands": "^XA^FO50,50^BY2,3,100^BCN,100,Y,N,N,A^FD1234567890123^FS^FO50,150^A0N,25,25^FDProduct Name^FS^XZ"
-    }
-  ],
-  "print_requested": true
-}
-```
-
-### 3. Save Stock In
-
-**Endpoint**: `POST /admin/SaveStockIn`
-
-**Description**: Save stock in transactions for multiple products.
-
-**Authentication**: Admin role required
-
-**Request Body** (as JSON array):
-```json
-[
-  {
-    "ven_name": "Vendor Name",
-    "pro_name": "Product Name",
-    "pro_price": 99.99,
-    "pro_cost": 79.99,
-    "quantity": 50,
-    "totalCost": 3999.5,
-    "pro_barcode": "1234567890123",
-    "cat_name": "Category Name",
-    "brand": "Brand Name",
-    "pro_id": "uuid-string"
-  }
-]
-```
-
-**Example**:
-```bash
-curl -X POST http://localhost:8000/admin/SaveStockIn \
-  -H "Content-Type: application/json" \
-  -b cookies.txt \
-  -d '[{"ven_name":"Vendor Name","pro_name":"Product Name","pro_price":99.99,"pro_cost":79.99,"quantity":50,"totalCost":3999.5,"pro_barcode":"1234567890123","cat_name":"Category Name","brand":"Brand Name","pro_id":"uuid-string"}]'
-```
-
-**Response**:
-```json
-{
-  "message": "Stock in transactions saved successfully",
-  "results": [
-    {
-      "pro_name": "Product Name",
-      "new_stock_level": 50,
-      "status": "success"
+      "product_id": "uuid-string",
+      "product_name": "Nike Air Max",
+      "barcode": "1234567890123",
+      "quantity": 50,
+      "unit_index": 1,
+      "price": 99.99,
+      "zpl": "^XA^FO160,50^BY2,3,80^BCN,80,Y,N,N^FD1234567890123^FS..."
     }
   ]
 }
 ```
 
-### 4. Search Stock
+**ZPL Commands**: One ZPL command per unit for barcode printing (Zebra GX420d compatible).
 
-**Endpoint**: `GET /admin/searchstock`
+---
 
-**Description**: Search stock by branch.
+### 6. POST /stock/stockreport - Stock Report (PDF)
 
-**Authentication**: Employee role or higher required
+**Access**: `admin_cashier_employee_required_from_session()` - **Any authenticated user**
+
+**Description**: Generate stock report in PDF format (base64 encoded). Shows only products with stock > 0.
+
+**Endpoint**: `POST /stock/stockreport`
 
 **Query Parameters** (optional):
-- `branches`: Branch to filter by
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `cat_name` | string | Filter by category |
+| `pro_name` | string | Filter by product name |
+| `branches` | string | Filter by branch |
+| `ven_name` | string | Filter by vendor name |
+| `timezone` | string | Timezone for report |
 
 **Example**:
 ```bash
-curl -X GET "http://localhost:8000/admin/searchstock?branches=MainBranch" \
+curl -X POST "http://localhost:8000/stock/stockreport" \
   -b cookies.txt
 ```
 
-**Response**:
-```json
-[
-  {
-    "stock_id": "uuid-string",
-    "pro_name": "Product Name",
-    "quantity": 50,
-    "branch": "MainBranch"
-  }
-]
+**Response** (200 OK):
+```
+Base64 encoded PDF string
 ```
 
-### 5. Stock Report
+**Report Contents**:
+- Product name
+- Category
+- Stock level
+- Price
+- Cost
+- Margin %
+- Barcode
+- Brand
+- Branch
+- Total product count
 
-**Endpoint**: `POST /admin/StockReport`
+---
 
-**Description**: Generate stock report in PDF format.
+### 7. POST /stock/stockinreport - Stock In Report (PDF)
 
-**Authentication**: Admin role required
+**Access**: `admin_cashier_employee_required_from_session()` - **Any authenticated user**
 
-**Request Body** (as form data):
-- `cat_name`: Category name to filter by
-- `pro_name`: Product name to filter by
-- `ven_name`: Vendor name to filter by
-- `timezone`: Timezone for the report
-- `branches`: Branch to filter by
-- `shelf`: Shelf to filter by
+**Description**: Generate date-wise stock-in report (PDF base64). Shows quantity added per product within date range.
 
-**Example**:
-```bash
-curl -X POST http://localhost:8000/admin/StockReport \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -b cookies.txt \
-  -d "cat_name=Electronics&pro_name=Phone&ven_name=Supplier&timezone=UTC&branches=MainBranch&shelf=A1"
-```
-
-**Response**:
-```json
-"JVBERi0xLjQKMSAwIG9iago8PAovVHlwZSAvQ2F0YWxvZwovUGFnZXMgMiAwIFIKPj4KZW5kb2JqCjIgMCBvYmoKPDwKL1R5cGUgL1BhZ2VzCi9LaWRzIFszIDAgUl0KL0NvdW50IDEKPj4KZW5kb2JqCjMgMCBvYmoKPDwKL1R5cGUgL1BhZ2UKL1BhcmVudCAyIDAgUgovTWVkaWFCb3ggWzAgMCA2MTIgNzkyXQovQ29udGVudHMgNCAwIFIKPj4KZW5kb2JqCjQgMCBvYmoKPDwKL0xlbmd0aCA0NAo+PgpzdHJlYW0KQlQKL0YxIDEyIFRmCjcyIDcyMCBUZAooU3RvY2sgUmVwb3J0KSBUagoKRVQKZW5kc3RyZWFtCmVuZG9iagp4cmVmCjAgNQp0cmFpbGVyCjw8Ci9TaXplIDUKL1Jvb3QgMSAwIFIKPj4KJSVFT0Y="
-```
-
-### 6. Daily Inventory Report
-
-**Endpoint**: `POST /admin/Dailyinventoryreport`
-
-**Description**: Generate daily inventory report in PDF format.
-
-**Authentication**: Admin role required
-
-**Example**:
-```bash
-curl -X POST http://localhost:8000/admin/Dailyinventoryreport \
-  -b cookies.txt
-```
-
-**Response**:
-```json
-"JVBERi0xLjQKMSAwIG9iago8PAovVHlwZSAvQ2F0YWxvZwovUGFnZXMgMiAwIFIKPj4KZW5kb2JqCjIgMCBvYmoKPDwKL1R5cGUgL1BhZ2VzCi9LaWRzIFszIDAgUl0KL0NvdW50IDEKPj4KZW5kb2JqCjMgMCBvYmoKPDwKL1R5cGUgL1BhZ2UKL1BhcmVudCAyIDAgUgovTWVkaWFCb3ggWzAgMCA2MTIgNzkyXQovQ29udGVudHMgNCAwIFIKPj4KZW5kb2JqCjQgMCBvYmoKPDwKL0xlbmd0aCA2MQo+PgpzdHJlYW0KQlQKL0YxIDEyIFRmCjcyIDcyMCBUZAooRGFpbHkgSW52ZW50b3J5IFJlcG9ydCkgVGoKRVQKZW5kc3RyZWFtCmVuZG9iagp4cmVmCjAgNQp0cmFpbGVyCjw8Ci9TaXplIDUKL1Jvb3QgMSAwIFIKPj4KJSVFT0Y="
-```
-
-### 7. Get Stock Detail
-
-**Endpoint**: `POST /admin/GetStockDetail`
-
-**Description**: Get stock details for a specific product.
-
-**Authentication**: Admin role required
+**Endpoint**: `POST /stock/stockinreport?date_from=&date_to=`
 
 **Query Parameters**:
-- `pro_name`: Product name to search for
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `date_from` | string | ✅ Yes | Start date (YYYY-MM-DD) |
+| `date_to` | string | ✅ Yes | End date (YYYY-MM-DD) |
 
 **Example**:
 ```bash
-curl -X POST "http://localhost:8000/admin/GetStockDetail?pro_name=ProductName" \
+curl -X POST "http://localhost:8000/stock/stockinreport?date_from=2026-03-01&date_to=2026-03-10" \
   -b cookies.txt
 ```
 
-**Response**:
+**Response** (200 OK):
+```
+Base64 encoded PDF string
+```
+
+**Report Contents**:
+- Product name
+- Barcode
+- Total quantity received in date range
+- First entry date
+- Date range covered
+
+---
+
+### 8. GET /stock/generatebarcodesonly - Generate Barcodes
+
+**Access**: `employee_required_from_session()` - **Employee, Cashier, Admin**
+
+**Description**: Generate ZPL barcode commands for existing products.
+
+**Endpoint**: `GET /stock/generatebarcodesonly`
+
+**Example**:
+```bash
+curl -X GET "http://localhost:8000/stock/generatebarcodesonly" \
+  -b cookies.txt
+```
+
+**Response** (200 OK):
 ```json
 {
-  "quantity": 50
+  "zpl_commands": [
+    {
+      "product_id": "uuid-string",
+      "product_name": "Nike Air Max",
+      "barcode": "1234567890123",
+      "zpl": "^XA^FO160,50^BY2,3,80^BCN,80,Y,N,N^FD1234567890123^FS..."
+    }
+  ]
 }
 ```
 
-## CRUD Operations Summary
+---
 
-### Create Operations
-- `POST /admin/SaveStockIn` - Create stock in transactions (stock data only)
-- `POST /admin/SaveStockInWithBarcodes` - Create stock in transactions with optional barcode printing
-- `POST /admin/Adjuststock` - Create stock adjustments
+## Frontend API Routes
 
-### Read Operations
-- `GET /admin/ViewStock` - View stock with filtering
-- `GET /admin/searchstock` - Search stock by branch
-- `POST /admin/GetStockDetail` - Get specific stock details
+The frontend uses Next.js API routes as proxies:
 
-### Update Operations
-- `POST /admin/Adjuststock` - Adjust stock levels
+| Frontend Route | Backend Endpoint |
+|----------------|------------------|
+| `GET /api/stock/viewstock` | `GET /stock/viewstock` |
+| `GET /api/stock/searchstock` | `GET /stock/searchstock` |
+| `POST /api/stock/adjuststock` | `POST /stock/adjuststock` |
+| `POST /api/stock/savestockin` | `POST /stock/savestockin` |
+| `POST /api/stock/savestockinwithbarcode` | `POST /stock/savestockinwithbarcode` |
+| `POST /api/stock/stockreport` | `POST /stock/stockreport` |
+| `POST /api/stock/stockinreport` | `POST /stock/stockinreport` |
+| `GET /api/stock/generatebarcodesonly` | `GET /stock/generatebarcodesonly` |
 
-### Report Operations
-- `POST /admin/StockReport` - Generate stock report (PDF)
-- `POST /admin/StockReportexcel` - Generate stock report (Excel)
-- `POST /admin/Dailyinventoryreport` - Generate daily inventory report
+**Example** - Frontend fetch with pagination:
+```typescript
+const fetchStock = async (page: number = 1, searchTerm: string = '') => {
+  const params = new URLSearchParams({
+    page: page.toString(),
+    limit: '8',
+    search_string: searchTerm
+  });
 
-### Print Operations
-- `POST /admin/PrintBarcodes` - Generate ZPL commands for barcode printing
+  const response = await fetch(`/api/stock/viewstock?${params.toString()}`, {
+    method: 'GET',
+    credentials: 'include',
+  });
 
-## Frontend-Compatible Endpoints
-
-The following capitalized endpoints are provided for JavaScript frontend compatibility:
-
-- `GET /admin/ViewStock` - View stock with search and branch filtering
-- `POST /admin/Adjuststock` - Adjust stock levels
-- `POST /admin/SaveStockIn` - Save stock in transactions
-- `GET /admin/searchstock` - Search stock by branch
-- `POST /admin/StockReport` - Generate stock report (PDF)
-- `POST /admin/StockReportexcel` - Generate stock report (Excel)
-- `POST /admin/Dailyinventoryreport` - Generate daily inventory report
-- `POST /admin/GetStockDetail` - Get stock detail by product name
-
-## Error Handling
-
-All endpoints return standardized error responses:
-
-```json
-{
-  "error": {
-    "type": "error_type",
-    "message": "Human-readable error message",
-    "status_code": 400,
-    "path": "/endpoint/path",
-    "timestamp": "2026-01-31T11:00:00.000000"
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to fetch stock');
   }
+
+  return response.json();
+};
+```
+
+---
+
+## Error Codes
+
+| HTTP Status | Meaning | Common Causes |
+|-------------|---------|---------------|
+| 200 | OK | Success |
+| 400 | Bad Request | Invalid input, invalid date format, invalid action |
+| 401 | Unauthorized | Not logged in, invalid session |
+| 403 | Forbidden | Insufficient permissions |
+| 404 | Not Found | Product not found, vendor not found |
+| 500 | Server Error | Database error, server issue |
+
+---
+
+## Testing Checklist
+
+### Login First
+- [ ] Login with admin credentials
+- [ ] Save cookies (`-c cookies.txt`)
+
+### Test GET /stock/viewstock
+- [ ] Fetch first page (page=1, limit=8)
+- [ ] Fetch with search term
+- [ ] Fetch with branch filter
+- [ ] Verify only products with stock > 0 are returned
+- [ ] Verify pagination response format
+
+### Test POST /stock/adjuststock
+- [ ] Increase stock for product
+- [ ] Decrease stock for product
+- [ ] Try invalid action (should fail)
+- [ ] Try decrease below 0 (should set to 0)
+
+### Test POST /stock/savestockin
+- [ ] Add stock with vendor
+- [ ] Add stock without cost price
+- [ ] Try non-existent product (should fail)
+- [ ] Try non-existent vendor (should fail)
+
+### Test POST /stock/savestockinwithbarcode
+- [ ] Add stock with barcode generation
+- [ ] Verify ZPL commands in response
+- [ ] Test with product without barcode
+
+### Test Reports
+- [ ] Generate stock report (PDF)
+- [ ] Generate stock-in report with date range
+- [ ] Generate barcodes only
+
+---
+
+## Stock Data Models
+
+### Stock Entry Types:
+```python
+class StockEntryType(str, Enum):
+    IN = "IN"        # Stock received from vendor
+    OUT = "OUT"      # Stock sold/removed
+    ADJUST = "ADJUST" # Stock adjustment
+```
+
+### Stock Entry Schema:
+```python
+class StockEntry(SQLModel, table=True):
+    __tablename__ = "stock_entries"
+    
+    id: UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    product_id: UUID = Field(foreign_key="products.id")
+    vendor_id: Optional[UUID] = Field(foreign_key="vendors.id", default=None)
+    qty: int
+    cost_price: Optional[Decimal] = Field(default=None)
+    type: StockEntryType
+    location: Optional[str] = Field(default=None)
+    ref: Optional[str] = Field(default=None)
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+```
+
+### Stock Adjust Request:
+```json
+{
+  "product_id": "uuid-string",
+  "quantity": 5,
+  "action": "increase",
+  "reason": "Stock count adjustment"
 }
 ```
 
-## Security Notes
-
-- All endpoints require appropriate role-based access control using session cookies
-- Stock data is protected by role-based access control
-- Audit logs are maintained for all stock-related actions
-- Only admins can modify stock levels and generate reports
-- Foreign key constraints prevent deletion of products with stock history
-- Session-based authentication with cookie management for enhanced security
-- Protection against JWT token theft from client-side storage
-- Instant logout capability across all devices
-- Full control over active sessions
-
-## Production Ready Features
-
-- Async/await implementation for high concurrency
-- Pydantic v2 validation
-- Proper error handling and logging
-- Database transaction safety
-- Session-based authentication with cookie management
-- Role-based access control
-- Input sanitization and validation
-- Comprehensive API documentation
-- Server-side session control for better security
-- Instant logout capability across all devices
-- Better compliance with audit trails and regulations
-
-## CRUD Commands for Stock Operations
-
-### Stock In Operations
-
-**Basic Stock In (Database Only)**:
-```bash
-curl -X POST http://localhost:8000/admin/SaveStockIn \
-  -H "Content-Type: application/json" \
-  -b cookies.txt \
-  -d '[{
-    "ven_name": "Vendor Name",
-    "pro_name": "Product Name",
-    "pro_price": 99.99,
-    "pro_cost": 79.99,
-    "quantity": 50,
-    "totalCost": 3999.5,
-    "pro_barcode": "1234567890123",
-    "cat_name": "Category Name",
-    "brand": "Brand Name",
-    "pro_id": "uuid-string",
-    "ven_id": "uuid-string"
-  }]'
+### Stock In Request:
+```json
+{
+  "product_id": "uuid-string",
+  "vendor_id": "uuid-string",
+  "quantity": 50,
+  "cost_price": 79.99,
+  "date": "2026-03-10"
+}
 ```
 
-**Stock In with Barcode Printing**:
-```bash
-curl -X POST "http://localhost:8000/admin/SaveStockInWithBarcodes?print_barcodes=true" \
-  -H "Content-Type: application/json" \
-  -b cookies.txt \
-  -d '[{
-    "ven_name": "Vendor Name",
-    "pro_name": "Product Name",
-    "pro_price": 99.99,
-    "pro_cost": 79.99,
-    "quantity": 50,
-    "totalCost": 3999.5,
-    "pro_barcode": "1234567890123",
-    "cat_name": "Category Name",
-    "brand": "Brand Name",
-    "pro_id": "uuid-string",
-    "ven_id": "uuid-string"
-  }]'
+---
+
+## Margin Calculation
+
+Margin percentage is calculated as:
+
+```
+Margin % = ((Selling Price - Cost Price) / Selling Price) × 100
 ```
 
-### Barcode Printing Operations
+**Example**:
+- Selling Price: Rs. 100
+- Cost Price: Rs. 80
+- Margin: ((100 - 80) / 100) × 100 = 20%
 
-**Generate ZPL for Specific Product**:
-```bash
-curl -X POST "http://localhost:8000/admin/PrintBarcodes?pro_name=Product Name&quantity=5&barcode=1234567890123" \
-  -b cookies.txt
-```
+---
 
-### Stock Adjustment Operations
+## Related Documentation
 
-**Adjust Stock Levels**:
-```bash
-curl -X POST http://localhost:8000/admin/Adjuststock \
-  -H "Content-Type: application/json" \
-  -b cookies.txt \
-  -d '[{
-    "pro_name": "Product Name",
-    "quantity": 10,
-    "stock_id": "uuid-string",
-    "status": "IN",
-    "frombranch": "MainBranch",
-    "tobranch": "SecondaryBranch"
-  }]'
-```
-
-### Stock Viewing Operations
-
-**View All Stock**:
-```bash
-curl -X GET "http://localhost:8000/admin/ViewStock?search_string=product&branches=MainBranch&limit=100" \
-  -b cookies.txt
-```
-
-**Search Stock by Branch**:
-```bash
-curl -X GET "http://localhost:8000/admin/searchstock?branches=MainBranch&search_string=product" \
-  -b cookies.txt
-```
-
-### Report Generation Operations
-
-**Generate Stock Report (PDF)**:
-```bash
-curl -X POST http://localhost:8000/admin/StockReport \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -b cookies.txt \
-  -d "cat_name=Electronics&pro_name=Phone&ven_name=Supplier&timezone=UTC&branches=MainBranch&shelf=A1"
-```
-
-**Generate Stock Report (Excel)**:
-```bash
-curl -X POST http://localhost:8000/admin/StockReportexcel \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -b cookies.txt \
-  -d "cat_name=Electronics&pro_name=Phone&ven_name=Supplier&timezone=UTC&branches=MainBranch&shelf=A1"
-```
-
-**Generate Daily Inventory Report**:
-```bash
-curl -X POST http://localhost:8000/admin/Dailyinventoryreport \
-  -b cookies.txt
-```
+- [Authentication](authentication_api.md) - Login and session management
+- [User Management](administrative_api.md) - User CRUD operations
+- [Product API](productapi.md) - Product management
+- [Vendor API](vendorapi.md) - Vendor management
+- [Stock Adjustment](stock_adjustment.md) - Stock adjustment workflow

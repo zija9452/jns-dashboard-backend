@@ -1,64 +1,83 @@
-# Administrative API Documentation
+# User Management API (Administration)
 
-This document provides comprehensive documentation for all administrative endpoints in the Regal POS Backend with session-based authentication, including curl commands for testing and integration.
+## 🔐 Authentication & Authorization
 
-## Authentication
+### Login Required
 
-All admin endpoints require session-based authentication. Obtain a session by logging in:
+Before using any of these endpoints, you **MUST** login first:
 
 ```bash
-curl -X POST http://localhost:8000/auth/session-login \
+curl -X POST http://localhost:8000/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"username": "admin", "password": "admin123"}' \
+  -d '{
+    "username": "admin",
+    "password": "admin123"
+  }' \
   -c cookies.txt
 ```
 
-The login response will include a session cookie that will be automatically sent with subsequent requests when using the `-b` flag with curl.
-
-### Session Expiration
-- Session cookies expire after **3 hours**
-- Access tokens (JWT) expire after **15 minutes**
-- Refresh tokens expire after **30 days**
-
-### Rate Limiting
-
-Authentication endpoints are protected by rate limiting to prevent brute force attacks:
-- 5 login attempts per 5 minutes per IP address
-- 3 failed attempts trigger a 15-minute temporary lockout
-- Successful login resets the failed attempts counter
-
-If rate limits are exceeded, you'll receive a 429 Too Many Requests response:
-```json
-{
-  "detail": "Too many login attempts. Please try again later."
-}
-```
+**Save the cookie!** All subsequent requests require the session cookie (`-b cookies.txt`).
 
 ---
 
-## User Management Endpoints
+### 🔑 Access Control
 
-All user CRUD operations (admin, cashier, employee) are handled through the `/users/` endpoints.
+These endpoints use **session-based authentication** with role checks:
 
-### 1. View All Users
+| Decorator | Allowed Roles | Used By |
+|-----------|--------------|---------|
+| `admin_required_from_session()` | `admin` only | GET all, DELETE |
+| `get_current_user_from_session()` | `admin`, `cashier`, `employee` | GET single, PUT (own profile) |
 
-**Endpoint**: `GET /users/`
+**Important Notes:**
 
-**Description**: Get list of all users (admin, cashier, employee) with pagination.
+1. **GET /users/** - Requires **admin** role
+   - Only admins can view all users
+   - Cashiers and employees cannot access this endpoint
 
-**Authentication**: Admin role required (session-based)
+2. **GET /users/{id}** - Requires **any authenticated user**
+   - Users can view their own profile
+   - Admins can view any user's profile
+
+3. **PUT /users/{id}** - Requires **any authenticated user**
+   - Users can update their own profile
+   - Admins can update any user
+   - **Only admins can update roles**
+
+4. **DELETE /users/{id}** - Requires **admin** role
+   - Only admins can delete users
+   - Users cannot delete their own account
+
+---
+
+## API Endpoints
+
+All user CRUD operations are handled through `/users/` endpoints.
+
+---
+
+### 1. GET /users/ - View All Users
+
+**Access**: `admin_required_from_session()` - **Admin only**
+
+**Description**: Get list of all users (admin, cashier, employee) with pagination and search.
+
+**Endpoint**: `GET /users/?skip=0&limit=100&search_string=`
 
 **Query Parameters**:
-- `skip`: Number of records to skip (default: 0)
-- `limit`: Maximum number of records to return (default: 100, max: 200)
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `skip` | int | 0 | Number of records to skip |
+| `limit` | int | 100 | Max records to return (max: 200) |
+| `search_string` | string | - | Search by username, full_name, phone, cnic, branch, address |
 
 **Example**:
 ```bash
-curl -X GET "http://localhost:8000/users/?skip=0&limit=100" \
+curl -X GET "http://localhost:8000/users/?skip=0&limit=100&search_string=admin" \
   -b cookies.txt
 ```
 
-**Response**:
+**Response** (200 OK):
 ```json
 [
   {
@@ -66,6 +85,7 @@ curl -X GET "http://localhost:8000/users/?skip=0&limit=100" \
     "full_name": "Admin User",
     "username": "admin",
     "role_id": "33128819-80ae-4a6a-9ab7-7eff272a81ff",
+    "role_name": "admin",
     "phone": "1234567890",
     "address": "Main Office",
     "cnic": "1234567890123",
@@ -80,58 +100,30 @@ curl -X GET "http://localhost:8000/users/?skip=0&limit=100" \
 ]
 ```
 
-### 2. View Single User
-
-**Endpoint**: `GET /users/{user_id}`
-
-**Description**: Get details of a specific user by ID.
-
-**Authentication**: Session-based (users can view their own profile, admins can view any user)
-
-**Parameters**:
-- `{user_id}`: UUID of the user
-
-**Example**:
-```bash
-curl -X GET "http://localhost:8000/users/8fc7528b-c3a2-4b36-a39a-68c13699de80" \
-  -b cookies.txt
-```
-
-**Response**:
+**Error** (403 Forbidden):
 ```json
 {
-  "id": "8fc7528b-c3a2-4b36-a39a-68c13699de80",
-  "full_name": "Admin User",
-  "username": "admin",
-  "role_id": "33128819-80ae-4a6a-9ab7-7eff272a81ff",
-  "phone": "1234567890",
-  "address": "Main Office",
-  "cnic": "1234567890123",
-  "branch": "Main Branch",
-  "company_id": null,
-  "is_biometric_enabled": false,
-  "is_active": true,
-  "created_at": "2026-01-30T10:31:18.150552",
-  "updated_at": "2026-01-30T10:31:18.150594",
-  "original_password": null
+  "detail": "Admin or cashier access required"
 }
 ```
 
-### 3. Create User
+---
 
-**Endpoint**: `POST /users/`
+### 2. POST /users/ - Create User
+
+**Access**: `admin_required_from_session()` - **Admin only**
 
 **Description**: Create a new user (admin, cashier, or employee).
 
-**Authentication**: Admin role required (session-based)
+**Endpoint**: `POST /users/`
 
-**Request Body** (JSON):
+**Request Body**:
 ```json
 {
   "full_name": "John Doe",
   "username": "johndoe",
   "password": "secure_password123",
-  "role_id": "42a87026-09e0-40d2-8c21-23df1914e34d",
+  "role_name": "cashier",
   "phone": "1234567890",
   "address": "123 Main St",
   "cnic": "1234567890123",
@@ -139,10 +131,17 @@ curl -X GET "http://localhost:8000/users/8fc7528b-c3a2-4b36-a39a-68c13699de80" \
 }
 ```
 
-**Role IDs**:
-- `33128819-80ae-4a6a-9ab7-7eff272a81ff` - Admin
-- `42a87026-09e0-40d2-8c21-23df1914e34d` - Cashier
-- `66ab52f4-391d-43ba-b569-21ec43a74aac` - Employee
+**Request Fields**:
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `username` | string | ✅ Yes | Unique username |
+| `password` | string | ✅ Yes | Plain text password (will be hashed) |
+| `role_name` | string | ✅ Yes | `admin`, `cashier`, or `employee` |
+| `full_name` | string | ❌ No | Full name |
+| `phone` | string | ❌ No | Phone number |
+| `cnic` | string | ❌ No | CNIC number |
+| `address` | string | ❌ No | Address |
+| `branch` | string | ❌ No | Branch name |
 
 **Example**:
 ```bash
@@ -153,23 +152,22 @@ curl -X POST "http://localhost:8000/users/" \
     "full_name": "John Doe",
     "username": "johndoe",
     "password": "secure_password123",
-    "role_id": "42a87026-09e0-40d2-8c21-23df1914e34d",
+    "role_name": "cashier",
     "phone": "1234567890",
-    "address": "123 Main St",
     "cnic": "1234567890123",
     "branch": "Main Branch"
   }'
 ```
 
-**Response**:
+**Response** (200 OK):
 ```json
 {
   "id": "uuid-string",
   "full_name": "John Doe",
   "username": "johndoe",
   "role_id": "42a87026-09e0-40d2-8c21-23df1914e34d",
+  "role_name": "cashier",
   "phone": "1234567890",
-  "address": "123 Main St",
   "cnic": "1234567890123",
   "branch": "Main Branch",
   "company_id": null,
@@ -181,73 +179,132 @@ curl -X POST "http://localhost:8000/users/" \
 }
 ```
 
-### 4. Update User
+**Errors**:
 
-**Endpoint**: `PUT /users/{user_id}`
-
-**Description**: Update an existing user's details.
-
-**Authentication**: Session-based (users can update their own profile, admins can update any user)
-
-**Path Parameter**:
-- `{user_id}`: UUID of the user to update
-
-**Request Body** (JSON, all fields optional):
+**400 Bad Request** - Username taken:
 ```json
 {
-  "full_name": "Updated Name",
-  "phone": "9876543210",
-  "address": "Updated Address",
-  "cnic": "9876543210123",
-  "branch": "Updated Branch",
-  "role_id": "33128819-80ae-4a6a-9ab7-7eff272a81ff",
-  "password": "new_password123"
+  "detail": "Username already taken"
 }
 ```
 
-**Example**:
+**400 Bad Request** - Invalid role:
+```json
+{
+  "detail": "Role 'cashier' does not exist. Available roles: admin, cashier, employee"
+}
+```
+
+---
+
+### 3. PUT /users/{user_id} - Update User
+
+**Access**: `get_current_user_from_session()` - **Any authenticated user**
+
+**Description**: Update user details. Users can update their own profile. Admins can update any user.
+
+**Endpoint**: `PUT /users/{user_id}`
+
+**Path Parameter**: `user_id` - UUID of the user
+
+**Request Body** (all fields optional):
+```json
+{
+  "full_name": "Updated Name",
+  "username": "new_username",
+  "password": "new_password123",
+  "role_name": "admin",
+  "phone": "9876543210",
+  "cnic": "9876543210123",
+  "address": "New Address",
+  "branch": "New Branch"
+}
+```
+
+**Important Rules**:
+- ✅ Any user can update their own profile
+- ✅ Admins can update any user
+- ⚠️ **Only admins can update roles**
+- ⚠️ **Users cannot update their own role**
+
+**Example** - Admin updates another user:
 ```bash
 curl -X PUT "http://localhost:8000/users/8fc7528b-c3a2-4b36-a39a-68c13699de80" \
   -H "Content-Type: application/json" \
   -b cookies.txt \
   -d '{
     "full_name": "Updated Name",
-    "phone": "9876543210"
+    "phone": "9876543210",
+    "role_name": "admin"
   }'
 ```
 
-**Response**:
+**Example** - User updates own profile:
+```bash
+curl -X PUT "http://localhost:8000/users/8fc7528b-c3a2-4b36-a39a-68c13699de80" \
+  -H "Content-Type: application/json" \
+  -b cookies.txt \
+  -d '{
+    "phone": "9876543210",
+    "address": "New Address"
+  }'
+```
+
+**Response** (200 OK):
 ```json
 {
   "id": "8fc7528b-c3a2-4b36-a39a-68c13699de80",
   "full_name": "Updated Name",
   "username": "admin",
   "role_id": "33128819-80ae-4a6a-9ab7-7eff272a81ff",
+  "role_name": "admin",
   "phone": "9876543210",
-  "address": "Main Office",
   "cnic": "1234567890123",
   "branch": "Main Branch",
-  "company_id": null,
-  "is_biometric_enabled": false,
   "is_active": true,
-  "created_at": "2026-01-30T10:31:18.150552",
-  "updated_at": "2026-02-17T05:00:00.000000",
-  "original_password": null
+  "updated_at": "2026-02-17T05:00:00.000000"
 }
 ```
 
-### 5. Delete User
+**Errors**:
+
+**403 Forbidden** - Cannot update role (not admin):
+```json
+{
+  "detail": "Only admins can update user roles"
+}
+```
+
+**403 Forbidden** - Not authorized:
+```json
+{
+  "detail": "Not authorized to update this user"
+}
+```
+
+**404 Not Found**:
+```json
+{
+  "detail": "User not found"
+}
+```
+
+---
+
+### 4. DELETE /users/{user_id} - Delete User
+
+**Access**: `admin_required_from_session()` - **Admin only**
+
+**Description**: Delete a user by ID. Users cannot delete their own account.
 
 **Endpoint**: `DELETE /users/{user_id}`
 
-**Description**: Delete a user by ID.
+**Path Parameter**: `user_id` - UUID of the user
 
-**Authentication**: Admin role required (session-based)
-
-**Path Parameter**:
-- `{user_id}`: UUID of the user to delete
-
-**Note**: Users cannot delete their own account.
+**Important Rules**:
+- ✅ Only admins can delete users
+- ❌ **Users cannot delete their own account**
+- ⚠️ This action is irreversible
 
 **Example**:
 ```bash
@@ -255,47 +312,127 @@ curl -X DELETE "http://localhost:8000/users/8fc7528b-c3a2-4b36-a39a-68c13699de80
   -b cookies.txt
 ```
 
-**Response**:
+**Response** (200 OK):
 ```json
 {
   "message": "User deleted successfully"
 }
 ```
 
----
+**Errors**:
 
-## Password Hashing
-
-Passwords are hashed using **Argon2** algorithm before storing in the database.
-
-**Hashing Endpoint**: `src/auth/password.py`
-
-```python
-from passlib.context import CryptContext
-
-pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
-
-def get_password_hash(password: str):
-    return pwd_context.hash(password)
-
-def verify_password(plain_password: str, hashed_password: str):
-    return pwd_context.verify(plain_password, hashed_password)
+**400 Bad Request** - Cannot delete self:
+```json
+{
+  "detail": "Cannot delete your own account"
+}
 ```
 
-**Note**: For demonstration purposes, the original password is also stored in plain text in the `original_password` field. This is a **MAJOR SECURITY VULNERABILITY** and should be removed in production.
+**404 Not Found**:
+```json
+{
+  "detail": "User not found"
+}
+```
 
 ---
 
-## Other Admin Endpoints
+## Role Reference
 
-The `/admin/` router contains endpoints for:
-- Salesman management
-- Product management
-- Customer management
-- Vendor management
-- Invoice management
-- Expense management
-- Stock management
-- Reports and dashboards
+### Available Roles
 
-Refer to specific API documentation files for these endpoints.
+| Role Name | UUID | Description |
+|-----------|------|-------------|
+| `admin` | `33128819-80ae-4a6a-9ab7-7eff272a81ff` | Full system access |
+| `cashier` | `42a87026-09e0-40d2-8c21-23df1914e34d` | POS and sales access |
+| `employee` | `66ab52f4-391d-43ba-b569-21ec43a74aac` | Limited access |
+
+**Recommendation**: Use `role_name` (string) instead of UUIDs.
+
+---
+
+## Frontend API Routes
+
+The frontend uses Next.js API routes as proxies:
+
+| Frontend Route | Backend Endpoint |
+|----------------|------------------|
+| `GET /api/users/` | `GET /users/` |
+| `POST /api/users/` | `POST /users/` |
+| `PUT /api/users/{id}` | `PUT /users/{id}` |
+| `DELETE /api/users/{id}` | `DELETE /users/{id}` |
+
+**Example** - Frontend fetch:
+```typescript
+const fetchUsers = async (searchTerm: string = '') => {
+  const params = new URLSearchParams({
+    skip: '0',
+    limit: '100',
+    search_string: searchTerm
+  });
+
+  const response = await fetch(`/api/users/?${params.toString()}`, {
+    method: 'GET',
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to fetch users');
+  }
+
+  return response.json();
+};
+```
+
+---
+
+## Error Codes
+
+| HTTP Status | Meaning | Common Causes |
+|-------------|---------|---------------|
+| 200 | OK | Success |
+| 400 | Bad Request | Invalid input, username taken, invalid role |
+| 401 | Unauthorized | Not logged in, invalid session |
+| 403 | Forbidden | Insufficient permissions, role mismatch |
+| 404 | Not Found | User not found |
+| 500 | Server Error | Database error, server issue |
+
+---
+
+## Testing Checklist
+
+### Login First
+- [ ] Login with admin credentials
+- [ ] Save cookies (`-c cookies.txt`)
+
+### Test GET /users/
+- [ ] Fetch all users (admin session)
+- [ ] Fetch with search term
+- [ ] Try with cashier session (should fail with 403)
+
+### Test POST /users/
+- [ ] Create new admin user
+- [ ] Create new cashier user
+- [ ] Create new employee user
+- [ ] Try duplicate username (should fail)
+- [ ] Try invalid role (should fail)
+
+### Test PUT /users/{id}
+- [ ] Update own profile (any user)
+- [ ] Update another user (admin)
+- [ ] Update role (admin only)
+- [ ] Try updating role as non-admin (should fail with 403)
+
+### Test DELETE /users/{id}
+- [ ] Delete user (admin)
+- [ ] Try deleting self (should fail with 400)
+- [ ] Try delete as non-admin (should fail with 403)
+
+---
+
+## Related Documentation
+
+- [Authentication API](../src/auth/session_auth.py) - Session management
+- [User Model](../src/models/user.py) - Database schema
+- [UserService](../src/services/user_service.py) - Business logic

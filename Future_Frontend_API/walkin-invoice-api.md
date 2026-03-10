@@ -1,185 +1,221 @@
-# Walk-in Invoice API Documentation
+# Walk-in Invoice API
 
-This document provides comprehensive documentation for all walk-in invoice-related endpoints in the Regal POS Backend with session-based authentication, including curl commands for testing and integration.
+## 🔐 Authentication & Authorization
 
-## Authentication
+### Login Required
 
-All walk-in invoice endpoints require session-based authentication. Obtain a session by logging in:
+Before using any of these endpoints, you **MUST** login first:
 
 ```bash
-curl -X POST http://localhost:8000/auth/session-login \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "username=admin&password=admin123"
+curl -X POST http://localhost:8000/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "admin",
+    "password": "admin123"
+  }' \
+  -c cookies.txt
 ```
 
-The login response will include a session cookie that will be automatically sent with subsequent requests when using the `-b` flag with curl or proper cookie handling in applications.
+**Save the cookie!** All subsequent requests require the session cookie (`-b cookies.txt`).
 
-## Walk-in Invoice Management Endpoints
+---
 
-### 1. Create Walk-in Invoice
+### 🔑 Access Control
 
-**Endpoint**: `POST /walkin-invoice/walkin-invoices`
+| Decorator | Allowed Roles | Used By |
+|-----------|--------------|---------|
+| `admin_cashier_employee_required_from_session()` | `admin`, `cashier`, `employee` | GET operations |
+| `cashier_required_from_session()` | `admin`, `cashier` | POST operations |
+| `admin_required_from_session()` | `admin` only | DELETE operations |
 
-**Description**: Create a new walk-in invoice with immediate payment. All products selected and paid in full at time of purchase.
+---
 
-**Authentication**: Admin role required
+## API Endpoints
+
+### Walk-in Invoice CRUD Operations
+
+---
+
+### 1. POST /walkininvoice/walkin-invoices - Create Walk-in Invoice
+
+**Access**: `cashier_required_from_session()` - **Admin, Cashier**
+
+**Description**: Create a new walk-in invoice with immediate payment. Returns PDF receipt.
+
+**Endpoint**: `POST /walkininvoice/walkin-invoices`
 
 **Request Body**:
 ```json
 {
   "items": [
     {
-      "pro_name": "string",
-      "pro_quantity": 1,
-      "unit_price": 0.0,
-      "discount": 0.0,
-      "cat_name": "string",
+      "pro_name": "Nike Air Max",
+      "pro_quantity": 2,
+      "unit_price": 99.99,
+      "discount": 5.00,
+      "cat_name": "Shoes",
+      "name": "Nike Air Max"
     }
   ],
-  "customer_id": "string",
-  "salesman_id": "string",
-  "payment_method": "string",
-  "notes": "string"
+  "customer_id": "uuid-string",
+  "salesman_id": "uuid-string",
+  "payment_method": "cash",
+  "payment_date": "2026-03-10",
+  "manual_discount": 0
 }
 ```
 
+**Request Fields**:
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `items` | array | ✅ Yes | Array of items with pro_name, pro_quantity, unit_price, discount |
+| `customer_id` | string | ✅ Yes | Customer UUID |
+| `salesman_id` | string | ❌ No | Salesman UUID |
+| `payment_method` | string | ✅ Yes | cash, easypaisa, bank, etc. |
+| `payment_date` | string | ❌ No | Payment date (YYYY-MM-DD) |
+| `manual_discount` | number | ❌ No | Additional manual discount |
+
 **Example**:
 ```bash
-curl -X POST http://localhost:8000/walkin-invoice/walkin-invoices \
+curl -X POST "http://localhost:8000/walkininvoice/walkin-invoices" \
   -H "Content-Type: application/json" \
   -b cookies.txt \
   -d '{
     "items": [
       {
-        "pro_name": "T-Shirt",
+        "pro_name": "Nike Air Max",
         "pro_quantity": 2,
-        "unit_price": 25.00,
-        "discount": 2.00
+        "unit_price": 99.99,
+        "discount": 5.00,
+        "cat_name": "Shoes"
       }
     ],
-    "payment_method": "cash",
-    "notes": "Walk-in customer purchase"
+    "customer_id": "uuid-string",
+    "payment_method": "cash"
   }'
 ```
 
-**Response**: Base64 encoded PDF receipt
+**Response** (200 OK):
+```json
+{
+  "invoice_id": "uuid-string",
+  "invoice_no": "WIV-001",
+  "total_amount": 189.98,
+  "pdf": "base64-encoded-pdf-string"
+}
+```
 
-### 2. Get Walk-in Invoices
+**Note**: Response includes base64-encoded PDF receipt for printing.
 
-**Endpoint**: `GET /walkin-invoice/walkin-invoices`
+---
 
-**Description**: Get list of walk-in invoices with optional filtering.
+### 2. GET /walkininvoice/walkin-invoices - Get Walk-in Invoices
 
-**Authentication**: Admin role required
+**Access**: `admin_cashier_employee_required_from_session()` - **Any authenticated user**
 
-**Query Parameters** (optional):
-- `limit`: Maximum number of records to return (default 100, max 200)
-- `skip`: Number of records to skip (for pagination)
-- `customer_id`: Filter by customer ID
-- `status`: Filter by invoice status
-- `date`: Filter by date (YYYY-MM-DD)
+**Description**: Get list of walk-in invoices with pagination and filters.
+
+**Endpoint**: `GET /walkininvoice/walkin-invoices?skip=0&limit=8&customer_id=&date=`
+
+**Query Parameters**:
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `skip` | int | 0 | Records to skip |
+| `limit` | int | 100 | Items per page |
+| `customer_id` | string | - | Filter by customer ID |
+| `date` | string | - | Filter by date (YYYY-MM-DD) |
 
 **Example**:
 ```bash
-curl -X GET "http://localhost:8000/walkin-invoice/walkin-invoices?limit=10&skip=0" \
+curl -X GET "http://localhost:8000/walkininvoice/walkin-invoices?skip=0&limit=8" \
   -b cookies.txt
 ```
 
-**Response**:
+**Response** (200 OK):
 ```json
 [
   {
     "invoice_id": "uuid-string",
     "invoice_no": "WIV-001",
     "customer_id": "uuid-string",
-    "salesman_id": "uuid-string",
     "customer_name": "Walk-in Customer",
     "team_name": "",
     "quantity": 2,
-    "total_amount": 48.0,
-    "date": "2026-02-07",
+    "total_amount": 189.98,
+    "date": "2026-03-10",
     "status": "paid",
-    "items": [],
-    "created_at": "2026-02-07T10:00:00.000000",
-    "updated_at": "2026-02-07T10:00:00.000000"
+    "payment_method": "cash",
+    "created_at": "2026-03-10T10:00:00"
   }
 ]
 ```
 
-### 3. Get Specific Walk-in Invoice
+---
 
-**Endpoint**: `GET /walkin-invoice/walkin-invoices/{invoice_id}`
+### 3. GET /walkininvoice/walkin-invoices/{invoice_id} - Get Invoice Details
+
+**Access**: `admin_cashier_employee_required_from_session()` - **Any authenticated user**
 
 **Description**: Get specific walk-in invoice by ID.
 
-**Authentication**: Admin role required
+**Endpoint**: `GET /walkininvoice/walkin-invoices/{invoice_id}`
 
-**Path Parameter**:
-- `{invoice_id}`: UUID of the invoice
+**Path Parameter**: `invoice_id` - UUID of the invoice
 
 **Example**:
 ```bash
-curl -X GET http://localhost:8000/walkin-invoice/walkin-invoices/uuid-string \
+curl -X GET "http://localhost:8000/walkininvoice/walkin-invoices/uuid-string" \
   -b cookies.txt
 ```
 
-**Response**:
+**Response** (200 OK):
 ```json
 {
   "invoice_id": "uuid-string",
   "invoice_no": "WIV-001",
   "customer_id": "uuid-string",
   "salesman_id": "uuid-string",
-  "items": [],
-  "totals": {},
-  "total_amount": 48.0,
-  "amount_paid": 48.0,
-  "balance_due": 0.0,
+  "items": "[{\"pro_name\": \"Nike Air Max\", \"pro_quantity\": 2, ...}]",
+  "totals": "{\"subtotal\": 199.98, \"discount\": 10.00, \"total\": 189.98}",
+  "total_amount": 189.98,
+  "amount_paid": 189.98,
+  "balance_due": 0.00,
   "payment_status": "paid",
-  "payments_history": [],
-  "taxes": 0.0,
-  "discounts": 0.0,
-  "status": "issued",
   "payment_method": "cash",
-  "notes": "Walk-in customer purchase",
-  "created_by": "uuid-string",
-  "created_at": "2026-02-07T10:00:00.000000",
-  "updated_at": "2026-02-07T10:00:00.000000"
+  "status": "issued",
+  "created_at": "2026-03-10T10:00:00"
 }
 ```
 
-### 4. Update Walk-in Invoice
+---
 
-**Endpoint**: `PUT /walkin-invoice/walkin-invoices/{invoice_id}`
+### 4. PUT /walkininvoice/walkin-invoices/{invoice_id} - Update Invoice
 
-**Description**: Update existing walk-in invoice.
+**Access**: `admin_required_from_session()` - **Admin only**
 
-**Authentication**: Admin role required
+**Description**: Update an existing walk-in invoice.
 
-**Path Parameter**:
-- `{invoice_id}`: UUID of the invoice to update
+**Endpoint**: `PUT /walkininvoice/walkin-invoices/{invoice_id}`
 
-**Request Body**:
+**Path Parameter**: `invoice_id` - UUID of the invoice
+
+**Request Body** (all fields optional):
 ```json
 {
-  "items": "string",
-  "totals": "string",
-  "total_amount": "decimal",
-  "amount_paid": "decimal",
-  "balance_due": "decimal",
-  "payment_status": "string",
-  "payments_history": "string",
-  "taxes": "decimal",
-  "discounts": "decimal",
-  "status": "InvoiceStatus",
-  "payment_method": "string",
-  "notes": "string"
+  "items": "updated items JSON",
+  "totals": "updated totals JSON",
+  "total_amount": 199.98,
+  "amount_paid": 199.98,
+  "payment_status": "paid",
+  "status": "issued",
+  "payment_method": "cash",
+  "notes": "Updated notes"
 }
 ```
 
 **Example**:
 ```bash
-curl -X PUT http://localhost:8000/walkin-invoice/walkin-invoices/uuid-string \
+curl -X PUT "http://localhost:8000/walkininvoice/walkin-invoices/uuid-string" \
   -H "Content-Type: application/json" \
   -b cookies.txt \
   -d '{
@@ -187,33 +223,33 @@ curl -X PUT http://localhost:8000/walkin-invoice/walkin-invoices/uuid-string \
   }'
 ```
 
-**Response**:
+**Response** (200 OK):
 ```json
 {
   "success": true,
-  "message": "Invoice updated successfully",
-  "invoice_id": "uuid-string"
+  "message": "Invoice updated successfully"
 }
 ```
 
-### 5. Delete Walk-in Invoice
+---
 
-**Endpoint**: `DELETE /walkin-invoice/walkin-invoices/{invoice_id}`
+### 5. DELETE /walkininvoice/walkin-invoices/{invoice_id} - Delete Invoice
 
-**Description**: Delete walk-in invoice by ID. This will restore the inventory quantities that were decreased when the invoice was created.
+**Access**: `admin_required_from_session()` - **Admin only**
 
-**Authentication**: Admin role required
+**Description**: Delete a walk-in invoice by ID. Restores inventory quantities.
 
-**Path Parameter**:
-- `{invoice_id}`: UUID of the invoice to delete
+**Endpoint**: `DELETE /walkininvoice/walkin-invoices/{invoice_id}`
+
+**Path Parameter**: `invoice_id` - UUID of the invoice
 
 **Example**:
 ```bash
-curl -X DELETE http://localhost:8000/walkin-invoice/walkin-invoices/uuid-string \
+curl -X DELETE "http://localhost:8000/walkininvoice/walkin-invoices/uuid-string" \
   -b cookies.txt
 ```
 
-**Response**:
+**Response** (200 OK):
 ```json
 {
   "success": true,
@@ -221,178 +257,119 @@ curl -X DELETE http://localhost:8000/walkin-invoice/walkin-invoices/uuid-string 
 }
 ```
 
-### 6. Get Duplicate Invoice Receipt
+**Important**: Deleting an invoice restores the product stock levels that were reduced when the invoice was created.
 
-**Endpoint**: `GET /walkin-invoice/walkin-invoices/{invoice_id}/receipt`
+---
 
-**Description**: Get duplicate invoice/receipt for an existing walk-in invoice.
+### 6. GET /walkininvoice/walkin-invoices/{invoice_id}/receipt - Get Receipt
 
-**Authentication**: Admin role required
+**Access**: `admin_cashier_employee_required_from_session()` - **Any authenticated user**
 
-**Path Parameter**:
-- `{invoice_id}`: UUID of the invoice
+**Description**: Get duplicate invoice receipt for an existing walk-in invoice.
 
-**Example**:
-```bash
-curl -X GET http://localhost:8000/walkin-invoice/walkin-invoices/uuid-string/receipt \
-  -b cookies.txt
-```
+**Endpoint**: `GET /walkininvoice/walkin-invoices/{invoice_id}/receipt`
 
-**Response**: Base64 encoded PDF receipt
-
-### 7. Get Walk-in Invoices by Date
-
-**Endpoint**: `GET /walkin-invoice/walkin-invoices/date/{date_str}`
-
-**Description**: Get all walk-in invoices for a specific date.
-
-**Authentication**: Admin role required
-
-**Path Parameter**:
-- `{date_str}`: Date in YYYY-MM-DD format
+**Path Parameter**: `invoice_id` - UUID of the invoice
 
 **Example**:
 ```bash
-curl -X GET http://localhost:8000/walkin-invoice/walkin-invoices/date/2026-02-07 \
+curl -X GET "http://localhost:8000/walkininvoice/walkin-invoices/uuid-string/receipt" \
   -b cookies.txt
 ```
 
-**Response**:
+**Response** (200 OK):
 ```json
 {
-  "date": "2026-02-07",
-  "total_invoices": 1,
-  "total_amount": 48.0,
-  "invoices": [
-    {
-      "invoice_id": "uuid-string",
-      "invoice_no": "WIV-001",
-      "customer_id": "uuid-string",
-      "total_amount": 48.0,
-      "created_at": "2026-02-07T10:00:00.000000",
-      "products": [
-        {
-          "Orderid": "uuid-string",
-          "Product": "T-Shirt",
-          "Price": 25.0,
-          "Amount Paid": 48.0,
-          "Quantity": 2,
-          "Discount": 2.0,
-          "Total Discount": 2.0,
-          "Cost": 50.0,
-          "Time": "10:00:00",
-          "Date": "2026-02-07"
-        }
-      ]
-    }
-  ]
+  "invoice_no": "WIV-001",
+  "pdf": "base64-encoded-pdf-string"
 }
 ```
 
-### 8. Get Products for Sales
+**Note**: Returns base64-encoded PDF receipt for printing.
 
-**Endpoint**: `GET /walkin-invoice/products-for-sales`
+---
 
-**Description**: Get products for salesman to select from during sales. Allows filtering by name, barcode, etc.
+### 7. GET /walkininvoice/products-for-sales - Get Products for Sales
 
-**Authentication**: Admin role required
+**Access**: `employee_required_from_session()` - **Employee, Cashier, Admin**
 
-**Query Parameters** (optional):
-- `search_term`: Search term to filter products
-- `barcode`: Filter by specific barcode
-- `limit`: Maximum number of records to return (default 50, max 100)
+**Description**: Get products for salesman to select from during sales. Supports search filtering.
+
+**Endpoint**: `GET /walkininvoice/products-for-sales?search_term=&barcode=&limit=50`
+
+**Query Parameters**:
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `search_term` | string | - | Search by product name |
+| `barcode` | string | - | Filter by barcode |
+| `limit` | int | 50 | Max products to return |
 
 **Example**:
 ```bash
-curl -X GET "http://localhost:8000/walkin-invoice/products-for-sales?search_term=T-Shirt&limit=10" \
+curl -X GET "http://localhost:8000/walkininvoice/products-for-sales?search_term=Nike&limit=10" \
   -b cookies.txt
 ```
 
-**Response**:
+**Response** (200 OK):
 ```json
-{
-  "id": "uuid-string",
-  "sku": "string",
-  "name": "string",
-  "desc": "string",
-  "unit_price": 0.0,
-  "cost_price": 0.0,
-  "tax_rate": 0.0,
-  "stock_level": 0,
-  "barcode": "string",
-  "discount": 0.0,
-  "category": "string",
-  "attributes": "string"
-}
+[
+  {
+    "id": "uuid-string",
+    "sku": "SKU-123456",
+    "name": "Nike Air Max",
+    "unit_price": 99.99,
+    "cost_price": 79.99,
+    "stock_level": 50,
+    "barcode": "1234567890123",
+    "discount": 10.0,
+    "category": "Shoes",
+    "attributes": "product-image-url"
+  }
+]
 ```
 
-### 9. Get Invoice by Order ID
+---
 
-**Endpoint**: `GET /walkin-invoice/invoices-by-order-id/{order_id}`
+### 8. GET /walkininvoice/daily-invoice-report/{date_str} - Daily Report
 
-**Description**: Get specific invoice by order ID (invoice ID).
-
-**Authentication**: Admin role required
-
-**Path Parameter**:
-- `{order_id}`: UUID of the order/invoice
-
-**Example**:
-```bash
-curl -X GET http://localhost:8000/walkin-invoice/invoices-by-order-id/uuid-string \
-  -b cookies.txt
-```
-
-**Response**: Same as endpoint #3
-
-### 10. Get Daily Invoice Report
-
-**Endpoint**: `GET /walkin-invoice/daily-invoice-report/{date_str}`
+**Access**: `admin_required_from_session()` - **Admin only**
 
 **Description**: Get daily invoice report showing all invoices and totals for a specific date.
 
-**Authentication**: Admin role required
+**Endpoint**: `GET /walkininvoice/daily-invoice-report/{date_str}`
 
-**Path Parameter**:
-- `{date_str}`: Date in YYYY-MM-DD format
+**Path Parameter**: `date_str` - Date in YYYY-MM-DD format
 
 **Example**:
 ```bash
-curl -X GET http://localhost:8000/walkin-invoice/daily-invoice-report/2026-02-07 \
+curl -X GET "http://localhost:8000/walkininvoice/daily-invoice-report/2026-03-10" \
   -b cookies.txt
 ```
 
-**Response**:
+**Response** (200 OK):
 ```json
 {
-  "date": "2026-02-07",
-  "total_invoices": 1,
-  "total_amount": 48.0,
-  "total_paid": 48.0,
-  "total_discount": 2.0,
+  "date": "2026-03-10",
+  "total_invoices": 15,
+  "total_amount": 2850.00,
+  "total_paid": 2850.00,
+  "total_discount": 150.00,
   "invoices": [
     {
       "invoice_id": "uuid-string",
       "invoice_no": "WIV-001",
       "customer_id": "uuid-string",
-      "salesman_id": "uuid-string",
-      "total_amount": 48.0,
-      "amount_paid": 48.0,
+      "total_amount": 189.98,
       "payment_method": "cash",
       "payment_status": "paid",
-      "created_at": "2026-02-07T10:00:00.000000",
+      "created_at": "2026-03-10T10:00:00",
       "products": [
         {
-          "Orderid": "uuid-string",
-          "Product": "T-Shirt",
-          "Price": 25.0,
-          "Amount Paid": 48.0,
+          "Product": "Nike Air Max",
+          "Price": 99.99,
           "Quantity": 2,
-          "Discount": 2.0,
-          "Total Discount": 2.0,
-          "Cost": 50.0,
-          "Time": "10:00:00",
-          "Date": "2026-02-07"
+          "Discount": 5.00,
+          "Total": 189.98
         }
       ]
     }
@@ -400,63 +377,254 @@ curl -X GET http://localhost:8000/walkin-invoice/daily-invoice-report/2026-02-07
 }
 ```
 
-## Error Handling
+---
 
-All endpoints return standardized error responses:
+## Daily Cash Management Endpoints
 
+---
+
+### 9. POST /walkininvoice/opening - Save Opening Balance
+
+**Access**: `cashier_required_from_session()` - **Admin, Cashier**
+
+**Description**: Save opening balance for the day (cash only).
+
+**Endpoint**: `POST /walkininvoice/opening`
+
+**Request Body**:
 ```json
 {
-  "error": {
-    "type": "http_error",
-    "message": "Human-readable error message",
-    "status_code": 400,
-    "path": "/endpoint/path",
-    "timestamp": "2026-02-07T10:00:00.000000"
-  }
+  "date": "2026-03-10",
+  "amount": 50000.00,
+  "notes": "Opening balance for the day"
 }
 ```
 
-Common error types:
-- `400 Bad Request`: Invalid input parameters or format
-- `401 Unauthorized`: Missing or invalid authentication token
-- `403 Forbidden`: Insufficient permissions for the requested action
-- `404 Not Found`: Requested resource not found
-- `422 Unprocessable Entity`: Validation error in request body
+**Request Fields**:
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `date` | string | ✅ Yes | Date (YYYY-MM-DD) |
+| `amount` | number | ✅ Yes | Opening cash amount |
+| `notes` | string | ❌ No | Additional notes |
 
-## Security Notes
+**Example**:
+```bash
+curl -X POST "http://localhost:8000/walkininvoice/opening" \
+  -H "Content-Type: application/json" \
+  -b cookies.txt \
+  -d '{
+    "date": "2026-03-10",
+    "amount": 50000.00
+  }'
+```
 
-- All endpoints require appropriate role-based access control using session cookies
-- Invoice data is protected by role-based access control
-- Inventory updates are synchronized with sales and refunds
-- Payment methods and amounts are validated
-- Unique invoice numbers are generated with database-level locking
-- Session-based authentication with cookie management for enhanced security
-- Protection against JWT token theft from client-side storage
-- Instant logout capability across all devices
-- Full control over active sessions
+**Response** (200 OK):
+```json
+{
+  "message": "Opening balance saved successfully",
+  "date": "2026-03-10",
+  "amount": 50000.00
+}
+```
 
-## Production Ready Features
+---
 
-- Async/await implementation for high concurrency
-- Pydantic v2 validation
-- Proper error handling and logging
-- Database transaction safety
-- Session-based authentication with cookie management
-- Role-based access control
-- Input sanitization and validation
-- Inventory management with automatic stock updates
-- PDF receipt generation for all transactions
-- Concurrency-safe operations with advisory locks
-- Server-side session control for better security
-- Instant logout capability across all devices
-- Better compliance with audit trails and regulations
+### 10. POST /walkininvoice/closing - Save Closing Balance
 
-## Related Refund Operations
+**Access**: `cashier_required_from_session()` - **Admin, Cashier**
 
-For refund operations related to walk-in invoices, see the Walkin Refund API documentation in `walkin-refund-api.md`.
+**Description**: Save closing balance for the day.
 
-Refund endpoints allow:
-- Creating refunds for walk-in invoices
-- Updating refund details including date and amount
-- Deleting refunds and restoring inventory
-- Both admin and cashier roles can perform refund operations
+**Endpoint**: `POST /walkininvoice/closing`
+
+**Request Body**:
+```json
+{
+  "date": "2026-03-10",
+  "amount": 75000.00,
+  "notes": "Closing balance for the day"
+}
+```
+
+**Example**:
+```bash
+curl -X POST "http://localhost:8000/walkininvoice/closing" \
+  -H "Content-Type: application/json" \
+  -b cookies.txt \
+  -d '{
+    "date": "2026-03-10",
+    "amount": 75000.00
+  }'
+```
+
+**Response** (200 OK):
+```json
+{
+  "message": "Closing balance saved successfully",
+  "date": "2026-03-10",
+  "amount": 75000.00
+}
+```
+
+---
+
+### 11. GET /walkininvoice/daily-cash/{date_str} - Get Daily Cash Record
+
+**Access**: `admin_cashier_employee_required_from_session()` - **Any authenticated user**
+
+**Description**: Get daily cash record including opening, sales, expenses, and closing.
+
+**Endpoint**: `GET /walkininvoice/daily-cash/{date_str}`
+
+**Path Parameter**: `date_str` - Date in YYYY-MM-DD format
+
+**Example**:
+```bash
+curl -X GET "http://localhost:8000/walkininvoice/daily-cash/2026-03-10" \
+  -b cookies.txt
+```
+
+**Response** (200 OK):
+```json
+{
+  "found": true,
+  "date": "2026-03-10",
+  "cash_opening": 50000.00,
+  "total_sales": 100000.00,
+  "total_expenses": 25000.00,
+  "cash_closing": 125000.00,
+  "total_closing": 125000.00,
+  "expected_cash": 125000.00,
+  "difference": 0.00,
+  "opening_notes": "Opening balance",
+  "closing_notes": "Closing balance"
+}
+```
+
+---
+
+### 12. GET /walkininvoice/today - Today's Sales Report
+
+**Access**: `admin_cashier_employee_required_from_session()` - **Any authenticated user**
+
+**Description**: Get today's sales report with opening, sales, expenses, and cash in hand.
+
+**Endpoint**: `GET /walkininvoice/today?date=2026-03-10`
+
+**Query Parameters**:
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `date` | string | today | Date (YYYY-MM-DD) |
+
+**Example**:
+```bash
+curl -X GET "http://localhost:8000/walkininvoice/today?date=2026-03-10" \
+  -b cookies.txt
+```
+
+**Response** (200 OK):
+```json
+{
+  "date": "2026-03-10",
+  "opening": 50000.00,
+  "sales": 100000.00,
+  "expenses": 25000.00,
+  "cash_in_hand": 125000.00,
+  "has_opening": true,
+  "has_closing": false
+}
+```
+
+---
+
+## Frontend API Routes
+
+The frontend uses Next.js API routes as proxies:
+
+| Frontend Route | Backend Endpoint |
+|----------------|------------------|
+| `POST /api/walkin-invoices` | `POST /walkininvoice/walkin-invoices` |
+| `GET /api/walkin-invoices` | `GET /walkininvoice/walkin-invoices` |
+| `GET /api/walkin-invoices/daily-cash/{date}` | `GET /walkininvoice/daily-cash/{date}` |
+| `POST /api/walkin-invoices/opening` | `POST /walkininvoice/opening` |
+| `POST /api/walkin-invoices/closing` | `POST /walkininvoice/closing` |
+| `GET /api/walkin-invoices/today` | `GET /walkininvoice/today` |
+
+**Example** - Frontend fetch for creating invoice:
+```typescript
+const createWalkinInvoice = async (invoiceData: any) => {
+  const response = await fetch('/api/walkin-invoices', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    credentials: 'include',
+    body: JSON.stringify(invoiceData),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to create invoice');
+  }
+
+  return response.json();
+};
+```
+
+---
+
+## Error Codes
+
+| HTTP Status | Meaning | Common Causes |
+|-------------|---------|---------------|
+| 200 | OK | Success |
+| 400 | Bad Request | Invalid input, missing required fields |
+| 401 | Unauthorized | Not logged in, invalid session |
+| 403 | Forbidden | Insufficient permissions |
+| 404 | Not Found | Invoice not found, daily cash not found |
+| 500 | Server Error | Database error, server issue |
+
+---
+
+## Testing Checklist
+
+### Login First
+- [ ] Login with admin credentials
+- [ ] Save cookies (`-c cookies.txt`)
+
+### Test Create Invoice
+- [ ] Create walk-in invoice with items
+- [ ] Verify PDF receipt in response
+- [ ] Verify stock levels reduced
+- [ ] Try create without items (should fail)
+
+### Test Get Invoices
+- [ ] Fetch invoices with pagination
+- [ ] Fetch invoice by ID
+- [ ] Get duplicate receipt
+- [ ] Fetch invoices by date
+
+### Test Update/Delete
+- [ ] Update invoice (admin only)
+- [ ] Delete invoice (admin only)
+- [ ] Verify stock restored after delete
+
+### Test Daily Cash
+- [ ] Save opening balance
+- [ ] Get daily cash record
+- [ ] Get today's sales report
+- [ ] Save closing balance
+
+### Test Products for Sales
+- [ ] Fetch products with search
+- [ ] Fetch products by barcode
+- [ ] Verify only in-stock products returned
+
+---
+
+## Related Documentation
+
+- [Authentication](authentication_api.md) - Login and session management
+- [Customer Invoice API](customer-invoice-api.md) - Customer invoice management
+- [Walkin Refund API](walkin-refund-api.md) - Refund operations
+- [Sales View API](salesview_api.md) - Sales reports and analytics

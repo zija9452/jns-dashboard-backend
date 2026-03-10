@@ -1,379 +1,305 @@
-# Product API Documentation - Session-Based Authentication
+# Product Management API
 
-This document provides comprehensive documentation for all product-related endpoints in the Regal POS Backend with session-based authentication, including curl commands for testing and integration.
+## 🔐 Authentication & Authorization
 
-## Authentication
+### Login Required
 
-All product endpoints require session-based authentication. Obtain a session by logging in:
+Before using any of these endpoints, you **MUST** login first:
 
 ```bash
-curl -X POST http://localhost:8000/auth/session-login \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "username=admin&password=admin123"
+curl -X POST http://localhost:8000/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "admin",
+    "password": "admin123"
+  }' \
+  -c cookies.txt
 ```
 
-The login response will include a session cookie that will be automatically sent with subsequent requests when using the `-b` flag with curl or proper cookie handling in applications.
+**Save the cookie!** All subsequent requests require the session cookie (`-b cookies.txt`).
 
-## Product Management Endpoints
+---
 
-### 1. Get All Products
+### 🔑 Access Control
 
-**Endpoint**: `GET /products/`
+| Decorator | Allowed Roles | Used By |
+|-----------|--------------|---------|
+| `admin_cashier_employee_required_from_session()` | `admin`, `cashier`, `employee` | GET products, GET single product |
+| `employee_required_from_session()` | `admin`, `cashier`, `employee` | POST, PUT, DELETE operations |
+| `admin_required_from_session()` | `admin` only | DELETE product (permanent) |
 
-**Description**: Get list of products with pagination. Admins and cashiers can view products.
+**Important Notes**:
 
-**Authentication**: Admin or cashier role required
+1. **GET /products/viewproduct** - Requires **any authenticated user** (admin, cashier, employee)
+   - All authenticated users can view products
 
-**Query Parameters** (optional):
-- `skip`: Number of records to skip (for pagination) - default 0
-- `limit`: Maximum number of records to return (default 100) - default 100
+2. **POST /products/** - Requires **employee** or higher
+   - Employee, cashier, admin can create products
+
+3. **PUT /products/{id}** - Requires **employee** or higher
+   - Employee, cashier, admin can update products
+
+4. **DELETE /products/{id}** - Requires **admin** only
+   - Only admins can permanently delete products
+
+---
+
+## API Endpoints
+
+### Product CRUD Operations
+
+---
+
+### 1. GET /products/viewproduct - View Products (Paginated)
+
+**Access**: `admin_cashier_employee_required_from_session()` - **Any authenticated user**
+
+**Description**: Get paginated list of products with search and branch filtering. This is the **main endpoint** used by the frontend.
+
+**Endpoint**: `GET /products/viewproduct?page=1&limit=8&search_string=`
+
+**Query Parameters**:
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `page` | int | 1 | Page number (1-based) |
+| `limit` | int | 8 | Items per page |
+| `search_string` | string | - | Search by name, barcode, or SKU |
+| `branches` | string | - | Filter by branch name |
 
 **Example**:
 ```bash
-curl -X GET "http://localhost:8000/products/?skip=0&limit=10" \
+curl -X GET "http://localhost:8000/products/viewproduct?page=1&limit=8&search_string=Nike" \
   -b cookies.txt
 ```
 
-**Response**:
-```json
-[
-  {
-    "id": "uuid-string",
-    "sku": "PRODUCT-SKU",
-    "name": "Product Name",
-    "desc": "Product Description",
-    "unit_price": "99.99",
-    "cost_price": "79.99",
-    "tax_rate": "0.00",
-    "vendor_id": "uuid-string",
-    "stock_level": 50,
-    "attributes": "JSON string for extensibility",
-    "barcode": "1234567890123",
-    "discount": "0.00",
-    "category": "Category Name",
-    "branch": "Branch Name",
-    "limited_qty": false,
-    "brand_action": "Brand Name",
-    "created_at": "2026-01-30T10:31:18.150552",
-    "updated_at": "2026-01-30T10:31:18.150552"
-  }
-]
-```
-
-### 2. Get Product by ID
-
-**Endpoint**: `GET /products/{id}`
-
-**Description**: Get a specific product by ID.
-
-**Authentication**: Admin or cashier role required
-
-**Parameters**:
-- `{id}`: UUID of the product
-
-**Example**:
-```bash
-curl -X GET http://localhost:8000/products/uuid-string \
-  -b cookies.txt
-```
-
-**Response**:
+**Response** (200 OK):
 ```json
 {
-  "id": "uuid-string",
-  "sku": "PRODUCT-SKU",
-  "name": "Product Name",
-  "desc": "Product Description",
-  "unit_price": "99.99",
-  "cost_price": "79.99",
-  "tax_rate": "0.00",
-  "vendor_id": "uuid-string",
-  "stock_level": 50,
-  "attributes": "JSON string for extensibility",
-  "barcode": "1234567890123",
-  "discount": "0.00",
-  "category": "Category Name",
-  "branch": "Branch Name",
-  "limited_qty": false,
-  "brand_action": "Brand Name",
-  "created_at": "2026-01-30T10:31:18.150552",
-  "updated_at": "2026-01-30T10:31:18.150552"
+  "data": [
+    {
+      "pro_id": "uuid-string",
+      "pro_name": "Nike Shoes",
+      "pro_price": 99.99,
+      "pro_cost": 79.99,
+      "pro_barcode": "1234567890123",
+      "pro_dis": 10.0,
+      "cat_id_fk": "Shoes",
+      "limitedquan": 5,
+      "branch": "European Sports Light House",
+      "brand": "Nike",
+      "pro_image": "",
+      "stock": 50
+    }
+  ],
+  "page": 1,
+  "limit": 8,
+  "total": 100,
+  "total_pages": 13,
+  "has_more": true
 }
 ```
 
-### 3. Create Product
+**Response Fields**:
+- `data`: Array of products (max 8 per page)
+- `page`: Current page number
+- `limit`: Items per page
+- `total`: Total number of products matching search
+- `total_pages`: Total pages (for pagination UI)
+- `has_more`: True if more pages available
+
+**Error** (401 Unauthorized):
+```json
+{
+  "detail": "Not authenticated"
+}
+```
+
+---
+
+### 2. POST /products/ - Create Product
+
+**Access**: `employee_required_from_session()` - **Employee, Cashier, Admin**
+
+**Description**: Create a new product.
 
 **Endpoint**: `POST /products/`
 
-**Description**: Create a new product. Requires employee role.
-
-**Authentication**: Employee role required
-
 **Request Body**:
 ```json
 {
-  "sku": "NEW-PRODUCT-SKU",
-  "name": "New Product Name",
-  "desc": "New Product Description",
+  "sku": "SKU-1234567890",
+  "name": "Nike Air Max",
   "unit_price": 99.99,
   "cost_price": 79.99,
-  "tax_rate": 0.00,
-  "vendor_id": "uuid-string",
   "stock_level": 50,
-  "attributes": "JSON string for extensibility",
   "barcode": "1234567890123",
-  "discount": 0.00,
-  "category": "Category Name",
-  "branch": "Branch Name",
-  "limited_qty": false,
-  "brand_action": "Brand Name"
+  "discount": 10.0,
+  "category": "Shoes",
+  "branch": "European Sports Light House",
+  "limited_qty": 5,
+  "brand_action": "Nike",
+  "attributes": "data:image/png;base64,..."
 }
 ```
 
+**Request Fields**:
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `sku` | string | ✅ Yes | Unique SKU (auto-generated) |
+| `name` | string | ✅ Yes | Product name |
+| `unit_price` | number | ✅ Yes | Selling price |
+| `cost_price` | number | ✅ Yes | Cost price |
+| `stock_level` | int | ✅ Yes | Initial stock (default: 0) |
+| `barcode` | string | ❌ No | Barcode (auto-generated) |
+| `discount` | number | ❌ No | Discount percentage |
+| `category` | string | ❌ No | Category name |
+| `branch` | string | ❌ No | Branch name |
+| `limited_qty` | int | ❌ No | Limited quantity threshold |
+| `brand_action` | string | ❌ No | Brand name |
+| `attributes` | string | ❌ No | Image (base64 or URL) |
+
 **Example**:
 ```bash
-curl -X POST http://localhost:8000/products/ \
+curl -X POST "http://localhost:8000/products/" \
   -H "Content-Type: application/json" \
   -b cookies.txt \
   -d '{
-    "sku": "NEW-PRODUCT-SKU",
-    "name": "New Product Name",
-    "desc": "New Product Description",
+    "sku": "SKU-1234567890",
+    "name": "Nike Air Max",
     "unit_price": 99.99,
     "cost_price": 79.99,
     "stock_level": 50,
-    "category": "Category Name",
-    "barcode": "1234567890123"
+    "barcode": "1234567890123",
+    "discount": 10.0,
+    "category": "Shoes",
+    "branch": "European Sports Light House",
+    "limited_qty": 5,
+    "brand_action": "Nike"
   }'
 ```
 
-**Response**:
+**Response** (200 OK):
 ```json
 {
   "id": "uuid-string",
-  "sku": "NEW-PRODUCT-SKU",
-  "name": "New Product Name",
-  "desc": "New Product Description",
+  "sku": "SKU-1234567890",
+  "name": "Nike Air Max",
   "unit_price": "99.99",
   "cost_price": "79.99",
-  "tax_rate": "0.00",
-  "vendor_id": "uuid-string",
   "stock_level": 50,
-  "attributes": "JSON string for extensibility",
   "barcode": "1234567890123",
-  "discount": "0.00",
-  "category": "Category Name",
-  "branch": "Branch Name",
-  "limited_qty": false,
-  "brand_action": "Brand Name",
-  "created_at": "2026-01-30T10:31:18.150552",
-  "updated_at": "2026-01-30T10:31:18.150552"
+  "discount": "10.00",
+  "category": "Shoes",
+  "branch": "European Sports Light House",
+  "limited_qty": 5,
+  "brand_action": "Nike",
+  "created_at": "2026-02-17T05:00:00.000000",
+  "updated_at": "2026-02-17T05:00:00.000000"
 }
 ```
 
-### 4. Update Product
+**Errors**:
 
-**Endpoint**: `PUT /products/{id}`
+**400 Bad Request** - SKU exists:
+```json
+{
+  "detail": "Product with this SKU already exists"
+}
+```
 
-**Description**: Update a specific product by ID. Requires employee role.
+---
 
-**Authentication**: Employee role required
+### 3. PUT /products/{product_id} - Update Product
 
-**Parameters**:
-- `{id}`: UUID of the product to update
+**Access**: `employee_required_from_session()` - **Employee, Cashier, Admin**
+
+**Description**: Update an existing product.
+
+**Endpoint**: `PUT /products/{product_id}`
+
+**Path Parameter**: `product_id` - UUID of the product
 
 **Request Body** (all fields optional):
 ```json
 {
-  "name": "Updated Product Name",
-  "desc": "Updated Product Description",
+  "name": "Updated Name",
   "unit_price": 109.99,
   "cost_price": 89.99,
-  "tax_rate": 0.00,
-  "vendor_id": "uuid-string",
   "stock_level": 60,
-  "attributes": "Updated JSON string for extensibility",
-  "barcode": "1234567890123",
-  "discount": 0.00,
-  "category": "Updated Category Name",
-  "branch": "Updated Branch Name",
-  "limited_qty": true,
-  "brand_action": "Updated Brand Name"
+  "barcode": "9876543210987",
+  "discount": 15.0,
+  "category": "Updated Category",
+  "branch": "Updated Branch",
+  "limited_qty": 10,
+  "brand_action": "Updated Brand",
+  "attributes": "new-image-url"
 }
 ```
 
 **Example**:
 ```bash
-curl -X PUT http://localhost:8000/products/uuid-string \
+curl -X PUT "http://localhost:8000/products/uuid-string" \
   -H "Content-Type: application/json" \
   -b cookies.txt \
   -d '{
-    "name": "Updated Product Name",
+    "name": "Updated Name",
     "unit_price": 109.99,
-    "stock_level": 60
+    "discount": 15.0
   }'
 ```
 
-**Response**:
+**Response** (200 OK):
 ```json
 {
   "id": "uuid-string",
-  "sku": "EXISTING-PRODUCT-SKU",
-  "name": "Updated Product Name",
-  "desc": "Existing Product Description",
+  "sku": "SKU-1234567890",
+  "name": "Updated Name",
   "unit_price": "109.99",
   "cost_price": "79.99",
-  "tax_rate": "0.00",
-  "vendor_id": "uuid-string",
-  "stock_level": 60,
-  "attributes": "JSON string for extensibility",
+  "stock_level": 50,
   "barcode": "1234567890123",
-  "discount": "0.00",
-  "category": "Category Name",
-  "branch": "Branch Name",
-  "limited_qty": false,
-  "brand_action": "Brand Name",
-  "created_at": "2026-01-30T10:31:18.150552",
-  "updated_at": "2026-01-30T10:32:18.150552"
+  "discount": "15.00",
+  "category": "Shoes",
+  "branch": "European Sports Light House",
+  "limited_qty": 5,
+  "brand_action": "Nike",
+  "updated_at": "2026-02-17T06:00:00.000000"
 }
 ```
 
-### 5. Delete Product
+**Errors**:
 
-**Endpoint**: `DELETE /products/{id}`
-
-**Description**: Delete a specific product by ID. Requires admin role.
-
-**Authentication**: Admin role required
-
-**Parameters**:
-- `{id}`: UUID of the product to delete
-
-**Example**:
-```bash
-curl -X DELETE http://localhost:8000/products/uuid-string \
-  -b cookies.txt
-```
-
-**Response**:
+**404 Not Found**:
 ```json
 {
-  "message": "Product deleted successfully"
+  "detail": "Product not found"
 }
 ```
 
-## Frontend-Compatible Product Endpoints
+---
 
-### 6. Get Product Details (Frontend Compatible)
+### 4. DELETE /products/deleteproduct/{id} - Delete Product
 
-**Endpoint**: `GET /products/get-products/{id}`
-
-**Description**: Retrieve specific product details by ID in frontend-compatible format.
-
-**Authentication**: Admin, cashier, or employee role required
-
-**Parameters**:
-- `{id}`: UUID of the product
-
-**Example**:
-```bash
-curl -X GET http://localhost:8000/products/get-products/uuid-string \
-  -b cookies.txt
-```
-
-**Response**:
-```json
-{
-  "pro_id": "uuid-string",
-  "pro_name": "Product Name",
-  "pro_price": 99.99,
-  "pro_cost": 79.99,
-  "pro_barcode": "1234567890123",
-  "pro_dis": 0.0,
-  "cat_id_fk": "Category Name",
-  "limitedquan": false,
-  "branch": "Branch Name",
-  "brand": "Brand Name",
-  "pro_image": "image-path-or-json-data"
-}
-```
-
-### 7. View Products (Frontend Compatible)
-
-**Endpoint**: `GET /products/view-product`
-
-**Description**: View products with search and branch filtering in frontend-compatible format.
-
-**Authentication**: Admin, cashier, or employee role required
-
-**Query Parameters** (optional):
-- `search_string`: Search term to filter products
-- `branches`: Branch to filter by
-- `skip`: Number of records to skip (for pagination) - default 0
-- `limit`: Maximum number of records to return (default 100) - default 100
-
-**Example**:
-```bash
-curl -X GET "http://localhost:8000/products/view-product?search_string=product&branches=Main%20Branch&limit=10" \
-  -b cookies.txt
-```
-
-**Response**:
-```json
-[
-  {
-    "pro_id": "uuid-string",
-    "pro_name": "Product Name",
-    "pro_price": 99.99,
-    "pro_cost": 79.99,
-    "pro_barcode": "1234567890123",
-    "pro_dis": 0.0,
-    "cat_id_fk": "Category Name",
-    "limitedquan": false,
-    "branch": "Branch Name",
-    "brand": "Brand Name",
-    "pro_image": "image-path-or-json-data"
-  }
-]
-```
-
-### 8. Get Maximum Product ID
-
-**Endpoint**: `GET /products/get-max-pro-id`
-
-**Description**: Get the maximum product ID for barcode calculation.
-
-**Authentication**: Employee role required
-
-**Example**:
-```bash
-curl -X GET http://localhost:8000/products/get-max-pro-id \
-  -b cookies.txt
-```
-
-**Response**:
-```
-1003
-```
-
-### 9. Delete Product (Frontend Compatible)
-
-**Endpoint**: `POST /products/delete-product/{id}`
+**Access**: `admin_employee_required_from_session()` - **Admin, Employee** (NOT Cashier)
 
 **Description**: Delete a product by ID (frontend-compatible endpoint).
 
-**Authentication**: Admin role required
+**Endpoint**: `POST /products/deleteproduct/{id}`
 
-**Parameters**:
-- `{id}`: UUID of the product to delete
+**Path Parameter**: `id` - UUID of the product
+
+**Important**: 
+- ✅ **Admin** can delete products
+- ✅ **Employee** can delete products
+- ❌ **Cashier** CANNOT delete products (403 Forbidden)
 
 **Example**:
 ```bash
-curl -X POST http://localhost:8000/products/delete-product/uuid-string \
+curl -X POST "http://localhost:8000/products/deleteproduct/uuid-string" \
   -b cookies.txt
 ```
 
-**Response**:
+**Response** (200 OK):
 ```json
 {
   "success": true,
@@ -381,533 +307,300 @@ curl -X POST http://localhost:8000/products/delete-product/uuid-string \
 }
 ```
 
-### 10. Delete Product Image
-
-**Endpoint**: `POST /products/delete-product-image/{id}`
-
-**Description**: Delete product image by product ID.
-
-**Authentication**: Employee role required
-
-**Parameters**:
-- `{id}`: UUID of the product whose image to delete
-
-**Example**:
-```bash
-curl -X POST http://localhost:8000/products/delete-product-image/uuid-string \
-  -b cookies.txt
-```
-
-**Response**:
+**Error** (403 Forbidden) - Cashier trying to delete:
 ```json
 {
-  "success": true,
-  "message": "Product image deleted successfully"
+  "detail": "Admin or employee access required. Cashiers cannot perform this action."
 }
 ```
 
-### 11. Create Brand
+**Errors**:
 
-**Endpoint**: `POST /products/brand`
-
-**Description**: Add a new brand.
-
-**Authentication**: Employee role required
-
-**Query Parameters**:
-- `brand`: Brand name to add
-
-**Example**:
-```bash
-curl -X POST "http://localhost:8000/products/brand?brand=NewBrand" \
-  -b cookies.txt
-```
-
-**Response**:
+**404 Not Found**:
 ```json
 {
-  "success": true,
-  "ID": 1,
-  "shelf": "NewBrand"
-}
-```
-
-### 12. Delete Brand
-
-**Endpoint**: `POST /products/delete-brand`
-
-**Description**: Delete a brand.
-
-**Authentication**: Employee role required
-
-**Query Parameters**:
-- `brand`: Brand name to delete
-
-**Example**:
-```bash
-curl -X POST "http://localhost:8000/products/delete-brand?brand=OldBrand" \
-  -b cookies.txt
-```
-
-**Response**:
-```json
-{
-  "success": true,
-  "message": "Brand 'OldBrand' deleted successfully"
-}
-```
-
-### 13. Get Stock Detail
-
-**Endpoint**: `POST /products/get-stock-detail`
-
-**Description**: Get stock details for a specific product.
-
-**Authentication**: Employee role required
-
-**Query Parameters**:
-- `pro_name`: Product name to search for
-
-**Example**:
-```bash
-curl -X POST "http://localhost:8000/products/get-stock-detail?pro_name=ProductName" \
-  -b cookies.txt
-```
-
-**Response**:
-```json
-{
-  "quantity": 50
+  "detail": "Product not found"
 }
 ```
 
 ---
 
-## Category Management Endpoints
+### 5. GET /products/generatebarcode - Generate Barcode
 
-### 14. Create Category
+**Access**: `employee_required_from_session()` - **Employee, Cashier, Admin**
 
-**Endpoint**: `POST /category/`
+**Description**: Generate a unique barcode for new products (auto-increment approach).
 
-**Description**: Add a new category with name and branch.
-
-**Authentication**: Employee role required
-
-**Request Body**:
-```json
-{
-  "name": "European Sports",
-  "branch": "Light House"
-}
-```
+**Endpoint**: `GET /products/generatebarcode`
 
 **Example**:
 ```bash
-curl -X POST http://localhost:8000/category/ \
-  -H "Content-Type: application/json" \
-  -b cookies.txt \
-  -d '{
-    "name": "European Sports",
-    "branch": "Light House"
-  }'
-```
-
-**Response**:
-```json
-{
-  "id": "uuid-string",
-  "name": "European Sports",
-  "branch": "Light House",
-  "created_at": "2026-02-17T10:00:00.000000"
-}
-```
-
-### 15. Get All Categories
-
-**Endpoint**: `GET /category/`
-
-**Description**: Get all categories with optional branch filter.
-
-**Authentication**: Employee role required
-
-**Query Parameters**:
-- `skip`: Number of records to skip (default: 0)
-- `limit`: Maximum number of records to return (default: 100)
-- `branch`: Filter by branch name (optional)
-
-**Example**:
-```bash
-curl -X GET "http://localhost:8000/category/?skip=0&limit=100&branch=Light%20House" \
+curl -X GET "http://localhost:8000/products/generatebarcode" \
   -b cookies.txt
 ```
 
-**Response**:
-```json
-[
-  {
-    "id": "uuid-string",
-    "name": "European Sports",
-    "branch": "Light House",
-    "created_at": "2026-02-17T10:00:00.000000"
-  },
-  {
-    "id": "uuid-string-2",
-    "name": "Casual Wear",
-    "branch": "Light House",
-    "created_at": "2026-02-17T11:00:00.000000"
-  }
-]
-```
-
-### 16. Get Category by ID
-
-**Endpoint**: `GET /category/{id}`
-
-**Description**: Get a specific category by ID.
-
-**Authentication**: Employee role required
-
-**Parameters**:
-- `{id}`: UUID of the category
-
-**Example**:
-```bash
-curl -X GET http://localhost:8000/category/uuid-string \
-  -b cookies.txt
-```
-
-**Response**:
+**Response** (200 OK):
 ```json
 {
-  "id": "uuid-string",
-  "name": "European Sports",
-  "branch": "Light House",
-  "created_at": "2026-02-17T10:00:00.000000"
-}
-```
-
-### 17. Update Category
-
-**Endpoint**: `PUT /category/{id}`
-
-**Description**: Update a specific category by ID.
-
-**Authentication**: Employee role required
-
-**Parameters**:
-- `{id}`: UUID of the category to update
-
-**Request Body** (all fields optional):
-```json
-{
-  "name": "Updated Category Name",
-  "branch": "Updated Branch"
-}
-```
-
-**Example**:
-```bash
-curl -X PUT http://localhost:8000/category/uuid-string \
-  -H "Content-Type: application/json" \
-  -b cookies.txt \
-  -d '{
-    "name": "Updated Category Name"
-  }'
-```
-
-**Response**:
-```json
-{
-  "id": "uuid-string",
-  "name": "Updated Category Name",
-  "branch": "Light House",
-  "created_at": "2026-02-17T10:00:00.000000"
-}
-```
-
-### 18. Delete Category
-
-**Endpoint**: `DELETE /category/{id}`
-
-**Description**: Delete a category by ID.
-
-**Authentication**: Employee role required
-
-**Parameters**:
-- `{id}`: UUID of the category to delete
-
-**Example**:
-```bash
-curl -X DELETE http://localhost:8000/category/uuid-string \
-  -b cookies.txt
-```
-
-**Response**:
-```json
-{
-  "message": "Category deleted successfully"
+  "barcode": "6901234567890"
 }
 ```
 
 ---
 
-## Brand Management Endpoints
+### 6. GET /products/searchbybarcode - Search by Barcode
 
-### 19. Create Brand
+**Access**: `employee_required_from_session()` - **Employee, Cashier, Admin**
 
-**Endpoint**: `POST /brand/`
+**Description**: Search product by barcode (Redis cached, very fast).
 
-**Description**: Add a new brand with name only.
-
-**Authentication**: Employee role required
-
-**Request Body**:
-```json
-{
-  "name": "Nike"
-}
-```
-
-**Example**:
-```bash
-curl -X POST http://localhost:8000/brand/ \
-  -H "Content-Type: application/json" \
-  -b cookies.txt \
-  -d '{
-    "name": "Nike"
-  }'
-```
-
-**Response**:
-```json
-{
-  "id": "uuid-string",
-  "name": "Nike",
-  "created_at": "2026-02-17T10:00:00.000000"
-}
-```
-
-### 20. Get All Brands
-
-**Endpoint**: `GET /brand/`
-
-**Description**: Get all brands.
-
-**Authentication**: Employee role required
+**Endpoint**: `GET /products/searchbybarcode?barcode=`
 
 **Query Parameters**:
-- `skip`: Number of records to skip (default: 0)
-- `limit`: Maximum number of records to return (default: 100)
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `barcode` | string | Barcode to search |
 
 **Example**:
 ```bash
-curl -X GET "http://localhost:8000/brand/?skip=0&limit=100" \
+curl -X GET "http://localhost:8000/products/searchbybarcode?barcode=1234567890123" \
   -b cookies.txt
 ```
 
-**Response**:
+**Response** (200 OK):
 ```json
-[
-  {
-    "id": "uuid-string",
-    "name": "Nike",
-    "created_at": "2026-02-17T10:00:00.000000"
-  },
-  {
-    "id": "uuid-string-2",
-    "name": "Adidas",
-    "created_at": "2026-02-17T11:00:00.000000"
+{
+  "pro_id": "uuid-string",
+  "pro_name": "Nike Air Max",
+  "pro_price": 99.99,
+  "pro_cost": 79.99,
+  "pro_barcode": "1234567890123",
+  "pro_dis": 10.0,
+  "cat_id_fk": "Shoes",
+  "limitedquan": 5,
+  "branch": "European Sports Light House",
+  "brand": "Nike",
+  "pro_image": "",
+  "stock": 50
+}
+```
+
+**Error** (404 Not Found):
+```json
+{
+  "detail": "Product not found"
+}
+```
+
+---
+
+### 7. GET /products/getproducts/{id} - Get Product Details
+
+**Access**: `admin_cashier_employee_required_from_session()` - **Any authenticated user**
+
+**Description**: Get specific product details by ID (frontend-compatible format).
+
+**Endpoint**: `GET /products/getproducts/{id}`
+
+**Path Parameter**: `id` - UUID of the product
+
+**Example**:
+```bash
+curl -X GET "http://localhost:8000/products/getproducts/uuid-string" \
+  -b cookies.txt
+```
+
+**Response** (200 OK):
+```json
+{
+  "pro_id": "uuid-string",
+  "pro_name": "Nike Air Max",
+  "pro_price": 99.99,
+  "pro_cost": 79.99,
+  "pro_barcode": "1234567890123",
+  "pro_dis": 10.0,
+  "cat_id_fk": "Shoes",
+  "limitedquan": 5,
+  "branch": "European Sports Light House",
+  "brand": "Nike",
+  "pro_image": ""
+}
+```
+
+---
+
+## Category & Brand Endpoints (Used by Product Page)
+
+### 8. GET /category/ - Get All Categories
+
+**Access**: `employee_required_from_session()` - **Any authenticated user**
+
+**Description**: Get all categories for dropdown (used in product form).
+
+**Endpoint**: `GET /category/?page=1&limit=1000`
+
+**Query Parameters**:
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `page` | int | 1 | Page number |
+| `limit` | int | 100 | Max records (use 1000 for dropdown) |
+
+**Example**:
+```bash
+curl -X GET "http://localhost:8000/category/?page=1&limit=1000" \
+  -b cookies.txt
+```
+
+**Response** (200 OK):
+```json
+{
+  "data": [
+    {
+      "id": "uuid-string",
+      "name": "Shoes",
+      "branch": "Light House",
+      "created_at": "2026-02-17T05:00:00.000000"
+    }
+  ],
+  "page": 1,
+  "limit": 1000,
+  "total": 10,
+  "total_pages": 1
+}
+```
+
+---
+
+### 9. GET /brand/ - Get All Brands
+
+**Access**: `employee_required_from_session()` - **Any authenticated user**
+
+**Description**: Get all brands for dropdown (used in product form).
+
+**Endpoint**: `GET /brand/?page=1&limit=1000`
+
+**Example**:
+```bash
+curl -X GET "http://localhost:8000/brand/?page=1&limit=1000" \
+  -b cookies.txt
+```
+
+**Response** (200 OK):
+```json
+{
+  "data": [
+    {
+      "id": "uuid-string",
+      "name": "Nike",
+      "created_at": "2026-02-17T05:00:00.000000"
+    }
+  ],
+  "page": 1,
+  "limit": 1000,
+  "total": 5,
+  "total_pages": 1
+}
+```
+
+---
+
+## Frontend API Routes
+
+The frontend uses Next.js API routes as proxies:
+
+| Frontend Route | Backend Endpoint |
+|----------------|------------------|
+| `GET /api/products` | `GET /products/viewproduct` |
+| `POST /api/products` | `POST /products/` |
+| `PUT /api/products/{id}` | `PUT /products/{id}` |
+| `DELETE /api/products/{id}` | `POST /products/deleteproduct/{id}` |
+| `GET /api/products/generatebarcode` | `GET /products/generatebarcode` |
+| `GET /api/category` | `GET /category/` |
+| `GET /api/brand` | `GET /brand/` |
+
+**Example** - Frontend fetch with pagination:
+```typescript
+const fetchProducts = async (page: number = 1, searchTerm: string = '') => {
+  const params = new URLSearchParams({
+    page: page.toString(),
+    limit: '8',
+    search_string: searchTerm
+  });
+
+  const response = await fetch(`/api/products?${params.toString()}`, {
+    method: 'GET',
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to fetch products');
   }
-]
+
+  return response.json();
+};
 ```
 
-### 21. Get Brand by ID
+---
 
-**Endpoint**: `GET /brand/{id}`
+## Error Codes
 
-**Description**: Get a specific brand by ID.
+| HTTP Status | Meaning | Common Causes |
+|-------------|---------|---------------|
+| 200 | OK | Success |
+| 400 | Bad Request | Invalid input, SKU exists |
+| 401 | Unauthorized | Not logged in, invalid session |
+| 403 | Forbidden | Insufficient permissions |
+| 404 | Not Found | Product not found |
+| 500 | Server Error | Database error, server issue |
+| 504 | Gateway Timeout | Request timeout (>2 min) |
 
-**Authentication**: Employee role required
+---
 
-**Parameters**:
-- `{id}`: UUID of the brand
+## Testing Checklist
 
-**Example**:
-```bash
-curl -X GET http://localhost:8000/brand/uuid-string \
-  -b cookies.txt
-```
+### Login First
+- [ ] Login with admin credentials
+- [ ] Save cookies (`-c cookies.txt`)
 
-**Response**:
-```json
-{
-  "id": "uuid-string",
-  "name": "Nike",
-  "created_at": "2026-02-17T10:00:00.000000"
-}
-```
+### Test GET /products/viewproduct
+- [ ] Fetch first page (page=1, limit=8)
+- [ ] Fetch with search term
+- [ ] Fetch with branch filter
+- [ ] Verify pagination response format
 
-### 22. Update Brand
+### Test POST /products/
+- [ ] Create new product with all fields
+- [ ] Create product with auto-generated barcode
+- [ ] Try duplicate SKU (should fail)
 
-**Endpoint**: `PUT /brand/{id}`
+### Test PUT /products/{id}
+- [ ] Update product price
+- [ ] Update product name
+- [ ] Update product image
 
-**Description**: Update a specific brand by ID.
+### Test DELETE /products/deleteproduct/{id}
+- [ ] Delete product (admin only)
+- [ ] Try delete as non-admin (should fail)
 
-**Authentication**: Employee role required
+### Test GET /products/generatebarcode
+- [ ] Generate unique barcode
+- [ ] Verify barcode format (13 digits)
 
-**Parameters**:
-- `{id}`: UUID of the brand to update
+### Test GET /products/searchbybarcode
+- [ ] Search existing barcode
+- [ ] Search non-existent barcode (should 404)
 
-**Request Body** (all fields optional):
-```json
-{
-  "name": "Updated Brand Name"
-}
-```
+### Test Category & Brand
+- [ ] Fetch all categories (for dropdown)
+- [ ] Fetch all brands (for dropdown)
 
-**Example**:
-```bash
-curl -X PUT http://localhost:8000/brand/uuid-string \
-  -H "Content-Type: application/json" \
-  -b cookies.txt \
-  -d '{
-    "name": "Updated Brand Name"
-  }'
-```
+---
 
-**Response**:
-```json
-{
-  "id": "uuid-string",
-  "name": "Updated Brand Name",
-  "created_at": "2026-02-17T10:00:00.000000"
-}
-```
+## Related Documentation
 
-### 23. Delete Brand
-
-**Endpoint**: `DELETE /brand/{id}`
-
-**Description**: Delete a brand by ID.
-
-**Authentication**: Employee role required
-
-**Parameters**:
-- `{id}`: UUID of the brand to delete
-
-**Example**:
-```bash
-curl -X DELETE http://localhost:8000/brand/uuid-string \
-  -b cookies.txt
-```
-
-**Response**:
-```json
-{
-  "message": "Brand deleted successfully"
-}
-```
-
-## CRUD Operations Summary
-
-### Create Operations
-- `POST /products/` - Create a new product
-- `POST /category/` - Create a new category
-- `POST /brand/` - Create a new brand
-
-### Read Operations
-- `GET /products/` - Get all products
-- `GET /products/{id}` - Get specific product
-- `GET /products/get-products/{id}` - Get product in frontend format
-- `GET /products/view-product` - Get products in frontend format
-- `GET /products/get-max-pro-id` - Get maximum product ID
-- `GET /category/` - Get all categories
-- `GET /category/{id}` - Get specific category
-- `GET /brand/` - Get all brands
-- `GET /brand/{id}` - Get specific brand
-
-### Update Operations
-- `PUT /products/{id}` - Update a product
-- `PUT /category/{id}` - Update a category
-- `PUT /brand/{id}` - Update a brand
-
-### Delete Operations
-- `DELETE /products/{id}` - Delete a product (admin only)
-- `POST /products/delete-product/{id}` - Delete a product (frontend compatible, admin only)
-- `POST /products/delete-product-image/{id}` - Delete product image
-- `DELETE /category/{id}` - Delete a category
-- `DELETE /brand/{id}` - Delete a brand
-
-## Database Schema
-
-The Product model includes the following fields:
-- `id`: UUID (Primary Key)
-- `sku`: String (Unique, max 50 chars) - Product identifier
-- `name`: String (max 100 chars) - Product name
-- `desc`: String (Optional) - Product description
-- `unit_price`: Decimal (10,2) - Selling price
-- `cost_price`: Decimal (10,2) - Cost price
-- `tax_rate`: Decimal (5,2) - Tax rate
-- `vendor_id`: UUID (Foreign Key) - Associated vendor
-- `stock_level`: Integer - Available quantity
-- `attributes`: String (Optional) - JSON field for extensibility (used for image paths)
-- `barcode`: String (Optional, Unique, max 50 chars) - Barcode
-- `discount`: Decimal (5,2) - Discount percentage
-- `category`: String (Optional, max 50 chars) - Product category
-- `branch`: String (Optional, max 50 chars) - Branch location
-- `limited_qty`: Boolean - Limited quantity flag
-- `brand_action`: String (Optional, max 100 chars) - Brand information
-- `created_at`: DateTime - Creation timestamp
-- `updated_at`: DateTime - Update timestamp
-
-## Image Storage
-
-Product images are stored in the `attributes` field as JSON strings, allowing for flexible storage of image paths and other extensible product information.
-
-## Barcode Support
-
-The schema includes a dedicated `barcode` field that supports UPC, EAN, and other barcode formats up to 50 characters.
-
-## Error Handling
-
-All endpoints return standardized error responses:
-
-```json
-{
-  "error": {
-    "type": "error_type",
-    "message": "Human-readable error message",
-    "status_code": 400,
-    "path": "/endpoint/path",
-    "timestamp": "2026-01-31T11:00:00.000000"
-  }
-}
-```
-
-## Security Notes
-
-- All endpoints require role-based authentication using session cookies
-- Product data is protected by role-based access control
-- Audit logs are maintained for all product-related actions
-- Only admins can delete products for security reasons
-- Image management is available to employees and above
-
-## Session-Based Authentication Benefits
-
-- Server-side session control for better security
-- Instant logout capability across all devices
-- Full control over active sessions
-- Better compliance with audit trails and regulations
-- Protection against JWT token theft from client-side storage
-
-## Production Ready Features
-
-- Async/await implementation for high concurrency
-- Pydantic v2 validation
-- Proper error handling and logging
-- Database transaction safety
-- Session-based authentication with cookie management
-- Role-based access control
-- Input sanitization and validation
-- Flexible attributes field for extensibility
-- Comprehensive API documentation
+- [Authentication](authentication_api.md) - Login and session management
+- [User Management](administrative_api.md) - User CRUD operations
+- [Stock API](stockapi.md) - Stock management
+- [Category API](category_api.md) - Category CRUD
+- [Brand API](brand_api.md) - Brand CRUD

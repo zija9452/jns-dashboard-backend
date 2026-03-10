@@ -151,7 +151,7 @@ async def search_duplicate_bills(
 async def get_duplicate_invoice(
     invoice_id: str,
     invoice_type: str = Query(..., description="Type: 'walkin' or 'customer'"),
-    current_user: User = Depends(cashier_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """

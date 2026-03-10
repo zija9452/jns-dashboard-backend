@@ -11,7 +11,7 @@ from ..database.database import get_db
 from ..models.product import Product, ProductCreate, ProductUpdate, ProductRead
 from ..models.user import User  # Import User at the top to avoid NameError
 from ..services.product_service import ProductService
-from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session
+from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session, admin_employee_required_from_session
 from sqlmodel import select
 
 logger = logging.getLogger(__name__)
@@ -349,12 +349,12 @@ async def search_product_by_barcode(
 @router.post("/deleteproduct/{id}")
 async def delete_product_frontend(
     id: str,
-    current_user: User = Depends(admin_required_from_session()),  # Keep as admin only for security
+    current_user: User = Depends(admin_employee_required_from_session()),  # Admin and Employee only (NOT cashier)
     db: AsyncSession = Depends(get_db)
 ):
     """
     Delete a product by ID (frontend compatible response)
-    Required by JavaScript frontend - admin only for security
+    Admin and Employee can delete products. Cashiers cannot delete products.
     """
     try:
         product_id = UUID(id)

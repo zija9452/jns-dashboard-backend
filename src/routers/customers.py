@@ -18,12 +18,12 @@ router = APIRouter()
 async def get_customers(
     skip: int = 0,
     limit: int = 100,
-    current_user: User = Depends(cashier_required_from_session()),  # Cashiers and above can view customers
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can view customers
     db: AsyncSession = Depends(get_db)
 ):
     """
     Get list of customers with pagination
-    Cashiers, employees, and admins can view customers
+    Admin, Cashier, and Employee can view customers
     """
     customers = await CustomerService.get_customers(db, skip=skip, limit=limit)
     return customers
@@ -140,24 +140,24 @@ async def view_customers(
 @router.post("/", response_model=CustomerRead)
 async def create_customer(
     customer_create: CustomerCreate,
-    current_user: User = Depends(admin_required_from_session()),  # Only admins can create customers
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can create customers
     db: AsyncSession = Depends(get_db)
 ):
     """
     Create a new customer
-    Requires admin role
+    Admin, Cashier, and Employee can create customers
     """
     return await CustomerService.create_customer(db, customer_create, str(current_user.id))
 
 @router.get("/{customer_id}", response_model=CustomerRead)
 async def get_customer(
     customer_id: str,
-    current_user: User = Depends(cashier_required_from_session()),  # Cashiers and above can view customer details
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can view customer details
     db: AsyncSession = Depends(get_db)
 ):
     """
     Get a specific customer by ID
-    Cashiers, employees, and admins can view customer details
+    Admin, Cashier, and Employee can view customer details
     """
     try:
         customer_uuid = UUID(customer_id)
@@ -301,12 +301,13 @@ async def get_customer_details(
 @router.post("/deletecustomer/{id}")
 async def delete_customer_frontend(
     id: str,
-    current_user: User = Depends(admin_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can delete customers
     db: AsyncSession = Depends(get_db)
 ):
     """
     Delete a customer by ID (frontend compatible response)
     Required by JavaScript frontend
+    Admin, Cashier, and Employee can delete customers
     """
     try:
         customer_id = UUID(id)
@@ -331,12 +332,13 @@ async def delete_customer_frontend(
 @router.post("/getcustomerbalance")
 async def get_customer_balance(
     branches: str = None,
-    current_user: User = Depends(admin_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can get customer balance
     db: AsyncSession = Depends(get_db)
 ):
     """
     Get customer balance by branch
     Required by JavaScript frontend
+    Admin, Cashier, and Employee can access
     """
     # In a real implementation, this would calculate actual customer balances
     # For now, returning a default value
@@ -354,12 +356,13 @@ async def get_customer_balance(
 @router.post("/customerviewreport")
 async def customer_view_report(
     timezone: str = None,
-    current_user: User = Depends(admin_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can generate reports
     db: AsyncSession = Depends(get_db)
 ):
     """
     Generate customer view report with proper table format
     Required by JavaScript frontend
+    Admin, Cashier, and Employee can access
     """
     import base64
     from datetime import datetime

@@ -653,12 +653,13 @@ async def get_stock_detail(
 @router.get("/getcustomervendorbybranch")
 async def get_customer_vendor_by_branch(
     branch: str = None,
-    current_user: User = Depends(admin_required_from_session()),  # Allow employees to get category info
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # Allow all authenticated users
     db: AsyncSession = Depends(get_db)
 ):
     """
     Get salesmen by branch for customer form
     Required by JavaScript frontend
+    Admin, Cashier, and Employee can access
     """
     from ..services.salesman_service import SalesmanService
 

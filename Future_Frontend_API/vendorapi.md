@@ -1,322 +1,248 @@
-# Vendor API Documentation
+# Vendor Management API
 
-This document provides comprehensive documentation for all vendor-related endpoints in the Regal POS Backend with session-based authentication, including curl commands for testing and integration.
+## 🔐 Authentication & Authorization
 
-## Authentication
+### Login Required
 
-All vendor endpoints require session-based authentication. Obtain a session by logging in:
+Before using any of these endpoints, you **MUST** login first:
 
 ```bash
 curl -X POST http://localhost:8000/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"admin123"}' \
+  -d '{
+    "username": "admin",
+    "password": "admin123"
+  }' \
   -c cookies.txt
 ```
 
-The login response will include a session cookie that will be automatically sent with subsequent requests when using the `-b` flag with curl.
-
-**Login Response:**
-```json
-{
-  "message": "Login successful",
-  "user": {
-    "id": "uuid-string",
-    "username": "admin",
-    "role": "admin",
-    "company_id": null
-  }
-}
-```
+**Save the cookie!** All subsequent requests require the session cookie (`-b cookies.txt`).
 
 ---
 
-## Vendor Model
+### 🔑 Access Control
 
-### Fields:
-```json
-{
-  "id": "uuid-string",           // Auto-generated UUID
-  "name": "Vendor Name",          // VARCHAR(100)
-  "contacts": "{}",               // JSON string (phone, email, address)
-  "branch": "Branch Name",        // VARCHAR(200), NEW FIELD
-  "terms": "{}",                  // JSON string (optional)
-  "created_at": "2026-02-20",     // DateTime
-  "updated_at": "2026-02-20"      // DateTime
-}
-```
+| Decorator | Allowed Roles | Used By |
+|-----------|--------------|---------|
+| `admin_cashier_employee_required_from_session()` | `admin`, `cashier`, `employee` | GET /viewvendor |
+| `admin_required_from_session()` | `admin` only | POST, PUT, DELETE operations |
 
-### Frontend Response Format (viewvendor):
-```json
-[
-  {
-    "ven_id": "uuid-string",
-    "ven_name": "Vendor Name",
-    "ven_phone": "1234567890",
-    "ven_address": "123 Main St",
-    "branch": "European Sports Light House",
-    "vend_balance": 0.0
-  }
-]
-```
+**Important Notes**:
+
+1. **GET /vendors/viewvendor** - Requires **any authenticated user** (admin, cashier, employee)
+   - All authenticated users can view vendors
+
+2. **POST /vendors/** - Requires **admin** only
+   - Only admins can create vendors
+
+3. **PUT /vendors/{id}** - Requires **admin** only
+   - Only admins can update vendors
+
+4. **POST /vendors/deletevendor/{id}** - Requires **admin** only
+   - Only admins can delete vendors
 
 ---
 
-## CRUD Endpoints (vendors.py router)
+## API Endpoints
 
-**Base URL:** `http://localhost:8000/vendors`
+### Vendor CRUD Operations
 
-**Authentication:** Admin role required for ALL endpoints
+---
 
-### 1. Create Vendor
+### 1. GET /vendors/viewvendor - View Vendors (Paginated)
 
-**Endpoint:** `POST /vendors/`
+**Access**: `admin_cashier_employee_required_from_session()` - **Any authenticated user**
 
-**Description:** Create a new vendor.
+**Description**: Get paginated list of vendors with search and branch filtering. This is the **main endpoint** used by the frontend.
 
-**Authentication:** Admin required
+**Endpoint**: `GET /vendors/viewvendor?page=1&limit=8&search_string=`
 
-**Request Body (JSON):**
-```json
-{
-  "name": "Vendor Name",
-  "contacts": "{\"phone\":\"1234567890\",\"email\":\"\",\"address\":\"123 Main St\"}",
-  "branch": "European Sports Light House",
-  "terms": null
-}
-```
+**Query Parameters**:
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `page` | int | 1 | Page number (1-based) |
+| `limit` | int | 8 | Items per page |
+| `search_string` | string | - | Search by vendor name |
+| `branches` | string | - | Filter by branch name |
+| `searchphone` | string | - | Search by phone (optional) |
+| `searchaddress` | string | - | Search by address (optional) |
 
-**Example:**
+**Example**:
 ```bash
-curl -X POST http://localhost:8000/vendors/ \
-  -H "Content-Type: application/json" \
-  -b cookies.txt \
-  -d '{"name":"New Vendor","contacts":"{\"phone\":\"1234567890\",\"email\":\"\",\"address\":\"123 Main St\"}","branch":"European Sports Light House"}'
-```
-
-**Response:**
-```json
-{
-  "id": "uuid-string",
-  "name": "New Vendor",
-  "contacts": "{\"phone\":\"1234567890\",\"email\":\"\",\"address\":\"123 Main St\"}",
-  "branch": "European Sports Light House",
-  "terms": null,
-  "created_at": "2026-02-20T00:00:00",
-  "updated_at": "2026-02-20T00:00:00"
-}
-```
-
----
-
-### 2. Get All Vendors (Paginated)
-
-**Endpoint:** `GET /vendors/?skip=0&limit=100`
-
-**Description:** Get list of vendors with pagination.
-
-**Authentication:** Admin required
-
-**Query Parameters:**
-- `skip`: Number of records to skip (default: 0)
-- `limit`: Maximum records to return (default: 100)
-
-**Example:**
-```bash
-curl -X GET "http://localhost:8000/vendors/?skip=0&limit=10" \
+curl -X GET "http://localhost:8000/vendors/viewvendor?page=1&limit=8&search_string=Ali" \
   -b cookies.txt
 ```
 
-**Response:**
-```json
-[
-  {
-    "id": "uuid-string",
-    "name": "Vendor Name",
-    "contacts": "{\"phone\":\"1234567890\",\"email\":\"\",\"address\":\"123 Main St\"}",
-    "branch": "European Sports Light House",
-    "terms": null,
-    "created_at": "2026-02-20T00:00:00",
-    "updated_at": "2026-02-20T00:00:00"
-  }
-]
-```
-
----
-
-### 3. Get Vendor by ID
-
-**Endpoint:** `GET /vendors/{vendor_id}`
-
-**Description:** Get a specific vendor by ID.
-
-**Authentication:** Admin required
-
-**Path Parameter:**
-- `{vendor_id}`: UUID of the vendor
-
-**Example:**
-```bash
-curl -X GET http://localhost:8000/vendors/uuid-string \
-  -b cookies.txt
-```
-
-**Response:** Same as Create Vendor response
-
----
-
-### 4. Update Vendor
-
-**Endpoint:** `PUT /vendors/{vendor_id}`
-
-**Description:** Update a specific vendor by ID.
-
-**Authentication:** Admin required
-
-**Path Parameter:**
-- `{vendor_id}`: UUID of the vendor
-
-**Request Body (JSON) - All fields optional:**
+**Response** (200 OK):
 ```json
 {
-  "name": "Updated Vendor Name",
-  "contacts": "{\"phone\":\"9876543210\",\"email\":\"\",\"address\":\"456 New St\"}",
-  "branch": "European Sports Light House",
-  "terms": "Net 30"
+  "data": [
+    {
+      "ven_id": "uuid-string",
+      "ven_name": "Ali Traders",
+      "ven_phone": "03001234567",
+      "ven_address": "123 Market Street",
+      "branch": "European Sports Light House",
+      "vend_balance": 0.00
+    }
+  ],
+  "page": 1,
+  "limit": 8,
+  "total": 25,
+  "totalPages": 4
 }
 ```
 
-**Example:**
-```bash
-curl -X PUT http://localhost:8000/vendors/uuid-string \
-  -H "Content-Type: application/json" \
-  -b cookies.txt \
-  -d '{"name":"Updated Vendor Name","contacts":"{\"phone\":\"9876543210\",\"email\":\"\",\"address\":\"456 New St\"}","branch":"European Sports Light House"}'
-```
+**Response Fields**:
+- `data`: Array of vendors (max 8 per page)
+- `page`: Current page number
+- `limit`: Items per page
+- `total`: Total number of vendors matching search
+- `totalPages`: Total pages (for pagination UI)
 
-**Response:** Same as Create Vendor response
-
----
-
-### 5. Delete Vendor
-
-**Endpoint:** `DELETE /vendors/{vendor_id}`
-
-**Description:** Delete a specific vendor by ID.
-
-**Authentication:** Admin required
-
-**Path Parameter:**
-- `{vendor_id}`: UUID of the vendor
-
-**Example:**
-```bash
-curl -X DELETE http://localhost:8000/vendors/uuid-string \
-  -b cookies.txt
-```
-
-**Response:**
+**Error** (401 Unauthorized):
 ```json
 {
-  "message": "Vendor deleted successfully"
+  "detail": "Not authenticated"
 }
 ```
 
 ---
 
-## Frontend-Compatible Endpoints
+### 2. POST /vendors/ - Create Vendor
 
-These endpoints return data in frontend-specific format.
+**Access**: `admin_required_from_session()` - **Admin only**
 
-**Base URL:** `http://localhost:8000/vendors`
+**Description**: Create a new vendor.
 
-### 6. View Vendors (Frontend Format)
+**Endpoint**: `POST /vendors/`
 
-**Endpoint:** `GET /vendors/viewvendor`
-
-**Description:** View vendors with search and branch filtering (frontend format).
-
-**Authentication:** Admin required
-
-**Query Parameters (optional):**
-- `search_string`: Search by vendor name
-- `branches`: Filter by branch
-- `searchphone`: Search by phone number
-- `searchaddress`: Search by address
-- `skip`: Pagination offset (default: 0)
-- `limit`: Max records (default: 100)
-
-**Example:**
-```bash
-curl -X GET "http://localhost:8000/vendors/viewvendor?skip=0&limit=8" \
-  -b cookies.txt
-```
-
-**Response:**
-```json
-[
-  {
-    "ven_id": "uuid-string",
-    "ven_name": "Vendor Name",
-    "ven_phone": "1234567890",
-    "ven_address": "123 Main St",
-    "branch": "European Sports Light House",
-    "vend_balance": 0.0
-  }
-]
-```
-
-**Note:** `vend_balance` is the vendor balance field (NOT `cus_balance` which is for customers)
-
----
-
-### 7. Get Vendor Details (Frontend Format)
-
-**Endpoint:** `GET /vendors/getvendor/{id}`
-
-**Description:** Retrieve specific vendor details in frontend format.
-
-**Authentication:** Admin required
-
-**Path Parameter:**
-- `{id}`: UUID of the vendor
-
-**Example:**
-```bash
-curl -X GET http://localhost:8000/vendors/getvendor/uuid-string \
-  -b cookies.txt
-```
-
-**Response:**
+**Request Body**:
 ```json
 {
-  "ven_id": "uuid-string",
-  "ven_name": "Vendor Name",
-  "ven_phone": "1234567890",
-  "ven_address": "123 Main St",
+  "name": "Ali Traders",
+  "contacts": "{\"phone\": \"03001234567\", \"email\": \"\", \"address\": \"123 Market Street\"}",
   "branch": "European Sports Light House"
 }
 ```
 
+**Request Fields**:
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | ✅ Yes | Vendor name |
+| `contacts` | string | ✅ Yes | JSON string with phone, email, address |
+| `branch` | string | ❌ No | Branch name |
+| `terms` | string | ❌ No | JSON string for payment terms (optional) |
+
+**Example**:
+```bash
+curl -X POST "http://localhost:8000/vendors/" \
+  -H "Content-Type: application/json" \
+  -b cookies.txt \
+  -d '{
+    "name": "Ali Traders",
+    "contacts": "{\"phone\": \"03001234567\", \"email\": \"\", \"address\": \"123 Market Street\"}",
+    "branch": "European Sports Light House"
+  }'
+```
+
+**Response** (200 OK):
+```json
+{
+  "id": "uuid-string",
+  "name": "Ali Traders",
+  "contacts": "{\"phone\": \"03001234567\", \"email\": \"\", \"address\": \"123 Market Street\"}",
+  "branch": "European Sports Light House",
+  "terms": "{}",
+  "created_at": "2026-03-10T10:00:00",
+  "updated_at": "2026-03-10T10:00:00"
+}
+```
+
+**Errors**:
+
+**400 Bad Request** - Invalid JSON:
+```json
+{
+  "detail": "Invalid contacts format"
+}
+```
+
 ---
 
-### 8. Delete Vendor (Frontend Format)
+### 3. PUT /vendors/{vendor_id} - Update Vendor
 
-**Endpoint:** `POST /vendors/deletevendor/{id}`
+**Access**: `admin_required_from_session()` - **Admin only**
 
-**Description:** Delete a vendor (frontend-compatible response).
+**Description**: Update an existing vendor.
 
-**Authentication:** Admin required
+**Endpoint**: `PUT /vendors/{vendor_id}`
 
-**Path Parameter:**
-- `{id}`: UUID of the vendor
+**Path Parameter**: `vendor_id` - UUID of the vendor
 
-**Example:**
+**Request Body** (all fields optional):
+```json
+{
+  "name": "Updated Vendor Name",
+  "contacts": "{\"phone\": \"03009876543\", \"email\": \"new@email.com\", \"address\": \"456 New Street\"}",
+  "branch": "Updated Branch",
+  "terms": "{\"payment_days\": 30}"
+}
+```
+
+**Example**:
 ```bash
-curl -X POST http://localhost:8000/vendors/deletevendor/uuid-string \
+curl -X PUT "http://localhost:8000/vendors/uuid-string" \
+  -H "Content-Type: application/json" \
+  -b cookies.txt \
+  -d '{
+    "name": "Updated Vendor Name",
+    "contacts": "{\"phone\": \"03009876543\", \"address\": \"456 New Street\"}"
+  }'
+```
+
+**Response** (200 OK):
+```json
+{
+  "id": "uuid-string",
+  "name": "Updated Vendor Name",
+  "contacts": "{\"phone\": \"03009876543\", \"email\": \"\", \"address\": \"456 New Street\"}",
+  "branch": "Updated Branch",
+  "terms": "{}",
+  "updated_at": "2026-03-10T11:00:00"
+}
+```
+
+**Errors**:
+
+**404 Not Found**:
+```json
+{
+  "detail": "Vendor not found"
+}
+```
+
+---
+
+### 4. POST /vendors/deletevendor/{id} - Delete Vendor
+
+**Access**: `admin_required_from_session()` - **Admin only**
+
+**Description**: Delete a vendor by ID (frontend-compatible endpoint).
+
+**Endpoint**: `POST /vendors/deletevendor/{id}`
+
+**Path Parameter**: `id` - UUID of the vendor
+
+**Important**: Only admins can delete vendors.
+
+**Example**:
+```bash
+curl -X POST "http://localhost:8000/vendors/deletevendor/uuid-string" \
   -b cookies.txt
 ```
 
-**Response:**
+**Response** (200 OK):
 ```json
 {
   "success": true,
@@ -324,152 +250,238 @@ curl -X POST http://localhost:8000/vendors/deletevendor/uuid-string \
 }
 ```
 
----
+**Errors**:
 
-### 9. Get Vendor Balance
-
-**Endpoint:** `POST /vendors/getvendorbalance`
-
-**Description:** Get vendor balance by branch.
-
-**Authentication:** Admin required
-
-**Query Parameters (optional):**
-- `branches`: Branch name to get balance for
-
-**Example:**
-```bash
-curl -X POST "http://localhost:8000/vendors/getvendorbalance?branches=European%20Sports%20Light%20House" \
-  -b cookies.txt
-```
-
-**Response:**
+**404 Not Found**:
 ```json
 {
-  "cus_balance": 5000.0
+  "detail": "Vendor not found"
 }
 ```
 
-**Note:** Returns `cus_balance` field name for frontend compatibility
-
 ---
 
-### 10. Generate Vendor Report (PDF)
+### 5. GET /vendors/getvendor/{id} - Get Vendor Details
 
-**Endpoint:** `POST /vendors/vendorviewreport`
+**Access**: `admin_required_from_session()` - **Admin only**
 
-**Description:** Generate vendor view report in PDF format (base64 encoded).
+**Description**: Get specific vendor details by ID.
 
-**Authentication:** Admin required
+**Endpoint**: `GET /vendors/getvendor/{id}`
 
-**Example:**
+**Path Parameter**: `id` - UUID of the vendor
+
+**Example**:
 ```bash
-curl -X POST http://localhost:8000/vendors/vendorviewreport \
+curl -X GET "http://localhost:8000/vendors/getvendor/uuid-string" \
   -b cookies.txt
 ```
 
-**Response:**
-```json
-"JVBERi0xLjQKMSAwIG9iago8PAovVHlwZSAvQ2F0YWxvZwovUGFnZXMgMiAwIFIKPj4KZW5kb2JqCjIgMCBvYmoKPDwKL1R5cGUgL1BhZ2VzCi9LaWRzIFszIDAgUl0KL0NvdW50IDEKPj4KZW5kb2JqCjMgMCBvYmoKPDwKL1R5cGUgL1BhZ2UKL1BhcmVudCAyIDAgUgovTWVkaWFCb3ggWzAgMCA2MTIgNzkyXQovQ29udGVudHMgNCAwIFIKPj4KZW5kb2JqCjQgMCBvYmoKPDwKL0xlbmd0aCA0NAo+PgpzdHJlYW0KQlQKL0YxIDEyIFRmCjcyIDcyMCBUZAooVmVuZG9yIFJlcG9ydCkgVGoKRVQKZW5kc3RyZWFtCmVuZG9iagp4cmVmCjAgNQp0cmFpbGVyCjw8Ci9TaXplIDUKL1Jvb3QgMSAwIFIKPj4KJSVFT0Y="
-```
-
-**Usage:** Decode base64 string to get PDF file
-
----
-
-## Removed/Duplicate Endpoints
-
-The following endpoints have been **REMOVED** from `admin.py` to avoid duplication:
-
-- ❌ `GET /admin/getvendor/{id}` - Use `/vendors/getvendor/{id}`
-- ❌ `GET /admin/viewvendor` - Use `/vendors/viewvendor`
-- ❌ `POST /admin/deletevendor/{id}` - Use `/vendors/deletevendor/{id}`
-- ❌ `POST /admin/getvendorbalance` - Use `/vendors/getvendorbalance`
-- ❌ `POST /admin/vendorviewreport` - Use `/vendors/vendorviewreport`
-
-**All vendor endpoints are now in `vendors.py` router only.**
-
----
-
-## Error Handling
-
-All endpoints return standardized error responses:
-
+**Response** (200 OK):
 ```json
 {
-  "error": {
-    "type": "error_type",
-    "message": "Human-readable error message",
-    "status_code": 400,
-    "path": "/endpoint/path",
-    "timestamp": "2026-02-20T00:00:00.000000"
+  "ven_id": "uuid-string",
+  "ven_name": "Ali Traders",
+  "ven_phone": "03001234567",
+  "ven_address": "123 Market Street",
+  "branch": "European Sports Light House"
+}
+```
+
+---
+
+### 6. POST /vendors/getvendorbalance - Get Vendor Balance
+
+**Access**: `admin_required_from_session()` - **Admin only**
+
+**Description**: Get vendor balance by branch (placeholder for future implementation).
+
+**Endpoint**: `POST /vendors/getvendorbalance`
+
+**Request Body** (optional):
+```json
+{
+  "branches": "European Sports Light House"
+}
+```
+
+**Example**:
+```bash
+curl -X POST "http://localhost:8000/vendors/getvendorbalance" \
+  -H "Content-Type: application/json" \
+  -b cookies.txt \
+  -d '{
+    "branches": "European Sports Light House"
+  }'
+```
+
+**Response** (200 OK):
+```json
+{
+  "cus_balance": 5000.00
+}
+```
+
+**Note**: Currently returns placeholder value. Actual balance calculation to be implemented.
+
+---
+
+### 7. POST /vendors/vendorviewreport - Vendor Report
+
+**Access**: `admin_required_from_session()` - **Admin only**
+
+**Description**: Generate vendor details report (PDF, used by ReportModal).
+
+**Endpoint**: `POST /vendors/vendorviewreport`
+
+**Example**:
+```bash
+curl -X POST "http://localhost:8000/vendors/vendorviewreport" \
+  -b cookies.txt
+```
+
+**Response** (200 OK):
+```
+Base64 encoded PDF string
+```
+
+**Report Contents**:
+- Vendor name
+- Phone number
+- Address
+- Branch
+- Balance (currently 0, to be implemented)
+- Total market balance
+
+---
+
+## Frontend API Routes
+
+The frontend uses Next.js API routes as proxies:
+
+| Frontend Route | Backend Endpoint |
+|----------------|------------------|
+| `GET /api/admin/viewvendor` | `GET /vendors/viewvendor` |
+| `POST /api/vendors/` | `POST /vendors/` |
+| `PUT /api/vendors/{id}` | `PUT /vendors/{id}` |
+| `POST /api/admin/deletevendor/{id}` | `POST /vendors/deletevendor/{id}` |
+| `GET /api/vendors/getvendor/{id}` | `GET /vendors/getvendor/{id}` |
+| `POST /api/vendors/getvendorbalance` | `POST /vendors/getvendorbalance` |
+| `POST /api/vendors/vendorviewreport` | `POST /vendors/vendorviewreport` |
+
+**Example** - Frontend fetch with pagination:
+```typescript
+const fetchVendors = async (page: number = 1, searchTerm: string = '') => {
+  const params = new URLSearchParams({
+    page: page.toString(),
+    limit: '8',
+    search_string: searchTerm
+  });
+
+  const response = await fetch(`/api/admin/viewvendor?${params.toString()}`, {
+    method: 'GET',
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to fetch vendors');
   }
-}
-```
 
-### Common Error Types:
-- `validation_error` - Invalid request data (422)
-- `http_error` - Resource not found (404)
-- `authentication_error` - Invalid/missing credentials (401)
-- `authorization_error` - Insufficient permissions (403)
-- `internal_error` - Server error (500)
-
----
-
-## Security Notes
-
-- **All vendor endpoints require Admin role** (no employee access)
-- Session-based authentication with cookies
-- Audit logs maintained for all vendor actions
-- Input validation and sanitization
-- CORS configured for frontend URLs
-- Security headers enabled (XSS, CSRF, clickjacking protection)
-
----
-
-## Frontend Integration
-
-### Next.js API Routes:
-```
-/api/admin/viewvendor        → GET  /vendors/viewvendor
-/api/admin/deletevendor/[id] → POST /vendors/deletevendor/{id}
-/api/vendors/vendorviewreport → POST /vendors/vendorviewreport
-```
-
-### Frontend Pages:
-```
-/vendors          - Vendor list with CRUD operations
-/vendor-payment   - Vendor payment management
-/vendor-details   - Vendor report viewer
+  return response.json();
+};
 ```
 
 ---
 
-## Production Ready Features
+## Error Codes
 
-- ✅ Async/await implementation for high concurrency
-- ✅ Pydantic v2 validation
-- ✅ Proper error handling and logging
-- ✅ Database transaction safety
-- ✅ Session-based authentication
-- ✅ Role-based access control (Admin only)
-- ✅ Input sanitization and validation
-- ✅ Audit trail logging
-- ✅ Structured logging with correlation IDs
-- ✅ Request compression
-- ✅ Performance metrics
+| HTTP Status | Meaning | Common Causes |
+|-------------|---------|---------------|
+| 200 | OK | Success |
+| 400 | Bad Request | Invalid input, invalid JSON format |
+| 401 | Unauthorized | Not logged in, invalid session |
+| 403 | Forbidden | Insufficient permissions (not admin) |
+| 404 | Not Found | Vendor not found |
+| 500 | Server Error | Database error, server issue |
 
 ---
 
 ## Testing Checklist
 
-- [ ] Login and obtain session cookie
-- [ ] Create a new vendor
-- [ ] Get all vendors (paginated)
-- [ ] Get vendor by ID
-- [ ] Update vendor
-- [ ] View vendors with search
-- [ ] Generate vendor report
-- [ ] Delete vendor
-- [ ] Test authentication errors
-- [ ] Test authorization errors
+### Login First
+- [ ] Login with admin credentials
+- [ ] Save cookies (`-c cookies.txt`)
+
+### Test GET /vendors/viewvendor
+- [ ] Fetch first page (page=1, limit=8)
+- [ ] Fetch with search term
+- [ ] Fetch with branch filter
+- [ ] Verify pagination response format
+
+### Test POST /vendors/
+- [ ] Create new vendor with all fields
+- [ ] Create vendor without branch (optional)
+- [ ] Try invalid contacts JSON (should fail)
+
+### Test PUT /vendors/{id}
+- [ ] Update vendor name
+- [ ] Update vendor phone
+- [ ] Update vendor branch
+- [ ] Try update as non-admin (should fail with 403)
+
+### Test POST /vendors/deletevendor/{id}
+- [ ] Delete vendor (admin only)
+- [ ] Try delete as non-admin (should fail with 403)
+- [ ] Try delete non-existent vendor (should 404)
+
+### Test Other Endpoints
+- [ ] Get vendor details by ID
+- [ ] Get vendor balance (placeholder)
+- [ ] Generate vendor report (PDF)
+
+---
+
+## Vendor Data Model
+
+### Database Schema:
+```python
+class Vendor(SQLModel, table=True):
+    __tablename__ = "vendors"
+    
+    id: UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    name: str = Field(max_length=100)
+    contacts: str = Field()  # JSON: {phone, email, address}
+    branch: Optional[str] = Field(default=None, max_length=200)
+    terms: Optional[str] = Field(default="{}")  # JSON: payment terms
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+```
+
+### Contacts JSON Format:
+```json
+{
+  "phone": "03001234567",
+  "email": "vendor@example.com",
+  "address": "123 Market Street, Karachi"
+}
+```
+
+### Terms JSON Format (Optional):
+```json
+{
+  "payment_days": 30,
+  "discount_percent": 2.0,
+  "notes": "Net 30 days payment terms"
+}
+```
+
+---
+
+## Related Documentation
+
+- [Authentication](authentication_api.md) - Login and session management
+- [User Management](administrative_api.md) - User CRUD operations
+- [Product API](productapi.md) - Product management
+- [Customer Invoice API](customer-invoice-api.md) - Customer and order management
+- [Stock API](stockapi.md) - Stock management

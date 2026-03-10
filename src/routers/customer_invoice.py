@@ -25,7 +25,7 @@ router = APIRouter()
 @router.post("/GetCustomerDetails")
 async def get_customer_details(
     request_data: dict,
-    current_user: User = Depends(cashier_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -71,7 +71,7 @@ async def get_customer_details(
 @router.post("/Getsalesmandetail")
 async def get_salesman_detail(
     request_data: dict,
-    current_user: User = Depends(cashier_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -430,7 +430,7 @@ async def save_customer_orders(
 @router.post("/receipt/{invoice_id}")
 async def get_invoice_receipt(
     invoice_id: str,
-    current_user: User = Depends(cashier_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -803,7 +803,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
 @router.post("/GetCustomerInvoiceBalance")
 async def get_customer_invoice_balance(
     customer_id: str = None,
-    current_user: User = Depends(cashier_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -858,7 +858,7 @@ async def update_customer_invoice(
     e_name: str = None,
     e_amount: float = None,
     note: str = None,
-    current_user: User = Depends(cashier_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -955,7 +955,7 @@ async def update_customer_invoice(
 @router.get("/Getorder/{id}")
 async def get_order(
     id: str,
-    current_user: User = Depends(cashier_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1035,7 +1035,7 @@ async def view_customer_order(
     order_status: str = None,
     skip: int = 0,
     limit: int = 100,
-    current_user: User = Depends(cashier_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1057,11 +1057,17 @@ async def view_customer_order(
     # Build query with filters - now using CustomerInvoice instead of CustomOrder
     count_statement = select(func.count()).select_from(CustomerInvoice)
 
-    # Apply search filter if provided - searching in items JSON or invoice details
+    # Apply search filter if provided - searching in invoice_no, customer_name, team_name, and items JSON
     if searchString:
         # Use parameterized queries to prevent SQL injection - sanitize input
         sanitized_search = searchString.replace('%', '\\%').replace('_', '\\_')
-        count_statement = count_statement.where(CustomerInvoice.items.ilike(f"%{sanitized_search}%"))
+        # Search across multiple fields: invoice_no, customer_name, team_name, and items
+        count_statement = count_statement.where(
+            (CustomerInvoice.invoice_no.ilike(f"%{sanitized_search}%")) |
+            (CustomerInvoice.customer_name.ilike(f"%{sanitized_search}%")) |
+            (CustomerInvoice.team_name.ilike(f"%{sanitized_search}%")) |
+            (CustomerInvoice.items.ilike(f"%{sanitized_search}%"))
+        )
 
     # Apply status filter if provided - using the status field from CustomerInvoice
     if order_status:
@@ -1082,10 +1088,16 @@ async def view_customer_order(
     # Build query for fetching data
     statement = select(CustomerInvoice)
 
-    # Apply same filters as count query
+    # Apply same filters as count query - search across multiple fields
     if searchString:
         sanitized_search = searchString.replace('%', '\\%').replace('_', '\\_')
-        statement = statement.where(CustomerInvoice.items.ilike(f"%{sanitized_search}%"))
+        # Search across multiple fields: invoice_no, customer_name, team_name, and items
+        statement = statement.where(
+            (CustomerInvoice.invoice_no.ilike(f"%{sanitized_search}%")) |
+            (CustomerInvoice.customer_name.ilike(f"%{sanitized_search}%")) |
+            (CustomerInvoice.team_name.ilike(f"%{sanitized_search}%")) |
+            (CustomerInvoice.items.ilike(f"%{sanitized_search}%"))
+        )
 
     if order_status:
         try:
@@ -1175,7 +1187,7 @@ async def customer_order_report(
     orderid: str = None,
     timezone: str = None,
     printoption: str = None,
-    current_user: User = Depends(cashier_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1230,7 +1242,7 @@ async def customer_order_report(
 @router.post("/Deletecustomorder/{id}")
 async def delete_custom_order_endpoint(
     id: str,
-    current_user: User = Depends(admin_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1274,7 +1286,7 @@ async def delete_custom_order_endpoint(
 async def update_customer_invoice(
     id: str,
     request_data: dict,
-    current_user: User = Depends(cashier_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1338,7 +1350,7 @@ async def update_customer_invoice(
 @router.post("/Customers")
 async def create_customer_from_modal(
     request_data: dict,
-    current_user: User = Depends(cashier_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1421,7 +1433,7 @@ async def create_customer_from_modal(
 @router.post("/GetSalesmanDetails")
 async def get_salesman_details(
     request_data: dict,
-    current_user: User = Depends(cashier_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1455,7 +1467,7 @@ async def get_salesman_details(
 @router.post("/customerbalance")
 async def customer_balance(
     request_data: dict,
-    current_user: User = Depends(cashier_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1504,7 +1516,7 @@ async def customer_balance(
 @router.get("/customerbalance/{customer_id}")
 async def get_customer_balance(
     customer_id: str,
-    current_user: User = Depends(cashier_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1578,7 +1590,7 @@ async def get_customer_orders(
     skip: int = 0,
     limit: int = 10,
     searchString: str = None,
-    current_user: User = Depends(cashier_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1683,7 +1695,7 @@ async def get_customer_orders(
 @router.get("/order-details/{order_id}")
 async def get_order_details(
     order_id: str,
-    current_user: User = Depends(cashier_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1752,7 +1764,7 @@ async def get_order_details(
 async def process_payment(
     order_id: str,
     payment_data: dict,
-    current_user: User = Depends(cashier_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1890,7 +1902,7 @@ async def process_payment(
 @router.get("/payment-history/{order_id}")
 async def get_payment_history(
     order_id: str,
-    current_user: User = Depends(cashier_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1941,7 +1953,7 @@ async def get_payment_history(
 async def update_order_status(
     order_id: str,
     request_data: dict,
-    current_user: User = Depends(cashier_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -2002,7 +2014,7 @@ async def update_order_status(
 @router.get("/daily-collection-report/{date}")
 async def daily_collection_report(
     date: str,
-    current_user: User = Depends(cashier_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -2071,7 +2083,7 @@ async def daily_collection_report(
 @router.get("/payment-history/{order_id}")
 async def get_payment_history(
     order_id: str,
-    current_user: User = Depends(cashier_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -2114,7 +2126,7 @@ async def get_payment_history(
 @router.get("/customerinvoicesbydate")
 async def get_customer_invoices_by_date(
     date: str,
-    current_user: User = Depends(cashier_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """

@@ -10,6 +10,7 @@ import uuid
 from jose import jwt
 from passlib.context import CryptContext
 import hashlib
+import os
 
 from ..database.database import get_db
 from ..models.user import User
@@ -280,14 +281,17 @@ async def session_login(
         biometric_verified=False  # Traditional login
     )
 
-    # Set session cookie
+    # Set session cookie - secure flag based on environment
+    is_production = os.getenv("ENVIRONMENT", "development") == "production"
+    
     response.set_cookie(
         key="session_token",
         value=session.session_token,
         httponly=True,
-        secure=True,  # Set to False in development
+        secure=is_production,  # True only in production
         samesite="lax",
-        max_age=10800  # 3 hours (10800 seconds)
+        max_age=10800,  # 3 hours (10800 seconds)
+        path="/"
     )
 
     return {
@@ -426,6 +430,7 @@ async def biometric_thumb_login(
 
 @router.post("/logout")
 async def logout(
+    request: Request,
     response: Response,
     current_user: User = Depends(get_current_user_from_session),  # Using session-based auth
     db: AsyncSession = Depends(get_db)
@@ -433,7 +438,8 @@ async def logout(
     """
     Logout user and invalidate session
     """
-    session_token = response.request.cookies.get("session_token")
+    # Get session token from request cookies
+    session_token = request.cookies.get("session_token")
 
     if session_token:
         await invalidate_session(session_token, db)
@@ -478,5 +484,18 @@ def jwt_logout(response: Response):
     # which would require passing the refresh token in the request
     return {"message": "Successfully logged out"}
 
-# Import statement needed for the select function
-from sqlmodel import select
+
+@router.get("/me")
+async def get_current_user_info(
+    current_user: User = Depends(get_current_user_from_session),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get current authenticated user information
+    Returns user details including role
+    """
+    return {
+        "id": str(current_user.id),
+        "username": current_user.username,
+        "role": current_user.role.name,
+    }

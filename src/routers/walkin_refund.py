@@ -23,7 +23,7 @@ router = APIRouter()
 @router.post("/refunds/walkin-invoice")
 async def create_walkin_invoice_refund(
     request_data: dict,
-    current_user: User = Depends(cashier_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -229,7 +229,7 @@ async def create_walkin_invoice_refund(
 @router.get("/refunds/walkin-invoice/{refund_id}")
 async def get_walkin_invoice_refund(
     refund_id: str,
-    current_user: User = Depends(cashier_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -274,7 +274,7 @@ async def get_walkin_invoice_refund(
 @router.get("/refunds/walkin-invoice/daily/{date_str}")
 async def get_daily_walkin_invoice_refunds(
     date_str: str,
-    current_user: User = Depends(cashier_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -334,7 +334,7 @@ async def get_walkin_invoice_refunds(
     customer_id: str = Query(None),
     invoice_id: str = Query(None),
     date: str = Query(None),
-    current_user: User = Depends(cashier_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -404,7 +404,7 @@ async def get_walkin_invoice_refunds(
 @router.get("/refunds/walkin-invoice/invoice/{invoice_id}")
 async def get_refunds_for_walkin_invoice(
     invoice_id: str,
-    current_user: User = Depends(cashier_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -455,7 +455,7 @@ async def get_refunds_for_walkin_invoice(
 async def update_walkin_invoice_refund(
     refund_id: str,
     refund_update: RefundUpdate,
-    current_user: User = Depends(cashier_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -507,7 +507,7 @@ async def update_walkin_invoice_refund(
 @router.delete("/refunds/walkin-invoice/{refund_id}")
 async def delete_walkin_invoice_refund(
     refund_id: str,
-    current_user: User = Depends(cashier_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """

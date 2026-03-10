@@ -16,7 +16,7 @@ from src.models.expense import Expense
 from src.models.stock_entry import StockEntry, StockEntryType
 from src.models.product import Product
 from src.models.refund import Refund
-from src.auth.session_auth import admin_cashier_employee_required_from_session
+from src.auth.session_auth import admin_cashier_employee_required_from_session, admin_employee_required_from_session
 
 router = APIRouter()
 
@@ -25,12 +25,13 @@ router = APIRouter()
 async def get_dashboard_stats(
     month: int = None,
     year: int = None,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access dashboard
     db: AsyncSession = Depends(get_db)
 ):
     """
     Get dashboard statistics for a specific month.
     Returns sales, expenses, purchases, stock data, and daily chart data.
+    Admin, Cashier, and Employee can all access the dashboard.
     
     Query params:
     - month: Month number (1-12), defaults to current month
@@ -283,7 +284,7 @@ async def get_walkin_invoices(
     from_date: str = Query(...),
     to_date: str = Query(...),
     branch: str = Query("European Sports Light House"),
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_employee_required_from_session()),  # Admin and Employee only (NOT Cashier)
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -363,7 +364,7 @@ async def get_customized_invoices(
     from_date: str = Query(...),
     to_date: str = Query(...),
     branch: str = Query("European Sports Light House"),
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_employee_required_from_session()),  # Admin and Employee only (NOT Cashier)
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -497,7 +498,7 @@ async def get_customized_sales_summary(
     from_date: str = Query(...),
     to_date: str = Query(...),
     branch: str = Query("European Sports Light House"),
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_employee_required_from_session()),  # Admin and Employee only (NOT Cashier)
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -592,7 +593,7 @@ async def get_sales_summary(
     from_date: str = Query(...),
     to_date: str = Query(...),
     branch: str = Query("European Sports Light House"),
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_employee_required_from_session()),  # Admin and Employee only (NOT Cashier)
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -778,7 +779,7 @@ async def get_walkin_invoices_pdf(
     from_date: str = Query(...),
     to_date: str = Query(...),
     branch: str = Query("European Sports Light House"),
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_employee_required_from_session()),  # Admin and Employee only (NOT Cashier)
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -986,7 +987,7 @@ async def get_walkin_invoices_excel(
     from_date: str = Query(...),
     to_date: str = Query(...),
     branch: str = Query("European Sports Light House"),
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_employee_required_from_session()),  # Admin and Employee only (NOT Cashier)
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1147,7 +1148,7 @@ async def get_customized_invoices_pdf(
     from_date: str = Query(...),
     to_date: str = Query(...),
     branch: str = Query("European Sports Light House"),
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_employee_required_from_session()),  # Admin and Employee only (NOT Cashier)
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1328,7 +1329,7 @@ async def get_customized_invoices_excel(
     from_date: str = Query(...),
     to_date: str = Query(...),
     branch: str = Query("European Sports Light House"),
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_employee_required_from_session()),  # Admin and Employee only (NOT Cashier)
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1489,7 +1490,7 @@ async def get_expenses_pdf(
     from_date: str = Query(...),
     to_date: str = Query(...),
     branch: str = Query("European Sports Light House"),
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_employee_required_from_session()),  # Admin and Employee only (NOT Cashier)
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1642,7 +1643,7 @@ async def get_expenses_excel(
     from_date: str = Query(...),
     to_date: str = Query(...),
     branch: str = Query("European Sports Light House"),
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_employee_required_from_session()),  # Admin and Employee only (NOT Cashier)
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1774,7 +1775,7 @@ async def get_stock_adjustments_pdf(
     from_date: str = Query(...),
     to_date: str = Query(...),
     branch: str = Query("European Sports Light House"),
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_employee_required_from_session()),  # Admin and Employee only (NOT Cashier)
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1964,7 +1965,7 @@ async def get_stock_adjustments_excel(
     from_date: str = Query(...),
     to_date: str = Query(...),
     branch: str = Query("European Sports Light House"),
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_employee_required_from_session()),  # Admin and Employee only (NOT Cashier)
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -2124,7 +2125,7 @@ async def get_refunds_pdf(
     from_date: str = Query(...),
     to_date: str = Query(...),
     branch: str = Query("European Sports Light House"),
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_employee_required_from_session()),  # Admin and Employee only (NOT Cashier)
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -2308,7 +2309,7 @@ async def get_refunds_excel(
     from_date: str = Query(...),
     to_date: str = Query(...),
     branch: str = Query("European Sports Light House"),
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_employee_required_from_session()),  # Admin and Employee only (NOT Cashier)
     db: AsyncSession = Depends(get_db)
 ):
     """
