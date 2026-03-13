@@ -68,7 +68,7 @@ async def create_product(
         )
 
     # Clear cache after creating product
-    clear_products_cache()
+    await clear_products_cache()
 
     return await ProductService.create_product(db, product_create, str(current_user.id))
 
@@ -191,8 +191,8 @@ async def view_products(
     count_result = await db.execute(count_statement)
     total_count = len(count_result.scalars().all())
 
-    # Apply pagination at database level
-    statement = base_statement.offset(skip).limit(limit)
+    # Apply pagination at database level (order by created_at DESC to show newest last)
+    statement = base_statement.order_by(Product.created_at.asc()).offset(skip).limit(limit)
 
     # Execute query
     result = await db.execute(statement)
@@ -372,7 +372,7 @@ async def delete_product_frontend(
         )
 
     # Clear cache after deleting product
-    clear_products_cache()
+    await clear_products_cache()
 
     return {
         "success": True,
@@ -503,7 +503,7 @@ async def delete_product(
         )
 
     # Clear cache after deleting product
-    clear_products_cache()
+    await clear_products_cache()
 
     return {"message": "Product deleted successfully"}
 

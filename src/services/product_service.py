@@ -25,41 +25,62 @@ class ProductService:
     async def generate_unique_barcode(db: AsyncSession) -> str:
         """
         Generate a unique barcode using auto-increment approach
-        Format: 690 + 6 digit sequence + 1 check digit = 10 digits total
-        """
-        # Get the last product with highest barcode (any barcode)
-        statement = select(Product).where(
-            Product.barcode != None
-        ).where(
-            Product.barcode != ''
-        ).order_by(Product.barcode.desc()).limit(1)
-        result = await db.execute(statement)
-        last_product = result.scalar_one_or_none()
+        Format: 690 + 9 digit sequence + 1 check digit = 13 digits (EAN-13 compatible)
 
-        if not last_product:
-            # Start from 690000001
-            base_code = "69000000"
+        Real-world best practices:
+        - Sequential numbering for easy tracking
+        - EAN-13 check digit algorithm for error detection
+        - Prefix 690 is a standard GS1 prefix
+        - Unique constraint in database ensures no duplicates
+        """
+        from sqlalchemy import text
+        
+        # Get the last product with highest barcode using raw SQL to avoid recursion
+        try:
+            result = await db.execute(
+                text("SELECT barcode FROM products WHERE barcode IS NOT NULL AND barcode != '' ORDER BY barcode DESC LIMIT 1")
+            )
+            row = result.first()
+            last_barcode = row[0] if row else None
+        except Exception as e:
+            print(f"❌ Error fetching last barcode: {e}")
+            # Fallback: use timestamp-based approach
+            import time
+            last_barcode = None
+
+        if not last_barcode:
+            # Start from 690000000000 (12 digits without check digit)
+            base_code = "690000000000"
+            print(f"🆕 No existing barcode found, starting from: {base_code}")
         else:
-            # Extract the number part from last barcode
-            last_barcode = last_product.barcode
-            if last_barcode.startswith('690') and len(last_barcode) >= 9:
-                # Get the 6-digit sequence number
+            print(f"📖 Last barcode in DB: {last_barcode} (length: {len(last_barcode)})")
+            
+            # Handle 13-digit barcode format: 690 + 9 digits + check digit
+            if last_barcode.startswith('690') and len(last_barcode) == 13:
+                # Get the 9-digit sequence number
                 last_num_str = last_barcode[3:-1]  # Remove prefix and check digit
                 try:
                     last_num = int(last_num_str)
                     next_num = last_num + 1
-                    base_code = f"690{next_num:06d}"
-                except ValueError:
-                    # Fallback to timestamp-based if parsing fails
+                    base_code = f"690{next_num:09d}"
+                    print(f"📈 Incrementing: {last_num} → {next_num}")
+                except ValueError as e:
+                    print(f"⚠️ Parse error, using fallback: {e}")
                     import time
-                    base_code = f"690{int(time.time() * 1000) % 1000000:06d}"
+                    base_code = f"690{int(time.time() * 1000) % 1000000000:09d}"
             else:
-                # Start fresh if last barcode doesn't match format
-                base_code = "69000000"
+                # Start fresh if format doesn't match
+                print(f"⚠️ Invalid barcode format, starting fresh")
+                base_code = "690000000000"
 
-        # Calculate check digit
+        # Calculate EAN-13 check digit (12 digits input)
         check_digit = ProductService.calculate_check_digit(base_code)
-        return f"{base_code}{check_digit}"
+        barcode = f"{base_code}{check_digit}"
+        
+        # Log for debugging
+        print(f"📊 Generated barcode: {barcode} (base: {base_code}, check: {check_digit})")
+        
+        return barcode
 
     @staticmethod
     async def create_product(db: AsyncSession, product_create: ProductCreate, user_id: str = "") -> Product:
