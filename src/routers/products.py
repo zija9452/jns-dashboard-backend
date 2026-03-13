@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy import or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Dict, Any
@@ -6,11 +6,13 @@ from uuid import UUID
 import uuid
 import time
 import logging
+import io
 
 from ..database.database import get_db
 from ..models.product import Product, ProductCreate, ProductUpdate, ProductRead
 from ..models.user import User  # Import User at the top to avoid NameError
 from ..services.product_service import ProductService
+from ..services.cloudinary_service import CloudinaryService
 from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session, admin_employee_required_from_session
 from sqlmodel import select
 
@@ -82,8 +84,15 @@ async def get_product_details(
     """
     Retrieve specific product details by ID
     Required by JavaScript frontend
+    Optimized: Direct query without service layer
     """
-    product = await ProductService.get_product(db, id)
+    from sqlmodel import select
+    
+    # Direct query - faster than service layer
+    statement = select(Product).where(Product.id == id)
+    result = await db.execute(statement)
+    product = result.scalar_one_or_none()
+    
     if not product:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -145,6 +154,7 @@ async def view_products(
     count_cache_key = f"count:{branches or ''}:{search_string or ''}"
     
     # Build base query - select only required columns for better performance
+    # Excluding attributes field (images) to avoid large base64 data in list view
     base_statement = select(
         Product.id,
         Product.name,
@@ -211,8 +221,7 @@ async def view_products(
             "limitedquan": p[7],
             "branch": p[8] or "",
             "brand": p[9] or "",
-            "pro_image": "",
-            "stock": p[10]
+            "stock": p[10]  # stock_level is at index 10
         }
         for p in products
     ]
@@ -283,6 +292,60 @@ async def generate_barcode(
     """
     barcode = await ProductService.generate_unique_barcode(db)
     return {"barcode": barcode}
+
+
+@router.post("/upload-image")
+async def upload_product_image(
+    file: UploadFile = File(..., description="Product image file"),
+    current_user: User = Depends(employee_required_from_session())
+):
+    """
+    Upload product image to Cloudinary and return public URL
+    
+    Accepts image files (JPG, PNG, WebP) and uploads to Cloudinary CDN.
+    Returns the public URL which can be stored in the database.
+    """
+    # Validate file type
+    allowed_types = ["image/jpeg", "image/jpg", "image/png", "image/webp"]
+    if file.content_type not in allowed_types:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid file type. Allowed types: {', '.join(allowed_types)}"
+        )
+    
+    # Validate file size (max 5MB)
+    file_size = 0
+    file_bytes = await file.read()
+    file_size = len(file_bytes)
+    if file_size > 5 * 1024 * 1024:  # 5MB
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File size must be less than 5MB"
+        )
+    
+    try:
+        # Upload to Cloudinary
+        image_url = await CloudinaryService.upload_image(
+            file_bytes=file_bytes,
+            folder="products",
+            public_id=f"product_{uuid.uuid4().hex[:12]}"
+        )
+        
+        logger.info(f"Image uploaded successfully: {image_url}")
+        
+        return {
+            "success": True,
+            "url": image_url,
+            "size": file_size,
+            "content_type": file.content_type
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to upload image: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to upload image: {str(e)}"
+        )
 
 
 @router.get("/searchbybarcode")

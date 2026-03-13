@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     default_pagination_limit: int = int(os.getenv("DEFAULT_PAGINATION_LIMIT", "50"))
     max_pagination_limit: int = int(os.getenv("MAX_PAGINATION_LIMIT", "200"))
 
+    # Cloudinary settings
+    cloudinary_cloud_name: str = os.getenv("CLOUDINARY_CLOUD_NAME", "")
+    cloudinary_api_key: str = os.getenv("CLOUDINARY_API_KEY", "")
+    cloudinary_api_secret: str = os.getenv("CLOUDINARY_API_SECRET", "")
+
     # Logging settings
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
     log_format: str = os.getenv("LOG_FORMAT", "%(asctime)s - %(name)s - %(levelname)s - %(message)s")

@@ -28,6 +28,7 @@ opentelemetry-instrumentation-fastapi==0.50b0
 opentelemetry-instrumentation-sqlalchemy==0.50b0
 opentelemetry-instrumentation-redis==0.50b0
 opentelemetry-instrumentation-requests==0.50b0
+cloudinary==1.41.0
 hypothesis>=6.88.4
 locust>=2.35.0
 locust-plugins==5.0.0
