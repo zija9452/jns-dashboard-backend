@@ -12,14 +12,14 @@ class Refund(SQLModel, table=True):
     __tablename__ = "refunds"
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    invoice_id: uuid.UUID = Field(foreign_key="invoices.id")
+    invoice_id: uuid.UUID = Field(foreign_key="invoices.id", index=True)  # Index for JOIN performance
     invoice_no: str = Field(default="N/A", index=True)  # Store invoice number directly for performance
     items: str = Field()  # JSON string for refunded items
     amount: Decimal = Field(sa_column=Column(Numeric(10, 2), nullable=False))
     reason: str  # Text field for reason
-    processed_by: uuid.UUID = Field(foreign_key="users.id")
-    created_at: datetime = Field(default_factory=datetime.now, index=True)  # Last updated with index
-    updated_at: datetime = Field(default_factory=datetime.now, index=True)  # Last updated with index
+    processed_by: uuid.UUID = Field(foreign_key="users.id", index=True)  # Index for user filtering
+    created_at: datetime = Field(default_factory=datetime.now, index=True)  # Index for date filtering
+    updated_at: datetime = Field(default_factory=datetime.now, index=True)  # Index for sorting
 
 class RefundRead(SQLModel):
     id: uuid.UUID

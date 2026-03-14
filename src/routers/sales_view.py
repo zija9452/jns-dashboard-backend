@@ -77,41 +77,23 @@ async def get_dashboard_stats(
     )
     walkin_result = await db.execute(walkin_statement)
     walkin_total_sales = float(walkin_result.scalar_one_or_none() or 0)
-    
+
     # Calculate total sales from customer invoice payments (CIN- prefix)
-    customer_statement = select(CustomerInvoice).where(
-        CustomerInvoice.invoice_no.like("CIN-%")
+    # OPTIMIZED: Filter payments in database using PostgreSQL JSON operators instead of Python loop
+    from sqlalchemy import text
+    customer_payment_query = text("""
+        SELECT COALESCE(SUM((payment.value->>'amount')::numeric), 0) as total_collection
+        FROM customer_invoices,
+        json_array_elements(customer_invoices.payments_history::json) AS payment(value)
+        WHERE customer_invoices.invoice_no LIKE 'CIN-%'
+        AND (payment.value->>'date')::date BETWEEN :start_date AND :end_date
+    """)
+    customer_payment_result = await db.execute(
+        customer_payment_query,
+        {"start_date": first_day, "end_date": data_end_date}
     )
-    customer_result = await db.execute(customer_statement)
-    all_customer_invoices = customer_result.scalars().all()
-    
-    customer_total_collection = 0.0
-    for inv in all_customer_invoices:
-        try:
-            payment_history = []
-            if inv.payments_history:
-                try:
-                    payment_history = json.loads(inv.payments_history)
-                except:
-                    payment_history = []
-            
-            for payment in payment_history:
-                payment_date_str = payment.get('date', '')
-                if payment_date_str:
-                    try:
-                        if 'T' in payment_date_str:
-                            payment_date = datetime.fromisoformat(payment_date_str).date()
-                        else:
-                            payment_date = datetime.strptime(payment_date_str, '%Y-%m-%d').date()
-                        
-                        # Filter payments up to data_end_date
-                        if first_day <= payment_date <= data_end_date:
-                            customer_total_collection += float(payment.get('amount', 0))
-                    except:
-                        continue
-        except:
-            continue
-    
+    customer_total_collection = float(customer_payment_result.scalar_one_or_none() or 0)
+
     total_sales = walkin_total_sales + customer_total_collection
     
     # ==================== EXPENSES CALCULATION ====================
@@ -127,29 +109,24 @@ async def get_dashboard_stats(
     
     # ==================== PURCHASE/COST CALCULATION ====================
     # Calculate cost from walk-in invoices (70% of selling price)
-    walkin_cost_statement = select(Invoice).where(
-        and_(
-            Invoice.invoice_no.like("SIN-%"),
-            func.date(Invoice.payment_date) >= first_day,
-            func.date(Invoice.payment_date) <= data_end_date  # Use data_end_date
-        )
+    # OPTIMIZED: Use SQL aggregation with PostgreSQL JSON operators instead of Python loop
+    from sqlalchemy import text
+    walkin_cost_query = text("""
+        SELECT COALESCE(SUM(
+            (item.value->>'quantity')::numeric * 
+            (item.value->>'unit_price')::numeric - 
+            (item.value->>'discount')::numeric
+        ) * 0.7, 0) as total_cost
+        FROM invoices,
+        json_array_elements(invoices.items::json) AS item(value)
+        WHERE invoices.invoice_no LIKE 'SIN-%'
+        AND invoices.payment_date::date BETWEEN :start_date AND :end_date
+    """)
+    walkin_cost_result = await db.execute(
+        walkin_cost_query,
+        {"start_date": first_day, "end_date": data_end_date}
     )
-    walkin_cost_result = await db.execute(walkin_cost_statement)
-    walkin_invoices = walkin_cost_result.scalars().all()
-    
-    total_purchase = 0.0
-    for inv in walkin_invoices:
-        try:
-            items = json.loads(inv.items) if inv.items else []
-            for item in items:
-                quantity = item.get('quantity', 0)
-                unit_price = item.get('unit_price', 0)
-                item_discount = float(item.get('discount', 0))
-                item_total = quantity * unit_price - item_discount
-                item_cost = item_total * 0.7  # 70% cost
-                total_purchase += item_cost
-        except:
-            continue
+    total_purchase = float(walkin_cost_result.scalar_one_or_none() or 0)
     
     # ==================== STOCK DATA ====================
     # Count out of stock products (stock_level = 0)
@@ -179,72 +156,47 @@ async def get_dashboard_stats(
     
     # ==================== DAILY CHART DATA ====================
     # Get daily sales and expenses for the month (up to today for current month)
-    daily_sales = {}
-    daily_expenses = {}
+    # OPTIMIZED: Use SQL GROUP BY instead of Python loops
     
-    # Initialize days from 1 to data_end_date.day (today for current month)
-    for day in range(1, data_end_date.day + 1):
-        daily_sales[day] = 0.0
-        daily_expenses[day] = 0.0
-    
-    # Get daily walk-in sales (only up to data_end_date)
-    for inv in walkin_invoices:
-        try:
-            if inv.payment_date:
-                day = inv.payment_date.day
-                if day in daily_sales:  # Only include if within range
-                    daily_sales[day] += float(inv.amount_paid)
-        except:
-            continue
-    
-    # Get daily customer invoice payments (only up to data_end_date)
-    for inv in all_customer_invoices:
-        try:
-            payment_history = []
-            if inv.payments_history:
-                try:
-                    payment_history = json.loads(inv.payments_history)
-                except:
-                    payment_history = []
-            
-            for payment in payment_history:
-                payment_date_str = payment.get('date', '')
-                if payment_date_str:
-                    try:
-                        if 'T' in payment_date_str:
-                            payment_date = datetime.fromisoformat(payment_date_str).date()
-                        else:
-                            payment_date = datetime.strptime(payment_date_str, '%Y-%m-%d').date()
-                        
-                        # Only include payments up to data_end_date
-                        if first_day <= payment_date <= data_end_date:
-                            day = payment_date.day
-                            if day in daily_sales:  # Only include if within range
-                                daily_sales[day] += float(payment.get('amount', 0))
-                    except:
-                        continue
-        except:
-            continue
-    
-    # Get daily expenses (only up to data_end_date)
-    expenses_daily_result = await db.execute(
-        select(Expense).where(
-            and_(
-                Expense.expense_date >= first_day,
-                Expense.expense_date <= data_end_date
-            )
+    # Daily walk-in sales using SQL GROUP BY
+    from sqlalchemy import extract
+    daily_walkin_statement = select(
+        extract('day', Invoice.payment_date).label('day'),
+        func.sum(Invoice.amount_paid).label('total')
+    ).where(
+        and_(
+            Invoice.invoice_no.like("SIN-%"),
+            func.date(Invoice.payment_date) >= first_day,
+            func.date(Invoice.payment_date) <= data_end_date
         )
-    )
-    expenses_list = expenses_daily_result.scalars().all()
+    ).group_by(extract('day', Invoice.payment_date))
     
-    for expense in expenses_list:
-        try:
-            if expense.expense_date:
-                day = expense.expense_date.day
-                if day in daily_expenses:  # Only include if within range
-                    daily_expenses[day] += float(expense.amount)
-        except:
-            continue
+    daily_sales_result = await db.execute(daily_walkin_statement)
+    daily_sales = {row.day: float(row.total) for row in daily_sales_result.all()}
+    
+    # Initialize missing days with 0
+    for day in range(1, data_end_date.day + 1):
+        if day not in daily_sales:
+            daily_sales[day] = 0.0
+    
+    # Daily expenses using SQL GROUP BY
+    daily_expense_statement = select(
+        extract('day', Expense.expense_date).label('day'),
+        func.sum(Expense.amount).label('total')
+    ).where(
+        and_(
+            Expense.expense_date >= first_day,
+            Expense.expense_date <= data_end_date
+        )
+    ).group_by(extract('day', Expense.expense_date))
+    
+    daily_expense_result = await db.execute(daily_expense_statement)
+    daily_expenses = {row.day: float(row.total) for row in daily_expense_result.all()}
+    
+    # Initialize missing days with 0
+    for day in range(1, data_end_date.day + 1):
+        if day not in daily_expenses:
+            daily_expenses[day] = 0.0
     
     # Format chart data (only days 1 to data_end_date.day)
     dates = [str(day).zfill(2) for day in range(1, data_end_date.day + 1)]
