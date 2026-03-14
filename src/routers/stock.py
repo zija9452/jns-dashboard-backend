@@ -466,19 +466,19 @@ async def save_stock_in_with_barcode(
             # Generate ZPL for each unit in quantity
             for i in range(quantity):
                 # ZPL for Zebra GX420d - 80mm label width (~576 dots @ 203dpi)
-                # Center all content horizontally at x=160
+                # Center all content horizontally at x=50 (shifted right for better alignment)
                 zpl = "^XA"
 
-                # 1. Barcode - with auto human-readable number below
-                zpl += f"^FO160,50^BY2,3,80^BCN,80,Y,N,N^FD{product.barcode}^FS"
+                # 1. Barcode - with auto human-readable number below (shifted right to 50)
+                zpl += f"^FO50,40^BY2,3,80^BCN,80,Y,N,N^FD{product.barcode}^FS"
 
                 # 2. Product name - centered with word wrap (wider field block for longer names)
                 # Adjusted X position to center the wider FB400 block
                 truncated_name = product.name[:40] if len(product.name) > 40 else product.name
-                zpl += f"^FO80,160^A0N,18,18^FB400,2,0,C^FD{truncated_name}^FS"
+                zpl += f"^FO10,150^A0N,18,18^FB400,2,0,C^FD{truncated_name}^FS"
 
-                # 3. Price - centered, larger font (same logic as product name)
-                zpl += f"^FO160,185^A0N,25,25^FB250,1,0,C^FDRs. {int(barcode_price)}^FS"
+                # 3. Price - centered, larger font (shifted left to 80)
+                zpl += f"^FO80,175^A0N,25,25^FB250,1,0,C^FDRs. {int(barcode_price)}^FS"
 
                 zpl += "^XZ"
 
@@ -1133,23 +1133,23 @@ async def print_barcodes(
         price = 0.0
 
     # ZPL for Zebra GX420d - 80mm label width (~576 dots @ 203dpi)
-    # Center all content horizontally at x=100 (moved left to prevent cutting)
+    # Center all content horizontally at x=50 (shifted right for better alignment)
     zpl_commands = "^XA"
 
     for i in range(quantity):
-        # Center position: x=100 (moved from 160 to prevent right side cutting)
-        x_center = 110
-        y_start = 50
+        # Center position: x=50, y=40 (adjusted for better alignment)
+        x_center = 50
+        y_start = 40
 
         # 1. Barcode - with auto human-readable number below
         zpl_commands += f"^FO{x_center},{y_start}^BY2,3,80^BCN,80,Y,N,N^FD{barcode}^FS"
 
         # 2. Product name - centered with word wrap (adjusted for new x position)
         truncated_name = pro_name[:40] if len(pro_name) > 40 else pro_name
-        zpl_commands += f"^FO20,{y_start + 110}^A0N,18,18^FB400,2,0,C^FD{truncated_name}^FS"
+        zpl_commands += f"^FO10,{y_start + 110}^A0N,18,18^FB400,2,0,C^FD{truncated_name}^FS"
 
-        # 3. Price - centered, larger font
-        zpl_commands += f"^FO{x_center},{y_start + 135}^A0N,25,25^FB250,1,0,C^FDRs. {int(price)}^FS"
+        # 3. Price - centered, larger font (shifted left to 80)
+        zpl_commands += f"^FO80,{y_start + 135}^A0N,25,25^FB250,1,0,C^FDRs. {int(price)}^FS"
 
         # End current label and start new one for next barcode
         if i < quantity - 1:
@@ -1208,15 +1208,15 @@ async def generate_barcodes_only(
             # Complete ZPL label
             zpl = "^XA"
 
-            # 1. Barcode with auto human-readable
-            zpl += f"^FO160,50^BY2,3,80^BCN,80,Y,N,N^FD{barcode}^FS"
+            # 1. Barcode with auto human-readable (shifted right to 50)
+            zpl += f"^FO50,40^BY2,3,80^BCN,80,Y,N,N^FD{barcode}^FS"
 
             # 2. Product name - truncated and centered
             truncated_name = pro_name[:40] if len(pro_name) > 40 else pro_name
-            zpl += f"^FO80,160^A0N,18,18^FB400,2,0,C^FD{truncated_name}^FS"
+            zpl += f"^FO10,150^A0N,18,18^FB400,2,0,C^FD{truncated_name}^FS"
 
-            # 3. Price - centered, larger font
-            zpl += f"^FO160,185^A0N,25,25^FB250,1,0,C^FDRs. {int(price)}^FS"
+            # 3. Price - centered, larger font (shifted left to 80)
+            zpl += f"^FO80,175^A0N,25,25^FB250,1,0,C^FDRs. {int(price)}^FS"
 
             # End label
             zpl += "^XZ"

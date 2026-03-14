@@ -25,16 +25,16 @@ class ProductService:
     async def generate_unique_barcode(db: AsyncSession) -> str:
         """
         Generate a unique barcode using auto-increment approach
-        Format: 690 + 9 digit sequence + 1 check digit = 13 digits (EAN-13 compatible)
+        Format: 690 + 7 digit sequence + 1 check digit = 11 digits
 
         Real-world best practices:
         - Sequential numbering for easy tracking
-        - EAN-13 check digit algorithm for error detection
+        - Check digit algorithm for error detection
         - Prefix 690 is a standard GS1 prefix
         - Unique constraint in database ensures no duplicates
         """
         from sqlalchemy import text
-        
+
         # Get the last product with highest barcode using raw SQL to avoid recursion
         try:
             result = await db.execute(
@@ -49,37 +49,37 @@ class ProductService:
             last_barcode = None
 
         if not last_barcode:
-            # Start from 690000000000 (12 digits without check digit)
-            base_code = "690000000000"
+            # Start from 6900000000 (10 digits without check digit)
+            base_code = "6900000000"
             print(f"🆕 No existing barcode found, starting from: {base_code}")
         else:
             print(f"📖 Last barcode in DB: {last_barcode} (length: {len(last_barcode)})")
-            
-            # Handle 13-digit barcode format: 690 + 9 digits + check digit
-            if last_barcode.startswith('690') and len(last_barcode) == 13:
-                # Get the 9-digit sequence number
+
+            # Handle 11-digit barcode format: 690 + 7 digits + check digit
+            if last_barcode.startswith('690') and len(last_barcode) == 11:
+                # Get the 7-digit sequence number
                 last_num_str = last_barcode[3:-1]  # Remove prefix and check digit
                 try:
                     last_num = int(last_num_str)
                     next_num = last_num + 1
-                    base_code = f"690{next_num:09d}"
+                    base_code = f"690{next_num:07d}"
                     print(f"📈 Incrementing: {last_num} → {next_num}")
                 except ValueError as e:
                     print(f"⚠️ Parse error, using fallback: {e}")
                     import time
-                    base_code = f"690{int(time.time() * 1000) % 1000000000:09d}"
+                    base_code = f"690{int(time.time() * 1000) % 10000000:07d}"
             else:
                 # Start fresh if format doesn't match
                 print(f"⚠️ Invalid barcode format, starting fresh")
-                base_code = "690000000000"
+                base_code = "6900000000"
 
-        # Calculate EAN-13 check digit (12 digits input)
+        # Calculate check digit (10 digits input for 11-digit barcode)
         check_digit = ProductService.calculate_check_digit(base_code)
         barcode = f"{base_code}{check_digit}"
-        
+
         # Log for debugging
         print(f"📊 Generated barcode: {barcode} (base: {base_code}, check: {check_digit})")
-        
+
         return barcode
 
     @staticmethod
