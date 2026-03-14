@@ -25,7 +25,7 @@ class ProductService:
     async def generate_unique_barcode(db: AsyncSession) -> str:
         """
         Generate a unique barcode using auto-increment approach
-        Format: 690 + 7 digit sequence + 1 check digit = 11 digits
+        Format: 690 + 5 digit sequence + 1 check digit = 9 digits
 
         Real-world best practices:
         - Sequential numbering for easy tracking
@@ -49,31 +49,31 @@ class ProductService:
             last_barcode = None
 
         if not last_barcode:
-            # Start from 6900000000 (10 digits without check digit)
-            base_code = "6900000000"
+            # Start from 69000000 (8 digits without check digit)
+            base_code = "69000000"
             print(f"🆕 No existing barcode found, starting from: {base_code}")
         else:
             print(f"📖 Last barcode in DB: {last_barcode} (length: {len(last_barcode)})")
 
-            # Handle 11-digit barcode format: 690 + 7 digits + check digit
-            if last_barcode.startswith('690') and len(last_barcode) == 11:
-                # Get the 7-digit sequence number
+            # Handle 9-digit barcode format: 690 + 5 digits + check digit
+            if last_barcode.startswith('690') and len(last_barcode) == 9:
+                # Get the 5-digit sequence number
                 last_num_str = last_barcode[3:-1]  # Remove prefix and check digit
                 try:
                     last_num = int(last_num_str)
                     next_num = last_num + 1
-                    base_code = f"690{next_num:07d}"
+                    base_code = f"690{next_num:05d}"
                     print(f"📈 Incrementing: {last_num} → {next_num}")
                 except ValueError as e:
                     print(f"⚠️ Parse error, using fallback: {e}")
                     import time
-                    base_code = f"690{int(time.time() * 1000) % 10000000:07d}"
+                    base_code = f"690{int(time.time() * 1000) % 100000:05d}"
             else:
                 # Start fresh if format doesn't match
                 print(f"⚠️ Invalid barcode format, starting fresh")
-                base_code = "6900000000"
+                base_code = "69000000"
 
-        # Calculate check digit (10 digits input for 11-digit barcode)
+        # Calculate check digit (8 digits input for 9-digit barcode)
         check_digit = ProductService.calculate_check_digit(base_code)
         barcode = f"{base_code}{check_digit}"
 
