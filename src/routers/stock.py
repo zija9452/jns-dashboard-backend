@@ -469,8 +469,8 @@ async def save_stock_in_with_barcode(
                 # Center all content horizontally at x=70 (shifted right for better alignment)
                 zpl = "^XA"
 
-                # 1. Barcode - with auto human-readable number below (shifted right to 70)
-                zpl += f"^FO70,40^BY2,3,80^BCN,80,Y,N,N^FD{product.barcode}^FS"
+                # 1. Barcode - with auto human-readable number below (shifted right to 70, reduced width)
+                zpl += f"^FO70,40^BY2,2,80^BCN,80,Y,N,N^FD{product.barcode}^FS"
 
                 # 2. Product name - centered with word wrap (wider field block for longer names)
                 # Adjusted X position to center the wider FB400 block (font size increased from 18 to 19)
@@ -1141,8 +1141,8 @@ async def print_barcodes(
         x_center = 70
         y_start = 40
 
-        # 1. Barcode - with auto human-readable number below
-        zpl_commands += f"^FO{x_center},{y_start}^BY2,3,80^BCN,80,Y,N,N^FD{barcode}^FS"
+        # 1. Barcode - with auto human-readable number below (reduced width for compact print)
+        zpl_commands += f"^FO{x_center},{y_start}^BY2,2,80^BCN,80,Y,N,N^FD{barcode}^FS"
 
         # 2. Product name - centered with word wrap (font size increased from 18 to 19)
         truncated_name = pro_name[:40] if len(pro_name) > 40 else pro_name
@@ -1208,8 +1208,8 @@ async def generate_barcodes_only(
             # Complete ZPL label
             zpl = "^XA"
 
-            # 1. Barcode with auto human-readable (shifted right to 70)
-            zpl += f"^FO70,40^BY2,3,80^BCN,80,Y,N,N^FD{barcode}^FS"
+            # 1. Barcode with auto human-readable (shifted right to 70, reduced width)
+            zpl += f"^FO70,40^BY2,2,80^BCN,80,Y,N,N^FD{barcode}^FS"
 
             # 2. Product name - truncated and centered (font size increased from 18 to 19)
             truncated_name = pro_name[:40] if len(pro_name) > 40 else pro_name
