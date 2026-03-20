@@ -329,7 +329,7 @@ async def get_daily_walkin_invoice_refunds(
 
 @router.get("/refunds/walkin-invoice")
 async def get_walkin_invoice_refunds(
-    limit: int = Query(100, ge=1, le=200),
+    limit: int = Query(10, ge=1, le=200),
     skip: int = Query(0, ge=0),
     customer_id: str = Query(None),
     invoice_id: str = Query(None),
@@ -339,14 +339,16 @@ async def get_walkin_invoice_refunds(
 ):
     """
     Get list of walk-in invoice refunds with optional filtering
+    Returns paginated data with total count for proper frontend pagination
     """
-    statement = select(Refund)
+    # Build base statement with filters
+    base_statement = select(Refund)
 
     # Apply filters
     if customer_id:
         try:
             customer_uuid = uuid.UUID(customer_id)
-            statement = statement.where(Refund.customer_id == customer_uuid)
+            base_statement = base_statement.where(Refund.customer_id == customer_uuid)
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -356,7 +358,7 @@ async def get_walkin_invoice_refunds(
     if invoice_id:
         try:
             invoice_uuid = uuid.UUID(invoice_id)
-            statement = statement.where(Refund.invoice_id == invoice_uuid)
+            base_statement = base_statement.where(Refund.invoice_id == invoice_uuid)
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -366,15 +368,40 @@ async def get_walkin_invoice_refunds(
     if date:
         try:
             target_date = datetime.strptime(date, "%Y-%m-%d").date()
-            statement = statement.where(func.date(Refund.created_at) == target_date)
+            base_statement = base_statement.where(func.date(Refund.created_at) == target_date)
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid date format. Use YYYY-MM-DD."
             )
 
+    # Get total count (efficient using count query)
+    count_statement = select(Refund.id)
+    if customer_id:
+        try:
+            customer_uuid = uuid.UUID(customer_id)
+            count_statement = count_statement.where(Refund.customer_id == customer_uuid)
+        except ValueError:
+            pass  # Already validated above
+
+    if invoice_id:
+        try:
+            invoice_uuid = uuid.UUID(invoice_id)
+            count_statement = count_statement.where(Refund.invoice_id == invoice_uuid)
+        except ValueError:
+            pass  # Already validated above
+
+    if date:
+        try:
+            target_date = datetime.strptime(date, "%Y-%m-%d").date()
+            count_statement = count_statement.where(func.date(Refund.created_at) == target_date)
+        except ValueError:
+            pass  # Already validated above
+
+    total_count = len((await db.execute(count_statement)).scalars().all())
+
     # Apply pagination and ordering
-    statement = statement.offset(skip).limit(limit).order_by(Refund.created_at.desc())
+    statement = base_statement.offset(skip).limit(limit).order_by(Refund.created_at.desc())
 
     result = await db.execute(statement)
     refunds = result.scalars().all()
@@ -398,7 +425,18 @@ async def get_walkin_invoice_refunds(
             "updated_at": rf.updated_at.isoformat()
         })
 
-    return refund_list
+    # Calculate total pages (ceiling division)
+    total_pages = (total_count + limit - 1) // limit if total_count > 0 else 0
+
+    # Return response with pagination metadata (same format as products API)
+    return {
+        "data": refund_list,
+        "total": total_count,
+        "page": (skip // limit) + 1 if limit > 0 else 1,
+        "limit": limit,
+        "total_pages": total_pages,
+        "has_more": skip + len(refund_list) < total_count
+    }
 
 
 @router.get("/refunds/walkin-invoice/invoice/{invoice_id}")

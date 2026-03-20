@@ -498,7 +498,7 @@ async def delete_walkin_invoice(
 
 @router.get("/walkin-invoices")
 async def get_walkin_invoices(
-    limit: int = Query(100, ge=1, le=200),
+    limit: int = Query(8, ge=1, le=200),
     skip: int = Query(0, ge=0),
     customer_id: str = Query(None),
     status: str = Query(None),
@@ -508,13 +508,15 @@ async def get_walkin_invoices(
 ):
     """
     Get list of walk-in invoices with optional filtering
+    Returns paginated data with total count for proper frontend pagination
     """
-    statement = select(Invoice)
+    # Build base statement with filters
+    base_statement = select(Invoice)
 
     # Apply filters
     if customer_id:  # Search by invoice number OR customer name
         from sqlalchemy import or_
-        statement = statement.where(
+        base_statement = base_statement.where(
             or_(
                 Invoice.invoice_no.ilike(f"%{customer_id}%"),
                 Invoice.customer_name.ilike(f"%{customer_id}%")
@@ -524,7 +526,7 @@ async def get_walkin_invoices(
     if status:
         try:
             status_enum = InvoiceStatus(status.lower())
-            statement = statement.where(Invoice.status == status_enum)
+            base_statement = base_statement.where(Invoice.status == status_enum)
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -535,15 +537,42 @@ async def get_walkin_invoices(
         try:
             target_date = datetime.strptime(date, "%Y-%m-%d").date()
             # Use payment_date for accurate filtering (matches what user selects)
-            statement = statement.where(func.date(Invoice.payment_date) == target_date)
+            base_statement = base_statement.where(func.date(Invoice.payment_date) == target_date)
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid date format. Use YYYY-MM-DD."
             )
 
+    # Get total count (efficient using count query)
+    count_statement = select(Invoice.id)
+    if customer_id:
+        from sqlalchemy import or_
+        count_statement = count_statement.where(
+            or_(
+                Invoice.invoice_no.ilike(f"%{customer_id}%"),
+                Invoice.customer_name.ilike(f"%{customer_id}%")
+            )
+        )
+
+    if status:
+        try:
+            status_enum = InvoiceStatus(status.lower())
+            count_statement = count_statement.where(Invoice.status == status_enum)
+        except ValueError:
+            pass  # Already validated above
+
+    if date:
+        try:
+            target_date = datetime.strptime(date, "%Y-%m-%d").date()
+            count_statement = count_statement.where(func.date(Invoice.payment_date) == target_date)
+        except ValueError:
+            pass  # Already validated above
+
+    total_count = len((await db.execute(count_statement)).scalars().all())
+
     # Apply pagination and ordering
-    statement = statement.offset(skip).limit(limit).order_by(Invoice.created_at.desc())
+    statement = base_statement.offset(skip).limit(limit).order_by(Invoice.created_at.desc())
 
     result = await db.execute(statement)
     invoices = result.scalars().all()
@@ -581,7 +610,19 @@ async def get_walkin_invoices(
             "updated_at": inv.updated_at.isoformat()
         })
 
-    return invoice_list
+    # Calculate total pages (ceiling division)
+    total_pages = (total_count + limit - 1) // limit if limit > 0 else 0
+    current_page = (skip // limit) + 1 if limit > 0 else 1
+
+    # Return response with pagination metadata (same format as customer order API)
+    return {
+        "data": invoice_list,
+        "total": total_count,
+        "page": current_page,
+        "limit": limit,
+        "total_pages": total_pages,
+        "has_more": current_page < total_pages
+    }
 
 
 @router.get("/walkin-invoices/{invoice_id}/receipt")
