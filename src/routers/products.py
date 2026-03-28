@@ -61,6 +61,18 @@ async def create_product(
     Create a new product
     Requires admin or employee role
     """
+    # Check if product name already exists (case-insensitive)
+    from sqlmodel import select
+    statement = select(Product).where(Product.name == product_create.name)
+    result = await db.execute(statement)
+    existing_product = result.scalar_one_or_none()
+    
+    if existing_product:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Product with this name already exists. Please use a different name."
+        )
+    
     # Check if SKU already exists
     existing_product = await ProductService.get_product_by_sku(db, product_create.sku)
     if existing_product:
@@ -479,6 +491,81 @@ async def delete_product_image(
         "message": "Product image deleted successfully"
     }
 
+@router.post("/delete-image")
+async def delete_image_from_cloudinary(
+    request_data: dict,
+    current_user: User = Depends(employee_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Delete product image from Cloudinary permanently
+    
+    This endpoint:
+    1. Deletes the image from Cloudinary storage
+    2. Clears the image field from the product (if product_id is provided)
+    
+    Request body:
+    - public_id: Cloudinary public ID of the image to delete (e.g., "european-sports/products/image_name")
+    - image_url: (Optional) Cloudinary URL to extract public_id from (if public_id not provided)
+    - product_id: (Optional) Product ID to clear the image field
+    """
+    try:
+        public_id = request_data.get("public_id")
+        image_url = request_data.get("image_url")
+        product_id = request_data.get("product_id")
+        
+        # Extract public_id from URL if not provided directly
+        if not public_id and image_url:
+            public_id = CloudinaryService.get_public_id_from_url(image_url)
+        
+        if not public_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="public_id or image_url is required"
+            )
+        
+        # Delete from Cloudinary
+        deleted = await CloudinaryService.delete_image(public_id)
+        
+        if not deleted:
+            logger.warning(f"Failed to delete image from Cloudinary: {public_id}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to delete image from Cloudinary"
+            )
+        
+        # If product_id is provided, also clear the image field from the product
+        if product_id:
+            try:
+                product_uuid = UUID(product_id)
+                product = await ProductService.get_product(db, product_uuid)
+                
+                if product:
+                    product.attributes = None
+                    db.add(product)
+                    await db.commit()
+                    await db.refresh(product)
+                    logger.info(f"Cleared image field for product: {product_id}")
+            except ValueError:
+                logger.warning(f"Invalid product_id format: {product_id}")
+                # Continue anyway, image was deleted from Cloudinary
+        
+        logger.info(f"Successfully deleted image from Cloudinary: {public_id}")
+        
+        return {
+            "success": True,
+            "message": "Image deleted successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting image: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete image: {str(e)}"
+        )
+
 # Generic routes should come after specific routes to avoid conflicts
 @router.get("/{product_id}", response_model=ProductRead)
 async def get_product(
@@ -534,6 +621,19 @@ async def update_product(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Product not found"
         )
+
+    # Check if new name conflicts with another product (allow if it's the same product)
+    if product_update.name and product_update.name != product.name:
+        from sqlmodel import select
+        statement = select(Product).where(Product.name == product_update.name)
+        result = await db.execute(statement)
+        existing_product = result.scalar_one_or_none()
+        
+        if existing_product and existing_product.id != product_uuid:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Product with this name already exists. Please use a different name."
+            )
 
     # Clear cache after updating product
     await clear_products_cache()
