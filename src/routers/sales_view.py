@@ -23,45 +23,66 @@ router = APIRouter()
 
 @router.get("/dashboard/stats")
 async def get_dashboard_stats(
+    from_date: str = Query(None, description="Start date in YYYY-MM-DD format (overrides month/year)"),
+    to_date: str = Query(None, description="End date in YYYY-MM-DD format (overrides month/year)"),
     month: int = None,
     year: int = None,
     current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access dashboard
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get dashboard statistics for a specific month.
+    Get dashboard statistics for a specific date range or month.
     Returns sales, expenses, purchases, stock data, and daily chart data.
     Admin, Cashier, and Employee can all access the dashboard.
-    
+
     Query params:
-    - month: Month number (1-12), defaults to current month
-    - year: Year number (e.g., 2026), defaults to current year
-    
+    - from_date: Start date in YYYY-MM-DD format (optional, overrides month/year if provided)
+    - to_date: End date in YYYY-MM-DD format (optional, overrides month/year if provided)
+    - month: Month number (1-12), defaults to current month (used if from_date/to_date not provided)
+    - year: Year number (e.g., 2026), defaults to current year (used if from_date/to_date not provided)
+
     Note: Chart data shows only up to today's date (not future dates)
+    Role-based response:
+    - Admin/Employee: Full data including chartData
+    - Cashier: Only KPI data (no chartData), current date only
     """
-    # Get current date or specified month/year
+    # Get current date
     today = datetime.now().date()
     
-    if month is None:
-        month = today.month
-    if year is None:
-        year = today.year
+    # Get user role for role-based response
+    user_role = current_user.role.name if current_user and current_user.role else "admin"
     
-    # Validate month and year
-    if month < 1 or month > 12:
-        raise HTTPException(status_code=400, detail="Invalid month. Must be 1-12")
-    
-    # Get first and last day of the month
-    first_day = date(year, month, 1)
-    last_day = date(year, month, monthrange(year, month)[1])
-    
-    # IMPORTANT: If viewing current month, limit to today's date
-    # If viewing past/future month, show full month
-    is_current_month = (month == today.month and year == today.year)
-    if is_current_month:
-        data_end_date = today  # Show data only up to today
+    # CASHIER: Force current date only, ignore all date parameters
+    if user_role == "cashier":
+        first_day = today
+        data_end_date = today
+    elif from_date and to_date:
+        # ADMIN/EMPLOYEE: Use date range if provided
+        try:
+            first_day = datetime.fromisoformat(from_date).date()
+            data_end_date = datetime.fromisoformat(to_date).date()
+            # Validate date range
+            if first_day > data_end_date:
+                raise HTTPException(status_code=400, detail="from_date must be before or equal to to_date")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
     else:
-        data_end_date = last_day  # Show full month for past/future months
+        # ADMIN/EMPLOYEE: Fall back to month/year selection
+        if month is None:
+            month = today.month
+        if year is None:
+            year = today.year
+
+        # Validate month and year
+        if month < 1 or month > 12:
+            raise HTTPException(status_code=400, detail="Invalid month. Must be 1-12")
+
+        # Get first and last day of the month
+        first_day = date(year, month, 1)
+        last_day = date(year, month, monthrange(year, month)[1])
+
+        # IMPORTANT: Always limit to today's date (past, current, or future months)
+        data_end_date = min(last_day, today)
     
     # ==================== SALES CALCULATION ====================
     # Calculate total sales from walk-in invoices (SIN- prefix)
@@ -155,13 +176,12 @@ async def get_dashboard_stats(
     opening_balance = float(daily_cash.total_opening) if daily_cash else 0.0
     
     # ==================== DAILY CHART DATA ====================
-    # Get daily sales and expenses for the month (up to today for current month)
-    # OPTIMIZED: Use SQL GROUP BY instead of Python loops
+    # Get daily sales and expenses for the date range
+    # Use func.date() to get actual dates instead of just day numbers
     
-    # Daily walk-in sales using SQL GROUP BY
-    from sqlalchemy import extract
+    # Daily walk-in sales using SQL GROUP BY date
     daily_walkin_statement = select(
-        extract('day', Invoice.payment_date).label('day'),
+        func.date(Invoice.payment_date).label('date'),
         func.sum(Invoice.amount_paid).label('total')
     ).where(
         and_(
@@ -169,45 +189,46 @@ async def get_dashboard_stats(
             func.date(Invoice.payment_date) >= first_day,
             func.date(Invoice.payment_date) <= data_end_date
         )
-    ).group_by(extract('day', Invoice.payment_date))
-    
+    ).group_by(func.date(Invoice.payment_date))
+
     daily_sales_result = await db.execute(daily_walkin_statement)
-    daily_sales = {row.day: float(row.total) for row in daily_sales_result.all()}
-    
-    # Initialize missing days with 0
-    for day in range(1, data_end_date.day + 1):
-        if day not in daily_sales:
-            daily_sales[day] = 0.0
-    
-    # Daily expenses using SQL GROUP BY
+    daily_sales = {row.date: float(row.total) for row in daily_sales_result.all()}
+
+    # Daily expenses using SQL GROUP BY date
     daily_expense_statement = select(
-        extract('day', Expense.expense_date).label('day'),
+        func.date(Expense.expense_date).label('date'),
         func.sum(Expense.amount).label('total')
     ).where(
         and_(
             Expense.expense_date >= first_day,
             Expense.expense_date <= data_end_date
         )
-    ).group_by(extract('day', Expense.expense_date))
-    
+    ).group_by(func.date(Expense.expense_date))
+
     daily_expense_result = await db.execute(daily_expense_statement)
-    daily_expenses = {row.day: float(row.total) for row in daily_expense_result.all()}
+    daily_expenses = {row.date: float(row.total) for row in daily_expense_result.all()}
+
+    # Generate all dates in range
+    from datetime import timedelta
+    delta = timedelta(days=1)
+    current_date = first_day
+    dates = []
+    sales_data = []
+    expenses_data = []
     
-    # Initialize missing days with 0
-    for day in range(1, data_end_date.day + 1):
-        if day not in daily_expenses:
-            daily_expenses[day] = 0.0
-    
-    # Format chart data (only days 1 to data_end_date.day)
-    dates = [str(day).zfill(2) for day in range(1, data_end_date.day + 1)]
-    sales_data = [round(daily_sales[day], 2) for day in range(1, data_end_date.day + 1)]
-    expenses_data = [round(daily_expenses[day], 2) for day in range(1, data_end_date.day + 1)]
-    
+    while current_date <= data_end_date:
+        date_str = current_date.strftime('%Y-%m-%d')
+        dates.append(date_str)
+        sales_data.append(round(daily_sales.get(current_date, 0.0), 2))
+        expenses_data.append(round(daily_expenses.get(current_date, 0.0), 2))
+        current_date += delta
+
     # Get admin username and role
     admin_username = current_user.username if current_user else "Admin"
     admin_role = current_user.role.name if current_user and current_user.role else "Admin"
-    
-    return {
+
+    # Build base response
+    response = {
         "totalSales": round(total_sales, 2),
         "totalExpense": round(total_expenses, 2),
         "totalPurchase": round(total_purchase, 2),
@@ -216,19 +237,24 @@ async def get_dashboard_stats(
         "adminUser": admin_username,
         "userRole": admin_role,
         "openingBalance": round(opening_balance, 2),
-        "chartData": {
+        "dateRange": {
+            "from": first_day.strftime('%Y-%m-%d'),
+            "to": data_end_date.strftime('%Y-%m-%d')
+        }
+    }
+
+    # CASHIER: Do not include chart data (charts only for admin/employee)
+    if user_role != "cashier":
+        response["chartData"] = {
             "dates": dates,
             "sales": sales_data,
             "expenses": expenses_data
-        },
-        "month": month,
-        "year": year,
-        "monthName": first_day.strftime('%B %Y'),
-        "dataRange": {
-            "start": first_day.strftime('%d/%m/%Y'),
-            "end": data_end_date.strftime('%d/%m/%Y')
         }
-    }
+        response["month"] = month
+        response["year"] = year
+        response["monthName"] = first_day.strftime('%B %Y')
+
+    return response
 
 
 @router.get("/walkin-invoices")

@@ -39,21 +39,23 @@ class CloudinaryService:
             Public URL of uploaded image
         """
         try:
-            # Upload to Cloudinary
+            # Upload to Cloudinary with aggressive optimization
             upload_result = cloudinary.uploader.upload(
                 file_bytes,
                 folder=f"european-sports/{folder}",
                 public_id=public_id,
                 resource_type="image",
                 transformation=[
-                    {"quality": "auto:good"},  # Auto quality optimization
-                    {"fetch_format": "auto"}   # Auto format (WebP for supported browsers)
+                    {"quality": "auto:eco"},      # Eco quality - better compression (50-80% reduction)
+                    {"fetch_format": "auto"},     # Auto format (WebP/AVIF for modern browsers)
+                    {"width": 1200},              # Max width 1200px (sufficient for product images)
+                    {"crop": "limit"}             # Limit to max dimensions without cropping
                 ]
             )
-            
+
             # Return secure URL
             return upload_result.get("secure_url")
-            
+
         except Exception as e:
             logger.error(f"Cloudinary upload error: {e}")
             raise Exception(f"Failed to upload image: {str(e)}")
