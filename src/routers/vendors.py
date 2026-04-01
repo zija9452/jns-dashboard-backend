@@ -49,7 +49,7 @@ async def view_vendors(
     searchphone: Optional[str] = None,
     searchaddress: Optional[str] = None,
     page: int = 1,
-    limit: int = 8,
+    limit: int = 10000,
     current_user: User = Depends(admin_cashier_employee_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
@@ -107,7 +107,7 @@ async def view_vendors(
             "ven_phone": contacts_data.get("phone", ""),
             "ven_address": contacts_data.get("address", ""),
             "branch": getattr(vendor, 'branch', '') or '',
-            "vend_balance": 0.0
+            "vend_balance": float(vendor.balance) if hasattr(vendor, 'balance') and vendor.balance else 0.0
         }
 
         result_list.append(vendor_data)
@@ -415,6 +415,97 @@ async def vendor_view_report(
     return encoded_pdf
 
 # Standard REST API routes (MUST be after specific routes)
+# IMPORTANT: Static routes MUST come before dynamic routes like {vendor_id}
+
+@router.get("/all-payment-history")
+async def get_all_vendor_payment_history(
+    page: int = 1,
+    limit: int = 10,
+    vendor_id: Optional[str] = None,
+    search: Optional[str] = None,
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get all vendor payment history with pagination
+    Access: Admin, Cashier, Employee
+    """
+    from sqlalchemy import select
+
+    print(f'=== VENDOR PAYMENT HISTORY API ===')
+    print(f'vendor_id param: {vendor_id}')
+    print(f'page: {page}, limit: {limit}')
+
+    # Calculate skip
+    skip = (page - 1) * limit
+
+    # Get all vendors
+    vendors_result = await db.execute(select(Vendor))
+    all_vendors = vendors_result.scalars().all()
+
+    print(f'Total vendors in DB: {len(all_vendors)}')
+
+    # Build payment list
+    all_payments = []
+
+    for vendor in all_vendors:
+        # Filter by vendor_id if specified
+        if vendor_id and str(vendor.id) != vendor_id:
+            continue
+
+        print(f'Processing vendor: {vendor.name} (ID: {vendor.id})')
+
+        # Parse payment history
+        payment_history = []
+        try:
+            payment_history = json.loads(vendor.payments_history) if vendor.payments_history else []
+        except:
+            payment_history = []
+
+        print(f'Payment history count: {len(payment_history)}')
+
+        # Add vendor info to each payment
+        for payment in payment_history:
+            payment_entry = {
+                "vendor_id": str(vendor.id),
+                "vendor_name": vendor.name,
+                "payment_date": payment.get("date", ""),
+                "datetime": payment.get("datetime", ""),
+                "amount": payment.get("amount", 0),
+                "payment_method": payment.get("payment_method", ""),
+                "payment_type": payment.get("payment_type", ""),
+                "description": payment.get("description", ""),
+                "balance_after": payment.get("balance_after", 0)
+            }
+
+            # Apply search filter (search in vendor name and description)
+            if search:
+                search_lower = search.lower()
+                if (search_lower not in vendor.name.lower() and
+                    search_lower not in payment_entry["description"].lower()):
+                    continue
+
+            all_payments.append(payment_entry)
+
+    print(f'Total payments before pagination: {len(all_payments)}')
+
+    # Sort by datetime (newest first)
+    all_payments.sort(key=lambda x: x.get("datetime", "") or "", reverse=True)
+
+    # Apply pagination
+    total = len(all_payments)
+    paginated_payments = all_payments[skip:skip + limit]
+
+    print(f'Payments after pagination: {len(paginated_payments)}')
+    print(f'=== END VENDOR PAYMENT HISTORY API ===')
+
+    return {
+        "payments": paginated_payments,
+        "total": total,
+        "page": page,
+        "limit": limit
+    }
+
 
 @router.get("/{vendor_id}", response_model=VendorRead)
 async def get_vendor(
@@ -499,3 +590,163 @@ async def delete_vendor(
         )
 
     return {"message": "Vendor deleted successfully"}
+
+
+@router.post("/process-payment/{vendor_id}")
+async def process_vendor_payment(
+    vendor_id: UUID,
+    payment_data: dict,
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Process vendor payment (similar to customer invoice payment)
+    Access: Admin, Cashier, Employee
+    
+    Request Body:
+    {
+        "amount_paid": 5000.00,
+        "payment_method": "Cash",
+        "payment_type": "payment",  // or "reverse_payment"
+        "date": "2026-03-31",
+        "description": "Payment to vendor"
+    }
+    """
+    from sqlalchemy import select
+    import json
+    from datetime import datetime
+    
+    # Get vendor
+    vendor = await db.get(Vendor, vendor_id)
+    if not vendor:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Vendor not found"
+        )
+    
+    # Extract payment data
+    amount_paid = float(payment_data.get('amount_paid', 0))
+    payment_method = payment_data.get('payment_method', 'Cash')
+    payment_type = payment_data.get('payment_type', 'payment')
+    payment_date = payment_data.get('date', datetime.now().strftime('%Y-%m-%d'))
+    description = payment_data.get('description', '')
+    
+    if amount_paid <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Payment amount must be positive"
+        )
+    
+    # Get current balance
+    current_balance = float(vendor.balance)
+    
+    # Calculate new balance based on payment type
+    if payment_type == 'payment':
+        # Payment reduces vendor balance (we're paying them)
+        new_balance = current_balance - amount_paid
+    elif payment_type == 'reverse_payment':
+        # Reverse payment increases vendor balance
+        new_balance = current_balance + amount_paid
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid payment type. Use 'payment' or 'reverse_payment'"
+        )
+    
+    # Update vendor balance
+    vendor.balance = new_balance
+    
+    # Add to payment history
+    payment_history = []
+    try:
+        payment_history = json.loads(vendor.payments_history) if vendor.payments_history else []
+    except:
+        payment_history = []
+    
+    payment_history.append({
+        "date": payment_date,
+        "datetime": datetime.now().isoformat(),
+        "amount": amount_paid,
+        "payment_method": payment_method,
+        "payment_type": payment_type,
+        "description": description,
+        "balance_after": new_balance,
+        "created_by": str(current_user.id),
+        "created_by_username": current_user.username
+    })
+    vendor.payments_history = json.dumps(payment_history)
+    
+    await db.commit()
+    
+    return {
+        "message": "Vendor payment processed successfully",
+        "vendor_id": str(vendor.id),
+        "vendor_name": vendor.name,
+        "amount_paid": amount_paid,
+        "payment_method": payment_method,
+        "payment_type": payment_type,
+        "previous_balance": current_balance,
+        "new_balance": new_balance,
+        "payment_date": payment_date
+    }
+
+
+@router.get("/payment-history/{vendor_id}")
+async def get_vendor_payment_history(
+    vendor_id: UUID,
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get vendor payment history
+    Access: Admin, Cashier, Employee
+    """
+    import json
+    
+    # Get vendor
+    vendor = await db.get(Vendor, vendor_id)
+    if not vendor:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Vendor not found"
+        )
+    
+    # Parse payment history
+    payment_history = []
+    try:
+        payment_history = json.loads(vendor.payments_history) if vendor.payments_history else []
+    except:
+        payment_history = []
+    
+    return {
+        "vendor_id": str(vendor.id),
+        "vendor_name": vendor.name,
+        "current_balance": float(vendor.balance),
+        "payment_history": payment_history
+    }
+
+
+@router.get("/viewvendorbalance")
+async def view_vendor_balance(
+    vendor_id: UUID,
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get vendor current balance
+    Access: Admin, Cashier, Employee
+    """
+    # Get vendor
+    vendor = await db.get(Vendor, vendor_id)
+    if not vendor:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Vendor not found"
+        )
+    
+    return {
+        "vendor_id": str(vendor.id),
+        "vendor_name": vendor.name,
+        "balance": float(vendor.balance),
+        "payments_history_count": len(json.loads(vendor.payments_history)) if vendor.payments_history else 0
+    }

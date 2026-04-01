@@ -307,7 +307,10 @@ async def get_walkin_invoices(
                 unit_price = item.get('unit_price', 0)
                 item_discount = float(item.get('discount', 0))
                 item_total = quantity * unit_price - item_discount
-                item_cost = item_total * 0.7  # Assume 70% cost
+                
+                # Use stored cost_price from invoice item (already saved at invoice creation time)
+                # Multiply by quantity to get total cost for this item
+                item_cost = float(item.get('cost_price', 0)) * quantity
 
                 # Show payment and discount only on first item
                 amount_paid = total_invoice_paid if first_item else 0.0
@@ -325,7 +328,7 @@ async def get_walkin_invoices(
                     "quantity": quantity,
                     "discount": discount,
                     "total_discount": discount,
-                    "cost": float(item_cost),
+                    "cost": item_cost,
                     "created_at": inv.created_at.isoformat() if inv.created_at else None
                 })
 
@@ -612,16 +615,13 @@ async def get_sales_summary(
         walkin_total_sales += float(inv.amount_paid)
         if inv.payment_method.lower() == 'cash':
             walkin_cash_sales += float(inv.amount_paid)
-        
-        # Calculate cost (70% of selling price, same as walk-in invoice display)
+
+        # Calculate cost using stored cost_price from invoice items
         try:
             items = json.loads(inv.items) if inv.items else []
             for item in items:
                 quantity = item.get('quantity', 0)
-                unit_price = item.get('unit_price', 0)
-                item_discount = float(item.get('discount', 0))
-                item_total = quantity * unit_price - item_discount
-                item_cost = item_total * 0.7  # 70% cost
+                item_cost = float(item.get('cost_price', 0)) * quantity
                 walkin_total_cost += item_cost
         except:
             continue
@@ -793,7 +793,7 @@ async def get_walkin_invoices_pdf(
         try:
             items = json.loads(inv.items) if inv.items else []
             totals = json.loads(inv.totals) if inv.totals else {}
-            
+
             for item in items:
                 product_name = item.get('product_name', item.get('pro_name', 'N/A'))
                 quantity = item.get('quantity', 0)
@@ -801,7 +801,7 @@ async def get_walkin_invoices_pdf(
                 item_discount = float(item.get('discount', 0))
                 item_total = quantity * unit_price - item_discount
                 item_cost = item_total * 0.7
-                
+
                 invoice_rows += f"""
                 <tr>
                     <td class="border">{inv.invoice_no}</td>

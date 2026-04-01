@@ -301,16 +301,18 @@ async def save_stock_in(
     """
     from ..models.stock_entry import StockEntry, StockEntryType
     from ..models.vendor import Vendor
-    
+    import json
+    from datetime import datetime
+
     results = []
-    
+
     for item in items:
         product_id = item.get('product_id')
         vendor_id = item.get('vendor_id')
         quantity = int(item.get('quantity', 0))
         cost_price = float(item.get('cost_price', 0))
         date = item.get('date', datetime.now().strftime('%Y-%m-%d'))
-        
+
         # Get product
         product = await db.get(Product, UUID(product_id))
         if not product:
@@ -320,7 +322,7 @@ async def save_stock_in(
                 "message": "Product not found"
             })
             continue
-        
+
         # Get vendor
         vendor = await db.get(Vendor, UUID(vendor_id))
         if not vendor:
@@ -330,7 +332,7 @@ async def save_stock_in(
                 "message": "Vendor not found"
             })
             continue
-        
+
         # Create stock entry
         entry = StockEntry(
             product_id=product.id,
@@ -342,21 +344,30 @@ async def save_stock_in(
             ref=f"STOCK_IN_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         )
         db.add(entry)
-        
+
         # Update product stock
         product.stock_level += quantity
-        
+
+        # Update vendor balance (add cost amount to vendor's payable balance)
+        total_cost = quantity * cost_price
+        vendor.balance = float(vendor.balance) + total_cost
+
+        # NOTE: Stock-In does NOT create payment history entry
+        # Only actual payments create payment history entries
+
         results.append({
             "product_id": product_id,
             "product_name": product.name,
             "quantity_added": quantity,
             "new_stock_level": product.stock_level,
             "vendor_id": vendor_id,
+            "vendor_name": vendor.name,
+            "amount_added_to_balance": total_cost,
             "status": "success"
         })
 
     await db.commit()
-    
+
     # Invalidate stock cache after stock-in
     from ..utils.cache import cache
     await cache.delete_pattern("stock:view:*")
@@ -401,6 +412,7 @@ async def save_stock_in_with_barcode(
     """
     from ..models.stock_entry import StockEntry, StockEntryType
     from ..models.vendor import Vendor
+    import json
 
     results = []
     zpl_commands = []
@@ -448,12 +460,21 @@ async def save_stock_in_with_barcode(
         # Update product stock
         product.stock_level += quantity
 
+        # Update vendor balance (add cost amount to vendor's payable balance)
+        total_cost = quantity * cost_price
+        vendor.balance = float(vendor.balance) + total_cost
+
+        # NOTE: Stock-In does NOT create payment history entry
+        # Only actual payments create payment history entries
+
         results.append({
             "product_id": product_id,
             "product_name": product.name,
             "quantity_added": quantity,
             "new_stock_level": product.stock_level,
             "vendor_id": vendor_id,
+            "vendor_name": vendor.name,
+            "amount_added_to_balance": total_cost,
             "status": "success"
         })
         

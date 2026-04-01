@@ -3,6 +3,8 @@ from typing import Optional
 from datetime import datetime
 import uuid
 import json
+from sqlalchemy import Column, Numeric, Text
+from decimal import Decimal
 
 class Vendor(SQLModel, table=True):
     __tablename__ = "vendors"
@@ -12,6 +14,8 @@ class Vendor(SQLModel, table=True):
     contacts: str = Field()  # JSON string for phone, email, address
     branch: Optional[str] = Field(default=None, max_length=200)
     terms: Optional[str] = Field(default=None)  # JSON string for payment terms, etc.
+    balance: Optional[Decimal] = Field(default=0.00, sa_column=Column(Numeric(10, 2), nullable=True))  # Vendor balance (amount payable)
+    payments_history: Optional[str] = Field(default="[]", sa_column=Column(Text, nullable=True))  # JSON array of payment records
     created_at: datetime = Field(default_factory=lambda: datetime.now())
     updated_at: datetime = Field(default_factory=lambda: datetime.now(), nullable=False)
 
@@ -21,6 +25,8 @@ class VendorRead(SQLModel):
     contacts: str
     branch: Optional[str]
     terms: Optional[str]
+    balance: Optional[Decimal]
+    payments_history: Optional[str]
     created_at: datetime
     updated_at: datetime
 
@@ -29,9 +35,12 @@ class VendorCreate(SQLModel):
     contacts: str  # JSON string
     branch: Optional[str] = None
     terms: Optional[str] = None  # JSON string
+    balance: Optional[Decimal] = 0.00
 
 class VendorUpdate(SQLModel):
     name: Optional[str] = None
     contacts: Optional[str] = None
     branch: Optional[str] = None
     terms: Optional[str] = None
+    balance: Optional[Decimal] = None
+    payments_history: Optional[str] = None

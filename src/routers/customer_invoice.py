@@ -236,34 +236,15 @@ async def save_customer_orders(
                 "product_name": str(pro_name),
                 "quantity": quantity,
                 "unit_price": unit_price,
-                "subtotal": item_subtotal,  # Price before discount
+                "subtotal": item_subtotal,
                 "discount": discount,
-                "total_price": item_total,  # Price after discount
+                "total_price": item_total,
                 "cat_name": str(item.get('cat_name', '')),
-                "cricktshirt_Neckstyle": str(item.get('cricktshirt_Neckstyle', '')),
-                "cricktshirt_sleeve": str(item.get('cricktshirt_sleeve', '')),
-                "cricktshirt_bottom": str(item.get('cricktshirt_bottom', '')),
-                "cricktshirt_fabric": str(item.get('cricktshirt_fabric', '')),
-                "cricktrouser_style": str(item.get('cricktrouser_style', '')),
-                "cricktrouser_style2": str(item.get('cricktrouser_style2', '')),
-                "cricktrouser_bottom": str(item.get('cricktrouser_bottom', '')),
-                "cricktrouser_pocket": str(item.get('cricktrouser_pocket', '')),
-                "cricktrouser_fabric": str(item.get('cricktrouser_fabric', '')),
-                "foottshirt_neckstyle": str(item.get('foottshirt_neckstyle', '')),
-                "foottshirt_sleeves": str(item.get('foottshirt_sleeves', '')),
-                "football_fabric": str(item.get('football_fabric', '')),
-                "footshorts_style": str(item.get('footshorts_style', '')),
-                "footshorts_pocket": str(item.get('footshorts_pocket', '')),
-                "footballshort_fabric": str(item.get('footballshort_fabric', '')),
-                "trackjack_style": str(item.get('trackjack_style', '')),
-                "trackjack_waist": str(item.get('trackjack_waist', '')),
-                "trackjack_pocket": str(item.get('trackjack_pocket', '')),
-                "trackjack_bottom": str(item.get('trackjack_bottom', '')),
-                "trackjack_fabric": str(item.get('trackjack_fabric', '')),
-                "tracktrous_style": str(item.get('tracktrous_style', '')),
-                "tracktrous_bottom": str(item.get('tracktrous_bottom', '')),
-                "tracktrous_pocket": str(item.get('tracktrous_pocket', '')),
-                "tracktrous_fabric": str(item.get('tracktrous_fabric', '')),
+                # Dynamic category fields (sub-categories and options)
+                "category_fields": item.get('category_fields', '{}'),
+                # Custom description for Other category
+                "custom_description": str(item.get('custom_description', '')),
+                # Cloudinary image URLs
                 "imgfile": str(item.get('imgfile', '')),
                 "imgfile2": str(item.get('imgfile2', '')),
                 "imgfile3": str(item.get('imgfile3', '')),
@@ -1015,6 +996,7 @@ async def get_order(
     # Map to the expected frontend fields
     order_data = {
         "orderid": str(invoice_record.id),
+        "invoice_no": invoice_record.invoice_no,  # Add invoice number
         "status": invoice_record.status.value if hasattr(invoice_record.status, 'value') else invoice_record.status,
         "fields": {
             "items": items_data,

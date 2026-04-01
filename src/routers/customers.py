@@ -35,7 +35,7 @@ async def view_customers(
     searchphone: str = None,
     searchaddress: str = None,
     page: int = 1,       # Page number for backend pagination
-    limit: int = 8,      # 8 items per page
+    limit: int = 10000,      # 10000 items per page
     current_user: User = Depends(admin_cashier_employee_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):

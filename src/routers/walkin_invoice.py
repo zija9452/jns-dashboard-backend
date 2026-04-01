@@ -149,6 +149,7 @@ async def create_walkin_invoice(
             "total_price": item_total_before_discount,  # Price before discount
             "discount": item_discount,
             "cat_name": str(item.get('cat_name', '')),
+            "cost_price": float(product.cost_price) if product.cost_price else 0.0,  # Store cost price
         }
         items_list.append(item_obj)
         total_amount += Decimal(str(item_total_before_discount))

@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 import os
 from decimal import Decimal
 
-from src.routers import auth, users, products, customers, vendors, salesman, stock, expenses, customer_invoice, refunds, admin, pos, walkin_invoice, walkin_refund, category, brand, expense_type, sales_view, duplicate_bill
+from src.routers import auth, users, products, customers, vendors, salesman, stock, expenses, customer_invoice, refunds, admin, pos, walkin_invoice, walkin_refund, category, brand, expense_type, sales_view, duplicate_bill, customer_category
 from src.utils.error_handlers import setup_error_handlers
 from src.middleware.security import SecurityHeadersMiddleware
 from src.utils.metrics import MetricsMiddleware, start_metrics_server
@@ -146,6 +146,7 @@ app.include_router(walkin_refund.router, prefix="/walkinrefund", tags=["walkinre
 app.include_router(expense_type.router, tags=["expensetype"])
 app.include_router(sales_view.router, prefix="/salesview", tags=["salesview"])
 app.include_router(duplicate_bill.router, prefix="/duplicatebill", tags=["duplicate-bill"])
+app.include_router(customer_category.router, tags=["customer-category"])
 
 if __name__ == "__main__":
     import uvicorn
