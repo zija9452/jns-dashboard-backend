@@ -534,9 +534,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
                 svg_content = f.read()
                 # Embed SVG directly in HTML
                 logo_html = f'<div style="text-align:center;margin:5px 0;">{svg_content}</div>'
-                print(f"✓ SVG Logo loaded from: {logo_path}")
         else:
-            print(f"✗ SVG Logo file not found: {logo_path}")
             # Try without Images folder (root src folder)
             alt_logo_path = os.path.join(
                 os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
@@ -546,9 +544,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
                 with open(alt_logo_path, 'r', encoding='utf-8') as f:
                     svg_content = f.read()
                     logo_html = f'<div style="text-align:center;margin:5px 0;">{svg_content}</div>'
-                    print(f"✓ SVG Logo loaded from: {alt_logo_path}")
     except Exception as e:
-        print(f"✗ Logo load error: {e}")
         logo_html = '🏆'
 
     html_content = f"""
@@ -772,9 +768,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
         # Write PDF with custom page size (57mm = 216 CSS pixels at 96 DPI)
         pdf_bytes = html_doc.write_pdf()
         encoded_pdf = base64.b64encode(pdf_bytes).decode()
-        print(f"PDF generated, length: {len(encoded_pdf)}")
     except Exception as e:
-        print(f"weasyprint failed: {e}")
         # Fallback - narrow page (57mm approx = 216px width, height auto)
         encoded_pdf = base64.b64encode(b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 216 400] >>\nendobj\nxref\n0 4\ntrailer\n<< /Size 4 /Root 1 0 R >>\n%%EOF").decode()
 

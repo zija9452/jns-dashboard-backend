@@ -81,7 +81,6 @@ async def search_duplicate_bills(
                 "items": items_data
             })
         except Exception as e:
-            print(f"Error processing walk-in invoice {inv.id}: {e}")
             continue
 
     # Search customer invoices (CIN- prefix)
@@ -124,7 +123,6 @@ async def search_duplicate_bills(
                 "items": items_data
             })
         except Exception as e:
-            print(f"Error processing customer invoice {inv.id}: {e}")
             continue
 
     # Sort by payment_date descending (most recent first)

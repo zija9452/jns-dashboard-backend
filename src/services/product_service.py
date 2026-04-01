@@ -43,7 +43,6 @@ class ProductService:
             row = result.first()
             last_barcode = row[0] if row else None
         except Exception as e:
-            print(f"❌ Error fetching last barcode: {e}")
             # Fallback: use timestamp-based approach
             import time
             last_barcode = None
@@ -51,10 +50,7 @@ class ProductService:
         if not last_barcode:
             # Start from 69000000 (8 digits without check digit)
             base_code = "69000000"
-            print(f"🆕 No existing barcode found, starting from: {base_code}")
         else:
-            print(f"📖 Last barcode in DB: {last_barcode} (length: {len(last_barcode)})")
-
             # Handle 9-digit barcode format: 690 + 5 digits + check digit
             if last_barcode.startswith('690') and len(last_barcode) == 9:
                 # Get the 5-digit sequence number
@@ -63,22 +59,16 @@ class ProductService:
                     last_num = int(last_num_str)
                     next_num = last_num + 1
                     base_code = f"690{next_num:05d}"
-                    print(f"📈 Incrementing: {last_num} → {next_num}")
                 except ValueError as e:
-                    print(f"⚠️ Parse error, using fallback: {e}")
                     import time
                     base_code = f"690{int(time.time() * 1000) % 100000:05d}"
             else:
                 # Start fresh if format doesn't match
-                print(f"⚠️ Invalid barcode format, starting fresh")
                 base_code = "69000000"
 
         # Calculate check digit (8 digits input for 9-digit barcode)
         check_digit = ProductService.calculate_check_digit(base_code)
         barcode = f"{base_code}{check_digit}"
-
-        # Log for debugging
-        print(f"📊 Generated barcode: {barcode} (base: {base_code}, check: {check_digit})")
 
         return barcode
 

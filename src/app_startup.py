@@ -32,7 +32,7 @@ async def create_indexes():
     Create database indexes for performance optimization
     """
     # For now, this is a placeholder - actual index creation would go here
-    print("Indexes created successfully")
+    pass
 
 
 async def create_default_roles(db_session):
@@ -55,8 +55,6 @@ async def create_default_roles(db_session):
         db_session.add(cashier_role)
         db_session.add(employee_role)
         await db_session.commit()
-
-        print("Default roles created: admin, cashier, employee")
 
 
 async def create_admin_user(db_session):
@@ -96,8 +94,6 @@ async def create_admin_user(db_session):
         db_session.add(admin_user)
         await db_session.commit()
 
-        print(f"Default admin user created: username: {admin_username}, password: {admin_password}")
-
 
 async def initialize_database():
     """
@@ -112,8 +108,6 @@ async def initialize_database():
     async with AsyncSessionLocal() as db_session:
         await create_default_roles(db_session)
         await create_admin_user(db_session)
-
-    print("Database initialized successfully!")
 
 
 if __name__ == "__main__":

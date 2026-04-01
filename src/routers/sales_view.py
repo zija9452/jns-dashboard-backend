@@ -334,7 +334,6 @@ async def get_walkin_invoices(
 
                 first_item = False
         except Exception as e:
-            print(f"Error processing invoice {inv.id}: {e}")
             continue
 
     return {"invoices": invoice_list, "total": len(invoice_list)}
@@ -468,7 +467,6 @@ async def get_customized_invoices(
             })
             
         except Exception as e:
-            print(f"Error processing invoice {inv.id}: {e}")
             continue
 
     return {"invoices": invoice_list, "total": len(invoice_list)}
@@ -729,7 +727,6 @@ async def get_sales_summary(
             except:
                 continue
     except Exception as e:
-        print(f"Error calculating refunds: {e}")
         total_refund_amount = 0.0
 
     return {
@@ -950,13 +947,11 @@ async def get_walkin_invoices_pdf(
         pdf_doc = HTML(string=html_content)
         pdf_bytes = pdf_doc.write_pdf()
         encoded_pdf = base64.b64encode(pdf_bytes).decode()
-        print(f"PDF generated, length: {len(encoded_pdf)}")
     except Exception as e:
-        print(f"weasyprint failed: {e}")
         # Fallback - return simple PDF
         pdf_content = f"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>\nendobj\nxref\n0 4\ntrailer\n<< /Size 4 /Root 1 0 R >>\n%%EOF"
         encoded_pdf = base64.b64encode(pdf_content.encode()).decode()
-    
+
     return {"pdf": encoded_pdf}
 
 
@@ -1293,12 +1288,11 @@ async def get_customized_invoices_pdf(
         pdf_doc = HTML(string=html_content)
         pdf_bytes = pdf_doc.write_pdf()
         encoded_pdf = base64.b64encode(pdf_bytes).decode()
-        print(f"PDF generated, length: {len(encoded_pdf)}")
+        encoded_pdf = base64.b64encode(pdf_bytes).decode()
     except Exception as e:
-        print(f"weasyprint failed: {e}")
         pdf_content = f"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>\nendobj\nxref\n0 4\ntrailer\n<< /Size 4 /Root 1 0 R >>\n%%EOF"
         encoded_pdf = base64.b64encode(pdf_content.encode()).decode()
-    
+
     return {"pdf": encoded_pdf}
 
 
@@ -1607,12 +1601,11 @@ async def get_expenses_pdf(
         pdf_doc = HTML(string=html_content)
         pdf_bytes = pdf_doc.write_pdf()
         encoded_pdf = base64.b64encode(pdf_bytes).decode()
-        print(f"PDF generated, length: {len(encoded_pdf)}")
+        encoded_pdf = base64.b64encode(pdf_bytes).decode()
     except Exception as e:
-        print(f"weasyprint failed: {e}")
         pdf_content = f"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>\nendobj\nxref\n0 4\ntrailer\n<< /Size 4 /Root 1 0 R >>\n%%EOF"
         encoded_pdf = base64.b64encode(pdf_content.encode()).decode()
-    
+
     return {"pdf": encoded_pdf}
 
 
@@ -1929,12 +1922,11 @@ async def get_stock_adjustments_pdf(
         pdf_doc = HTML(string=html_content)
         pdf_bytes = pdf_doc.write_pdf()
         encoded_pdf = base64.b64encode(pdf_bytes).decode()
-        print(f"PDF generated, length: {len(encoded_pdf)}")
+        encoded_pdf = base64.b64encode(pdf_bytes).decode()
     except Exception as e:
-        print(f"weasyprint failed: {e}")
         pdf_content = f"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>\nendobj\nxref\n0 4\ntrailer\n<< /Size 4 /Root 1 0 R >>\n%%EOF"
         encoded_pdf = base64.b64encode(pdf_content.encode()).decode()
-    
+
     return {"pdf": encoded_pdf}
 
 
@@ -2270,9 +2262,7 @@ async def get_refunds_pdf(
         pdf_doc = HTML(string=html_content)
         pdf_bytes = pdf_doc.write_pdf()
         encoded_pdf = base64.b64encode(pdf_bytes).decode()
-        print(f"Refund PDF generated, length: {len(encoded_pdf)}")
     except Exception as e:
-        print(f"weasyprint failed: {e}")
         # Fallback - minimal PDF
         encoded_pdf = base64.b64encode(b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>\nendobj\nxref\n0 4\ntrailer\n<< /Size 4 /Root 1 0 R >>\n%%EOF").decode()
 

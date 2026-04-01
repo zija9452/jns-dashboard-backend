@@ -405,6 +405,4 @@ init_query_optimizer()
 
 if __name__ == "__main__":
     # Example usage
-    print("Query optimization utilities ready")
-    print(f"Slow query threshold: {query_optimizer.profiler.slow_query_threshold}s")
-    print(f"Profiling enabled: {query_optimizer.profiler.enabled}")
+    pass

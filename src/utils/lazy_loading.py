@@ -547,6 +547,4 @@ class LazyLoadingExamples:
 
 if __name__ == "__main__":
     # Example usage
-    print("Lazy loading utilities loaded")
-    print(f"Default page size: 50 items")
-    print(f"Batch size for streaming: 100 items")
+    pass

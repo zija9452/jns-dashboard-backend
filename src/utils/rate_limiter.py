@@ -19,9 +19,7 @@ class RateLimiter:
         try:
             self.redis_client = redis.from_url(redis_url, decode_responses=True)
             self.use_redis = True
-            print("Using Redis for rate limiting")
         except:
-            print("Redis not available, falling back to in-memory rate limiting")
             self.requests = defaultdict(list)  # IP -> list of request timestamps
             self.blocked_ips = {}  # IP -> unblock_time
             self.use_redis = False

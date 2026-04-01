@@ -432,18 +432,12 @@ async def get_all_vendor_payment_history(
     """
     from sqlalchemy import select
 
-    print(f'=== VENDOR PAYMENT HISTORY API ===')
-    print(f'vendor_id param: {vendor_id}')
-    print(f'page: {page}, limit: {limit}')
-
     # Calculate skip
     skip = (page - 1) * limit
 
     # Get all vendors
     vendors_result = await db.execute(select(Vendor))
     all_vendors = vendors_result.scalars().all()
-
-    print(f'Total vendors in DB: {len(all_vendors)}')
 
     # Build payment list
     all_payments = []
@@ -453,16 +447,12 @@ async def get_all_vendor_payment_history(
         if vendor_id and str(vendor.id) != vendor_id:
             continue
 
-        print(f'Processing vendor: {vendor.name} (ID: {vendor.id})')
-
         # Parse payment history
         payment_history = []
         try:
             payment_history = json.loads(vendor.payments_history) if vendor.payments_history else []
         except:
             payment_history = []
-
-        print(f'Payment history count: {len(payment_history)}')
 
         # Add vendor info to each payment
         for payment in payment_history:
@@ -487,17 +477,12 @@ async def get_all_vendor_payment_history(
 
             all_payments.append(payment_entry)
 
-    print(f'Total payments before pagination: {len(all_payments)}')
-
     # Sort by datetime (newest first)
     all_payments.sort(key=lambda x: x.get("datetime", "") or "", reverse=True)
 
     # Apply pagination
     total = len(all_payments)
     paginated_payments = all_payments[skip:skip + limit]
-
-    print(f'Payments after pagination: {len(paginated_payments)}')
-    print(f'=== END VENDOR PAYMENT HISTORY API ===')
 
     return {
         "payments": paginated_payments,

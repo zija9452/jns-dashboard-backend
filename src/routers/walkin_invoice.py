@@ -43,11 +43,7 @@ async def create_walkin_invoice(
     selected_date = datetime.fromisoformat(payment_date_str).date()
     current_time = datetime.now().time()
     payment_date = datetime.combine(selected_date, current_time)
-    
-    print(f"📅 Selected Date: {selected_date}")
-    print(f"⏰ Current Time: {current_time}")
-    print(f"✅ Payment DateTime: {payment_date}")
-    
+
     manual_discount = float(request_data.get('manual_discount', 0))
     notes = request_data.get('notes', '')
 
@@ -255,17 +251,10 @@ async def create_walkin_invoice(
             created_by=current_user.id
         )
         
-        # Debug log - before saving
-        print(f"💾 SAVING payment_date: {payment_date}")
-        print(f"💾 SAVING payment_date type: {type(payment_date)}")
-
         # Add to database
         db.add(invoice_obj)
         await db.commit()
         await db.refresh(invoice_obj)
-        
-        # Debug log - after saving
-        print(f"✅ SAVED payment_date: {invoice_obj.payment_date}")
 
         # Update daily_cash sales_amount for the payment date (payment method-wise)
         # Use amount_paid (actual amount received) instead of total_amount
@@ -726,7 +715,6 @@ async def get_walkin_invoices_by_date(
             payment_method = (invoice.payment_method or '').lower().strip()
             if payment_method == 'cash':
                 cash_amount += float(invoice_total)
-                print(f"Cash invoice found: {invoice.invoice_no}, amount: {invoice_total}")
 
             # Parse items JSON to get product details
             items_data = []
@@ -763,11 +751,8 @@ async def get_walkin_invoices_by_date(
                 "products": products_list
             })
         except (ValueError, TypeError) as e:
-            print(f"Error processing invoice {invoice.id}: {e}")
             continue
 
-    print(f"Date: {date_str}, Total invoices: {len(invoice_list)}, Total: {total_amount}, Cash: {cash_amount}")
-    
     return {
         "date": date_str,
         "total_invoices": len(invoice_list),
@@ -1248,9 +1233,7 @@ def generate_walkin_receipt_pdf(invoice_no, customer_name, team_name, items, tot
                 svg_content = f.read()
                 # Embed SVG directly in HTML
                 logo_html = f'<div style="text-align:center;margin:5px 0;">{svg_content}</div>'
-                print(f"✓ SVG Logo loaded from: {logo_path}")
         else:
-            print(f"✗ SVG Logo file not found: {logo_path}")
             # Try without Images folder (root src folder)
             alt_logo_path = os.path.join(
                 os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
@@ -1260,9 +1243,7 @@ def generate_walkin_receipt_pdf(invoice_no, customer_name, team_name, items, tot
                 with open(alt_logo_path, 'r', encoding='utf-8') as f:
                     svg_content = f.read()
                     logo_html = f'<div style="text-align:center;margin:5px 0;">{svg_content}</div>'
-                    print(f"✓ SVG Logo loaded from: {alt_logo_path}")
     except Exception as e:
-        print(f"✗ Logo load error: {e}")
         logo_html = '🏆'
 
     html_content = f"""
@@ -1470,9 +1451,7 @@ def generate_walkin_receipt_pdf(invoice_no, customer_name, team_name, items, tot
         # Write PDF with custom page size (57mm = 216 CSS pixels at 96 DPI)
         pdf_bytes = html_doc.write_pdf()
         encoded_pdf = base64.b64encode(pdf_bytes).decode()
-        print(f"Walk-in PDF generated, length: {len(encoded_pdf)}")
     except Exception as e:
-        print(f"weasyprint failed: {e}")
         # Fallback - narrow page (57mm approx = 216px width, height auto)
         encoded_pdf = base64.b64encode(b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 216 400] >>\nendobj\nxref\n0 4\ntrailer\n<< /Size 4 /Root 1 0 R >>\n%%EOF").decode()
 
