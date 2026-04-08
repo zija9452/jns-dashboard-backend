@@ -1085,8 +1085,8 @@ async def view_customer_order(
                 detail="Invalid status value"
             )
 
-    # Apply pagination
-    statement = statement.offset(skip).limit(limit).order_by(CustomerInvoice.created_at.desc())
+    # Apply pagination with ordering - newest first
+    statement = statement.order_by(CustomerInvoice.created_at.desc()).offset(skip).limit(limit)
 
     result = await db.execute(statement)
     invoices = result.scalars().all()
@@ -1148,13 +1148,43 @@ async def view_customer_order(
     total_pages = (total_count + limit - 1) // limit if limit > 0 else 0
     current_page = (skip // limit) + 1 if limit > 0 else 1
 
+    # Get pending orders stats (count and total quantity)
+    from ..models.customer_invoice import CustomerInvoiceStatus
+    pending_count_stmt = select(func.count()).select_from(CustomerInvoice).where(
+        CustomerInvoice.status == CustomerInvoiceStatus.PENDING
+    )
+    pending_count_result = await db.execute(pending_count_stmt)
+    pending_count = pending_count_result.scalar() or 0
+
+    # Get total quantity for all pending orders
+    pending_invoices_stmt = select(CustomerInvoice.items).where(
+        CustomerInvoice.status == CustomerInvoiceStatus.PENDING
+    )
+    pending_invoices_result = await db.execute(pending_invoices_stmt)
+    pending_items_list = pending_invoices_result.scalars().all()
+    
+    total_pending_quantity = 0
+    for items_json in pending_items_list:
+        if items_json:
+            try:
+                items_data = json.loads(items_json)
+                for item in items_data:
+                    qty = item.get('quantity', 0)
+                    total_pending_quantity += int(qty) if qty else 0
+            except (json.JSONDecodeError, TypeError):
+                pass
+
     return {
         "data": result,
         "page": current_page,
         "limit": limit,
         "total": total_count,
         "total_pages": total_pages,
-        "has_more": current_page < total_pages
+        "has_more": current_page < total_pages,
+        "pending_stats": {
+            "pending_invoices_count": pending_count,
+            "total_pending_quantity": total_pending_quantity
+        }
     }
 
 

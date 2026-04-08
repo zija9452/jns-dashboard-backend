@@ -27,15 +27,31 @@ class CacheManager:
     async def connect(self):
         """Initialize Redis connection"""
         try:
-            self.redis = redis.Redis.from_url(
-                self.redis_url,
-                encoding="utf-8",
-                decode_responses=True,
-                socket_connect_timeout=5,
-                socket_timeout=5,
-                retry_on_timeout=True,
-                health_check_interval=30
-            )
+            # For Upstash (rediss://), we need to handle SSL properly
+            import ssl
+            if self.redis_url.startswith("rediss://"):
+                # Upstash Redis with SSL
+                self.redis = redis.Redis.from_url(
+                    self.redis_url,
+                    encoding="utf-8",
+                    decode_responses=True,
+                    socket_connect_timeout=5,
+                    socket_timeout=5,
+                    retry_on_timeout=True,
+                    health_check_interval=30,
+                    ssl_cert_reqs=ssl.CERT_NONE  # Disable cert verification for Upstash
+                )
+            else:
+                # Local Redis without SSL
+                self.redis = redis.Redis.from_url(
+                    self.redis_url,
+                    encoding="utf-8",
+                    decode_responses=True,
+                    socket_connect_timeout=5,
+                    socket_timeout=5,
+                    retry_on_timeout=True,
+                    health_check_interval=30
+                )
             await self.redis.ping()
             logger.info("✓ Redis cache connected")
         except Exception as e:
@@ -158,16 +174,34 @@ class CacheManager:
     # ============================================================================
     # Report Cache Helpers
     # ============================================================================
-    
+
     async def get_report(self, report_type: str, params: Dict) -> Optional[str]:
         """Get cached report (base64 PDF)"""
         key = self._generate_key(f"report:{report_type}", json.dumps(params, sort_keys=True))
         return await self.get(key)
-    
+
     async def set_report(self, report_type: str, params: Dict, pdf_data: str, ttl: int = 3600):
         """Cache report for 1 hour"""
         key = self._generate_key(f"report:{report_type}", json.dumps(params, sort_keys=True))
         await self.set(key, pdf_data, ttl)
+
+    # ============================================================================
+    # Dashboard Cache Helpers
+    # ============================================================================
+
+    async def get_dashboard_stats(self, params: Dict) -> Optional[Dict]:
+        """Get cached dashboard stats"""
+        key = self._generate_key("dashboard:stats", json.dumps(params, sort_keys=True))
+        return await self.get(key)
+
+    async def set_dashboard_stats(self, params: Dict, data: Dict, ttl: int = 300):
+        """Cache dashboard stats for 5 minutes"""
+        key = self._generate_key("dashboard:stats", json.dumps(params, sort_keys=True))
+        await self.set(key, data, ttl)
+
+    async def invalidate_dashboard(self):
+        """Invalidate all dashboard caches"""
+        await self.delete_pattern("dashboard:stats:*")
 
 
 # Global cache instance

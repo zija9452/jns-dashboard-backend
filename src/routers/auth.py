@@ -90,13 +90,6 @@ async def traditional_login(
     # Get client IP for rate limiting
     client_ip = get_client_ip(request) if request else "unknown"
 
-    # Rate limiting check
-    if not auth_rate_limiter.is_login_allowed(client_ip):
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many login attempts. Please try again later."
-        )
-
     # Security: Check if credentials were passed in URL parameters (which is insecure)
     if request and request.query_params:
         if 'username' in request.query_params or 'password' in request.query_params:
@@ -202,13 +195,6 @@ async def session_login(
 
     # Get client IP for rate limiting
     client_ip = get_client_ip(request) if request else "unknown"
-
-    # Rate limiting check
-    if not auth_rate_limiter.is_login_allowed(client_ip):
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many login attempts. Please try again later."
-        )
 
     # Security: Check if credentials were passed in URL parameters (which is insecure)
     if request and request.query_params:

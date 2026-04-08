@@ -203,10 +203,10 @@ class AuthRateLimiter:
             if rate_limiter.use_redis:
                 # When using Redis, set the blocked IP in Redis
                 blocked_key = rate_limiter._get_redis_key(ip_address, "blocked")
-                rate_limiter.redis_client.setex(blocked_key, 900, time.time() + 900)  # 15 minutes
+                rate_limiter.redis_client.setex(blocked_key, 300, time.time() + 300)  # 5 minutes
             else:
                 # When using in-memory storage
-                rate_limiter.blocked_ips[ip_address] = time.time() + 900  # 15 minutes
+                rate_limiter.blocked_ips[ip_address] = time.time() + 300  # 5 minutes
         return not allowed
 
 # Global auth rate limiter instance

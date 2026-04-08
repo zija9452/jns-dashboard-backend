@@ -90,8 +90,25 @@ async def view_customers(
     result = await db.execute(statement)
     customers = result.scalars().all()
 
+    # Fetch all customer balances in a SINGLE query using GROUP BY
+    from ..models.customer_invoice import CustomerInvoice
+    
+    if customers:
+        customer_ids = [customer.id for customer in customers]
+        balance_stmt = select(
+            CustomerInvoice.customer_id,
+            func.sum(CustomerInvoice.balance_due).label('total_balance')
+        ).where(
+            CustomerInvoice.customer_id.in_(customer_ids)
+        ).group_by(
+            CustomerInvoice.customer_id
+        )
+        balance_result = await db.execute(balance_stmt)
+        balance_dict = {row.customer_id: float(row.total_balance or 0.0) for row in balance_result.all()}
+    else:
+        balance_dict = {}
+
     # Parse and format the results for the JavaScript frontend
-    # Also calculate balance from customer invoices
     result_list = []
     for customer in customers:
         contacts_data = {}
@@ -100,15 +117,8 @@ async def view_customers(
         except:
             contacts_data = {"phone": "", "email": "", "address": ""}
 
-        # Calculate balance from customer invoices
-        from ..models.customer_invoice import CustomerInvoice
-        balance_stmt = select(
-            func.sum(CustomerInvoice.balance_due)
-        ).where(
-            CustomerInvoice.customer_id == customer.id
-        )
-        balance_result = await db.execute(balance_stmt)
-        calculated_balance = balance_result.scalar_one_or_none() or 0.0
+        # Get balance from pre-fetched dict (no additional query!)
+        calculated_balance = balance_dict.get(customer.id, 0.0)
 
         customer_data = {
             "cus_id": str(customer.id),

@@ -48,10 +48,10 @@ async def get_dashboard_stats(
     """
     # Get current date
     today = datetime.now().date()
-    
+
     # Get user role for role-based response
     user_role = current_user.role.name if current_user and current_user.role else "admin"
-    
+
     # CASHIER: Force current date only, ignore all date parameters
     if user_role == "cashier":
         first_day = today
@@ -83,6 +83,17 @@ async def get_dashboard_stats(
 
         # IMPORTANT: Always limit to today's date (past, current, or future months)
         data_end_date = min(last_day, today)
+
+    # Try to get from cache first
+    from ..utils.cache import cache
+    cache_params = {
+        "from_date": str(first_day),
+        "to_date": str(data_end_date),
+        "user_role": user_role
+    }
+    cached_result = await cache.get_dashboard_stats(cache_params)
+    if cached_result:
+        return cached_result
     
     # ==================== SALES CALCULATION ====================
     # Calculate total sales from walk-in invoices (SIN- prefix)
@@ -150,22 +161,21 @@ async def get_dashboard_stats(
     total_purchase = float(walkin_cost_result.scalar_one_or_none() or 0)
     
     # ==================== STOCK DATA ====================
-    # Count out of stock products (stock_level = 0)
-    out_of_stock_result = await db.execute(
-        select(func.count(Product.id)).where(Product.stock_level <= 0)
-    )
-    out_of_stock = int(out_of_stock_result.scalar_one_or_none() or 0)
-    
-    # Count short stock products (stock_level > 0 but < min_stock_level or < 10)
-    short_stock_result = await db.execute(
-        select(func.count(Product.id)).where(
-            and_(
-                Product.stock_level > 0,
-                Product.stock_level < 10  # Consider short stock if less than 10 items
-            )
+    # Combine out of stock and short stock into a SINGLE query
+    stock_result = await db.execute(
+        select(
+            func.count(Product.id).filter(Product.stock_level <= 0).label('out_of_stock'),
+            func.count(Product.id).filter(
+                and_(
+                    Product.stock_level > 0,
+                    Product.stock_level < 10
+                )
+            ).label('short_stock')
         )
     )
-    short_stock = int(short_stock_result.scalar_one_or_none() or 0)
+    stock_row = stock_result.one()
+    out_of_stock = int(stock_row.out_of_stock or 0)
+    short_stock = int(stock_row.short_stock or 0)
     
     # ==================== OPENING BALANCE ====================
     # Get opening balance from first day of month
@@ -253,6 +263,9 @@ async def get_dashboard_stats(
         response["month"] = month
         response["year"] = year
         response["monthName"] = first_day.strftime('%B %Y')
+
+    # Cache the result for 5 minutes
+    await cache.set_dashboard_stats(cache_params, response, ttl=300)
 
     return response
 
