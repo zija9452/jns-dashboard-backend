@@ -7,12 +7,13 @@ import uuid
 
 from ..database.database import get_db
 from ..models.customer_category import (
-    CustomerCategory, 
-    CustomerCategoryCreate, 
-    CustomerCategoryUpdate, 
+    CustomerCategory,
+    CustomerCategoryCreate,
+    CustomerCategoryUpdate,
     CustomerCategoryRead,
     SubCategorySchema
 )
+from ..models.ideal_price import IdealPrice
 from ..models.user import User
 from ..auth.session_auth import employee_required_from_session
 
@@ -92,7 +93,7 @@ async def get_customer_categories(
     count_result = await db.execute(count_statement)
     total_count = len(count_result.scalars().all())
 
-    statement = base_statement.order_by(CustomerCategory.main_category).offset(skip).limit(limit)
+    statement = base_statement.order_by(CustomerCategory.created_at).offset(skip).limit(limit)
     result = await db.execute(statement)
     categories = result.scalars().all()
 
@@ -136,27 +137,49 @@ async def get_grouped_customer_categories(
     [
       {
         "main_category": "T-Shirt",
+        "id": "uuid",
         "sub_categories": [
           {
             "sub_category": "Neck",
             "options": ["Round", "V-Neck", "Sherwani"]
           }
-        ]
+        ],
+        "ideal_prices": {
+          "Round Neck|Half|Polyzone 130gsm": 950,
+          "Round Neck|Full|Polyzone 160gsm": 1400
+        }
       }
     ]
     """
     statement = select(CustomerCategory)
-    
+
     if branch:
         statement = statement.where(CustomerCategory.branch == branch)
-    
-    statement = statement.order_by(CustomerCategory.main_category)
-    
+
+    statement = statement.order_by(CustomerCategory.created_at)
+
     result = await db.execute(statement)
     categories = result.scalars().all()
 
+    # Fetch all ideal prices for these categories in one query
+    if categories:
+        category_ids = [cat.id for cat in categories]
+        prices_statement = select(IdealPrice).where(IdealPrice.category_id.in_(category_ids))
+        prices_result = await db.execute(prices_statement)
+        all_prices = prices_result.scalars().all()
+
+        # Group prices by category_id
+        prices_by_category = {}
+        for price in all_prices:
+            if price.category_id not in prices_by_category:
+                prices_by_category[price.category_id] = {}
+            prices_by_category[price.category_id][price.options_combination] = float(price.price)
+    else:
+        prices_by_category = {}
+
     grouped_list = [
         {
+            "id": str(cat.id),
             "main_category": cat.main_category,
             "sub_categories": [
                 {
@@ -164,7 +187,8 @@ async def get_grouped_customer_categories(
                     "options": sc["options"]
                 }
                 for sc in cat.sub_categories
-            ]
+            ],
+            "ideal_prices": prices_by_category.get(cat.id, {})
         }
         for cat in categories
     ]
