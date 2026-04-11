@@ -141,8 +141,8 @@ async def traditional_login(
             detail="Employee users must use biometric authentication"
         )
 
-    # If a role was specified in the login request, validate that it matches the user's role
-    if login_request.role and user_with_role.role.name != login_request.role:
+    # If a role was specified in the login request, validate that it matches the user's role (case-insensitive)
+    if login_request.role and user_with_role.role.name.lower() != login_request.role.lower():
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"User role does not match selected role. Expected: {login_request.role}, Actual: {user_with_role.role.name}"
@@ -247,8 +247,8 @@ async def session_login(
             detail="Employee users must use biometric authentication"
         )
 
-    # If a role was specified in the login request, validate that it matches the user's role
-    if login_request.role and user_with_role.role.name != login_request.role:
+    # If a role was specified in the login request, validate that it matches the user's role (case-insensitive)
+    if login_request.role and user_with_role.role.name.lower() != login_request.role.lower():
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"User role does not match selected role. Expected: {login_request.role}, Actual: {user_with_role.role.name}"

@@ -144,6 +144,18 @@ async def save_customer_orders(
             detail="Order items are required"
         )
 
+    # Validate initial_paid_amount is a whole number
+    if initial_paid_amount < 0:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail="Initial paid amount cannot be negative"
+        )
+    if not float(initial_paid_amount).is_integer():
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail="Initial paid amount must be a whole number (decimals not allowed)"
+        )
+
     # Validate customer ID from request body
     customer_id_uuid = None
     if customer_id:
@@ -215,6 +227,11 @@ async def save_customer_orders(
                 raise HTTPException(
                     status_code=http_status.HTTP_400_BAD_REQUEST,
                     detail="Unit price cannot be negative"
+                )
+            if not unit_price.is_integer():
+                raise HTTPException(
+                    status_code=http_status.HTTP_400_BAD_REQUEST,
+                    detail="Unit price must be a whole number (decimals not allowed)"
                 )
 
             discount = float(item.get('discount', 0))

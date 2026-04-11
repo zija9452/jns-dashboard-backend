@@ -300,6 +300,41 @@ async def get_walkin_invoices(
     result = await db.execute(statement)
     invoices = result.scalars().all()
 
+    # Query refunds for THESE SPECIFIC INVOICES (regardless of refund date)
+    # This way, if sale was on April 10 and refund on April 11,
+    # selecting April 10 will still show the refund info
+    from src.models.refund import Refund
+    
+    # Get invoice IDs from the query result
+    invoice_ids = [inv.id for inv in invoices]
+    
+    refund_map = {}
+    if invoice_ids:  # Only query if we have invoices
+        refund_statement = select(Refund).where(
+            Refund.invoice_id.in_(invoice_ids)
+        )
+        refund_result = await db.execute(refund_statement)
+        refunds = refund_result.scalars().all()
+
+        # Build a map of invoice_id -> refund info
+        for refund in refunds:
+            invoice_id_str = str(refund.invoice_id)
+            if invoice_id_str not in refund_map:
+                refund_map[invoice_id_str] = {
+                    "is_refunded": True,
+                    "refund_date": refund.created_at.isoformat(),
+                    "refund_amount": float(refund.amount),
+                    "refund_reason": refund.reason,
+                    "refund_items": json.loads(refund.items) if refund.items else []
+                }
+            else:
+                # If multiple refunds on same invoice, update with latest info
+                existing = refund_map[invoice_id_str]
+                if refund.created_at.isoformat() > existing["refund_date"]:
+                    existing["refund_date"] = refund.created_at.isoformat()
+                existing["refund_amount"] += float(refund.amount)
+                existing["refund_items"].extend(json.loads(refund.items) if refund.items else [])
+
     invoice_list = []
     for inv in invoices:
         try:
@@ -309,6 +344,9 @@ async def get_walkin_invoices(
             total_invoice_amount = float(totals.get('total', 0))
             total_invoice_paid = float(totals.get('amount_paid', 0))
             total_invoice_discount = float(totals.get('discount', 0))
+
+            # Check if this invoice has refunds
+            invoice_refund_info = refund_map.get(str(inv.id))
 
             # Track if this is the first item in the invoice
             first_item = True
@@ -320,7 +358,7 @@ async def get_walkin_invoices(
                 unit_price = item.get('unit_price', 0)
                 item_discount = float(item.get('discount', 0))
                 item_total = quantity * unit_price - item_discount
-                
+
                 # Use stored cost_price from invoice item (already saved at invoice creation time)
                 # Multiply by quantity to get total cost for this item
                 item_cost = float(item.get('cost_price', 0)) * quantity
@@ -329,7 +367,7 @@ async def get_walkin_invoices(
                 amount_paid = total_invoice_paid if first_item else 0.0
                 discount = total_invoice_discount if first_item else 0.0
 
-                invoice_list.append({
+                invoice_data = {
                     "id": str(inv.id),
                     "invoice_no": inv.invoice_no,
                     "product_name": product_name,
@@ -342,8 +380,17 @@ async def get_walkin_invoices(
                     "discount": discount,
                     "total_discount": discount,
                     "cost": item_cost,
-                    "created_at": inv.created_at.isoformat() if inv.created_at else None
-                })
+                    "created_at": inv.created_at.isoformat() if inv.created_at else None,
+                    # ALL rows get is_refunded=True for red background
+                    "is_refunded": invoice_refund_info["is_refunded"] if invoice_refund_info else False,
+                    # Only FIRST row gets detailed refund info for tooltip
+                    "refund_date": invoice_refund_info["refund_date"] if (invoice_refund_info and first_item) else None,
+                    "refund_amount": invoice_refund_info["refund_amount"] if (invoice_refund_info and first_item) else 0.0,
+                    "refund_reason": invoice_refund_info["refund_reason"] if (invoice_refund_info and first_item) else "",
+                    "refund_items": invoice_refund_info["refund_items"] if (invoice_refund_info and first_item) else []
+                }
+
+                invoice_list.append(invoice_data)
 
                 first_item = False
         except Exception as e:

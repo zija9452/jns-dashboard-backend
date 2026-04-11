@@ -74,7 +74,8 @@ class RefreshToken(BaseModel):
 async def authenticate_user(username: str, password: str, db: AsyncSession):
     # This function retrieves the user from the database
     # Using async operations with SQLModel since the db parameter is an AsyncSession
-    statement = select(User).where(User.username == username)
+    # Use ilike for case-insensitive username matching
+    statement = select(User).where(User.username.ilike(username))
     result = await db.execute(statement)
     user = result.scalar_one_or_none()
     if not user:
@@ -82,6 +83,7 @@ async def authenticate_user(username: str, password: str, db: AsyncSession):
     if not verify_password(password, user.password_hash):
         return False
     return user
+
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
