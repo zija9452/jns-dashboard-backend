@@ -316,24 +316,29 @@ async def get_walkin_invoices(
         refund_result = await db.execute(refund_statement)
         refunds = refund_result.scalars().all()
 
-        # Build a map of invoice_id -> refund info
+        # Build a map of invoice_id -> list of refund records (keeping dates separate)
         for refund in refunds:
             invoice_id_str = str(refund.invoice_id)
             if invoice_id_str not in refund_map:
                 refund_map[invoice_id_str] = {
                     "is_refunded": True,
+                    "refund_records": [
+                        {
+                            "refund_date": refund.created_at.isoformat(),
+                            "refund_amount": float(refund.amount),
+                            "refund_reason": refund.reason,
+                            "refund_items": json.loads(refund.items) if refund.items else []
+                        }
+                    ]
+                }
+            else:
+                # Add as a separate refund record (don't merge)
+                refund_map[invoice_id_str]["refund_records"].append({
                     "refund_date": refund.created_at.isoformat(),
                     "refund_amount": float(refund.amount),
                     "refund_reason": refund.reason,
                     "refund_items": json.loads(refund.items) if refund.items else []
-                }
-            else:
-                # If multiple refunds on same invoice, update with latest info
-                existing = refund_map[invoice_id_str]
-                if refund.created_at.isoformat() > existing["refund_date"]:
-                    existing["refund_date"] = refund.created_at.isoformat()
-                existing["refund_amount"] += float(refund.amount)
-                existing["refund_items"].extend(json.loads(refund.items) if refund.items else [])
+                })
 
     invoice_list = []
     for inv in invoices:
@@ -384,10 +389,7 @@ async def get_walkin_invoices(
                     # ALL rows get is_refunded=True for red background
                     "is_refunded": invoice_refund_info["is_refunded"] if invoice_refund_info else False,
                     # Only FIRST row gets detailed refund info for tooltip
-                    "refund_date": invoice_refund_info["refund_date"] if (invoice_refund_info and first_item) else None,
-                    "refund_amount": invoice_refund_info["refund_amount"] if (invoice_refund_info and first_item) else 0.0,
-                    "refund_reason": invoice_refund_info["refund_reason"] if (invoice_refund_info and first_item) else "",
-                    "refund_items": invoice_refund_info["refund_items"] if (invoice_refund_info and first_item) else []
+                    "refund_records": invoice_refund_info["refund_records"] if (invoice_refund_info and first_item) else []
                 }
 
                 invoice_list.append(invoice_data)
