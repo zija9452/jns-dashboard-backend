@@ -140,15 +140,14 @@ async def get_dashboard_stats(
     total_expenses = float(expenses_result.scalar_one_or_none() or 0)
     
     # ==================== PURCHASE/COST CALCULATION ====================
-    # Calculate cost from walk-in invoices (70% of selling price)
-    # OPTIMIZED: Use SQL aggregation with PostgreSQL JSON operators instead of Python loop
+    # Calculate actual cost from walk-in invoices using stored cost_price
+    # FIXED: Now uses actual cost_price instead of 70% formula
     from sqlalchemy import text
     walkin_cost_query = text("""
         SELECT COALESCE(SUM(
-            (item.value->>'quantity')::numeric * 
-            (item.value->>'unit_price')::numeric - 
-            (item.value->>'discount')::numeric
-        ) * 0.7, 0) as total_cost
+            (item.value->>'quantity')::numeric *
+            (item.value->>'cost_price')::numeric
+        ), 0) as total_cost
         FROM invoices,
         json_array_elements(invoices.items::json) AS item(value)
         WHERE invoices.invoice_no LIKE 'SIN-%'

@@ -727,25 +727,20 @@ async def stock_in_report(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
     
-    # Query stock entries with type=IN within date range
-    # Group by product_id and sum the qty
+    # Query ALL stock entries with type=IN within date range (not grouped)
     from sqlalchemy import func
-    
+
     statement = (
-        select(
-            StockEntry.product_id,
-            func.sum(StockEntry.qty).label("total_qty_in"),
-            func.min(StockEntry.created_at).label("first_entry_date")
-        )
+        select(StockEntry)
         .where(StockEntry.type == StockEntryType.IN)
         .where(StockEntry.created_at >= from_date)
         .where(StockEntry.created_at <= to_date)
-        .group_by(StockEntry.product_id)
+        .order_by(StockEntry.created_at.desc())
     )
-    
+
     result = await db.execute(statement)
-    stock_in_entries = result.fetchall()
-    
+    stock_in_entries = result.scalars().all()
+
     if not stock_in_entries:
         # Return empty report
         html_content = f"""
@@ -769,26 +764,32 @@ async def stock_in_report(
         </html>
         """
     else:
-        # Build product rows with stock-in quantities
+        # Build product rows with individual stock-in entries (with date & time at end)
         product_rows = ""
         for i, entry in enumerate(stock_in_entries):
             product = await db.get(Product, entry.product_id)
             if product:
+                # Format date and time
+                entry_date = entry.created_at.strftime("%d-%m-%Y")
+                entry_time = entry.created_at.strftime("%I:%M %p")
+                
                 product_rows += f"""
                 <tr>
                     <td class="border" style="text-align: center;">{i+1}</td>
                     <td class="border">{product.name}</td>
                     <td class="border">{product.barcode or '-'}</td>
-                    <td class="border text-right">{entry.total_qty_in}</td>
+                    <td class="border text-right">{entry.qty}</td>
                     <td class="border text-right">{float(product.unit_price) if product.unit_price else 0.0:.2f}</td>
                     <td class="border text-right">{float(product.cost_price) if product.cost_price else 0.0:.2f}</td>
                     <td class="border">{product.category or '-'}</td>
                     <td class="border">{product.branch or '-'}</td>
+                    <td class="border">{entry_date}</td>
+                    <td class="border">{entry_time}</td>
                 </tr>
                 """
-        
+
         # Calculate total
-        total_qty = sum(entry.total_qty_in for entry in stock_in_entries)
+        total_qty = sum(entry.qty for entry in stock_in_entries)
         
         html_content = f"""
         <!DOCTYPE html>
@@ -872,6 +873,8 @@ async def stock_in_report(
                         <th>Cost</th>
                         <th>Category</th>
                         <th>Branch</th>
+                        <th>Date</th>
+                        <th>Time</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -881,7 +884,7 @@ async def stock_in_report(
                     <tr>
                         <td colspan="3" class="border text-right" style="font-weight: bold;">Total:</td>
                         <td class="border text-right" style="font-weight: bold;">{total_qty}</td>
-                        <td colspan="4"></td>
+                        <td colspan="6"></td>
                     </tr>
                 </tfoot>
             </table>
