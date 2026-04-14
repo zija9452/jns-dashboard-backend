@@ -369,7 +369,8 @@ async def get_walkin_invoices(
 
                 # Show payment and discount only on first item
                 amount_paid = total_invoice_paid if first_item else 0.0
-                discount = total_invoice_discount if first_item else 0.0
+                item_discount_display = item_discount if first_item else 0.0
+                total_discount_display = total_invoice_discount if first_item else 0.0
 
                 invoice_data = {
                     "id": str(inv.id),
@@ -381,8 +382,8 @@ async def get_walkin_invoices(
                     "payment_status": inv.payment_status,
                     "payment_method": inv.payment_method or "cash",
                     "quantity": quantity,
-                    "discount": discount,
-                    "total_discount": discount,
+                    "discount": item_discount_display,
+                    "total_discount": total_discount_display,
                     "cost": item_cost,
                     "created_at": inv.created_at.isoformat() if inv.created_at else None,
                     # ALL rows get is_refunded=True for red background

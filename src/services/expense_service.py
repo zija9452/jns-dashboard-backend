@@ -18,7 +18,6 @@ class ExpenseService:
         Create a new expense
         """
         db_expense = Expense(
-            expense_type=expense_create.expense_type,
             expense=expense_create.expense,
             amount=expense_create.amount,
             expense_date=expense_create.expense_date or date.today(),
@@ -37,7 +36,7 @@ class ExpenseService:
             entity="Expense",
             action="CREATE",
             changes={
-                "expense_type": expense_create.expense_type,
+                "expense": expense_create.expense,
                 "amount": str(expense_create.amount),
                 "expense_date": str(expense_create.expense_date or date.today()),
                 "branch": expense_create.branch
@@ -80,7 +79,7 @@ class ExpenseService:
 
         # Get the old values for audit purposes
         old_values = {
-            "expense_type": db_expense.expense_type,
+            "expense": db_expense.expense,
             "amount": str(db_expense.amount),
             "expense_date": str(db_expense.expense_date),
             "branch": db_expense.branch

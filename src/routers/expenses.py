@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 from typing import List, Optional
 from uuid import UUID
 import uuid
+from datetime import date
 
 from ..database.database import get_db
 from ..models.user import User
@@ -23,8 +24,8 @@ async def get_expenses(
 ):
     """
     Get list of expenses with pagination
-    Optionally filter by created_by user ID
-    Admin, cashier, and employee can view expenses
+    - Admin & Employee: Can view all expenses
+    - Cashier: Can only view current date expenses
     Returns: Paginated data + total count for proper frontend pagination
     """
     # Calculate skip from page
@@ -32,6 +33,13 @@ async def get_expenses(
 
     # Build base query
     base_statement = select(Expense)
+
+    # Apply role-based filtering
+    if current_user.role.name == "cashier":
+        # Cashier can only see current date expenses
+        today = date.today()
+        base_statement = base_statement.where(Expense.expense_date == today)
+    # Admin & Employee see all expenses (no filter)
 
     # Apply created_by filter
     if created_by:
@@ -46,6 +54,12 @@ async def get_expenses(
 
     # Get total count
     count_statement = select(Expense.id)
+    
+    # Apply role-based filtering for count
+    if current_user.role.name == "cashier":
+        today = date.today()
+        count_statement = count_statement.where(Expense.expense_date == today)
+    
     if created_by:
         try:
             created_by_uuid = UUID(created_by)
@@ -69,7 +83,6 @@ async def get_expenses(
         'data': [
             {
                 "id": str(expense.id),
-                "expense_type": expense.expense_type,
                 "expense": expense.expense,
                 "amount": float(expense.amount),
                 "expense_date": expense.expense_date.isoformat() if expense.expense_date else None,
@@ -95,8 +108,17 @@ async def create_expense(
 ):
     """
     Create a new expense
-    Requires admin, cashier, or employee role
+    - Cashier: Can only create expenses for current date
+    - Admin & Employee: Can create expenses for any date
     """
+    # Restrict cashier to current date only
+    if current_user.role.name == "cashier":
+        if expense_create.expense_date != date.today():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cashiers can only create expenses for current date"
+            )
+
     # Set the created_by field to the current user if not specified in the request
     if not expense_create.created_by:
         expense_create.created_by = current_user.id
@@ -106,7 +128,6 @@ async def create_expense(
     # Return manually serialized response
     return {
         "id": str(expense.id),
-        "expense_type": expense.expense_type,
         "expense": expense.expense,
         "amount": float(expense.amount),
         "expense_date": expense.expense_date.isoformat() if expense.expense_date else None,
@@ -144,7 +165,6 @@ async def get_expense(
     # Return manually serialized response
     return {
         "id": str(expense.id),
-        "expense_type": expense.expense_type,
         "expense": expense.expense,
         "amount": float(expense.amount),
         "expense_date": expense.expense_date.isoformat() if expense.expense_date else None,
@@ -162,7 +182,8 @@ async def update_expense(
 ):
     """
     Update a specific expense by ID
-    Requires admin, cashier, or employee role
+    - Cashier: Can only update current date expenses
+    - Admin & Employee: Can update any expense
     """
     try:
         expense_uuid = UUID(expense_id)
@@ -180,12 +201,19 @@ async def update_expense(
             detail="Expense not found"
         )
 
+    # Restrict cashier from updating non-current date expenses
+    if current_user.role.name == "cashier":
+        if expense.expense_date != date.today():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cashiers can only update expenses for current date"
+            )
+
     updated_expense = await ExpenseService.update_expense(db, expense_uuid, expense_update)
     
     # Return manually serialized response
     return {
         "id": str(updated_expense.id),
-        "expense_type": updated_expense.expense_type,
         "expense": updated_expense.expense,
         "amount": float(updated_expense.amount),
         "expense_date": updated_expense.expense_date.isoformat() if updated_expense.expense_date else None,
@@ -202,7 +230,8 @@ async def delete_expense(
 ):
     """
     Delete a specific expense by ID
-    Requires admin, cashier, or employee role
+    - Cashier: Can only delete current date expenses
+    - Admin & Employee: Can delete any expense
     """
     try:
         expense_uuid = UUID(expense_id)
@@ -211,6 +240,22 @@ async def delete_expense(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid expense ID format"
         )
+
+    # Check if expense exists and get it
+    expense = await ExpenseService.get_expense(db, expense_uuid)
+    if not expense:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Expense not found"
+        )
+
+    # Restrict cashier from deleting non-current date expenses
+    if current_user.role.name == "cashier":
+        if expense.expense_date != date.today():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cashiers can only delete expenses for current date"
+            )
 
     success = await ExpenseService.delete_expense(db, expense_uuid)
     if not success:

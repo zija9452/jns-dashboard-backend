@@ -9,7 +9,6 @@ class Expense(SQLModel, table=True):
     __tablename__ = "expenses"
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    expense_type: str = Field(max_length=50, index=True)  # Index for filtering by type
     expense: str = Field(max_length=100)
     amount: Decimal = Field(sa_column=Column(Numeric(10, 2), nullable=False))
     expense_date: date = Field(default_factory=date.today, index=True)  # Index for date range queries
@@ -19,7 +18,6 @@ class Expense(SQLModel, table=True):
 
 class ExpenseRead(SQLModel):
     id: uuid.UUID
-    expense_type: str
     expense: str
     amount: Decimal
     expense_date: Union[date, str]
@@ -28,7 +26,6 @@ class ExpenseRead(SQLModel):
     created_at: datetime
 
 class ExpenseCreate(SQLModel):
-    expense_type: str
     expense: str
     amount: Decimal
     expense_date: date
@@ -36,7 +33,6 @@ class ExpenseCreate(SQLModel):
     created_by: Optional[uuid.UUID] = None
 
 class ExpenseUpdate(SQLModel):
-    expense_type: Optional[str] = None
     amount: Optional[Decimal] = None
     expense_date: Optional[str] = None
     branch: Optional[str] = None

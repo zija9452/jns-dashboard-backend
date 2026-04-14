@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List
+from typing import List, Optional
 from uuid import UUID
 import uuid
 
@@ -11,26 +11,39 @@ from ..services.user_service import UserService
 from ..auth.auth import get_current_user
 from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, cashier_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session
 from ..auth.password import get_password_hash
+from sqlalchemy import select, or_
 
 router = APIRouter()
 
 @router.get("/", response_model=List[UserRead])
 async def get_users(
+    search_string: Optional[str] = None,
     skip: int = 0,
     limit: int = 100,
     current_user: User = Depends(admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get list of users with pagination
+    Get list of users with pagination and optional search
     Requires admin role
     """
-    from sqlalchemy import select
-    
-    # Get users with their role information
+    # Build base statement with role information
     statement = select(User, Role.name.label('role_name')).join(Role, User.role_id == Role.id, isouter=True)
-    statement = statement.offset(skip).limit(limit)
     
+    # Apply search filter if search_string is provided
+    if search_string and search_string.strip():
+        search_pattern = f"%{search_string.strip()}%"
+        statement = statement.where(
+            or_(
+                User.username.ilike(search_pattern),
+                User.full_name.ilike(search_pattern),
+                User.phone.ilike(search_pattern),
+                User.cnic.ilike(search_pattern)
+            )
+        )
+    
+    statement = statement.offset(skip).limit(limit)
+
     result = await db.execute(statement)
     rows = result.all()
     

@@ -71,24 +71,28 @@ async def create_customer_category(
 async def get_customer_categories(
     page: int = 1,
     limit: int = 50,
-    branch: Optional[str] = None,
+    search_string: Optional[str] = None,
     current_user: User = Depends(employee_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Get all customer categories with pagination
+    Search by main_category name
     Each category includes all its sub-categories and options
     """
     skip = (page - 1) * limit
 
     base_statement = select(CustomerCategory)
 
-    if branch:
-        base_statement = base_statement.where(CustomerCategory.branch == branch)
+    # Search by main_category
+    if search_string and search_string.strip():
+        search_pattern = f"%{search_string.strip()}%"
+        base_statement = base_statement.where(CustomerCategory.main_category.ilike(search_pattern))
 
     count_statement = select(CustomerCategory.id)
-    if branch:
-        count_statement = count_statement.where(CustomerCategory.branch == branch)
+    if search_string and search_string.strip():
+        search_pattern = f"%{search_string.strip()}%"
+        count_statement = count_statement.where(CustomerCategory.main_category.ilike(search_pattern))
 
     count_result = await db.execute(count_statement)
     total_count = len(count_result.scalars().all())
