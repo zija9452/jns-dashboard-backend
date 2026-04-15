@@ -11,6 +11,7 @@ class UserRole(str, Enum):
     ADMIN = "admin"
     CASHIER = "cashier"
     EMPLOYEE = "employee"
+    WAREHOUSE = "warehouse"
 
 class UserBase(SQLModel):
     full_name: Optional[str] = Field(default=None, max_length=100)

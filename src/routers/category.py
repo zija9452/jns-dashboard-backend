@@ -8,7 +8,7 @@ import uuid
 from ..database.database import get_db
 from ..models.category import Category, CategoryCreate, CategoryUpdate, CategoryRead
 from ..models.user import User
-from ..auth.session_auth import employee_required_from_session
+from ..auth.session_auth import get_current_user_from_session
 
 router = APIRouter(prefix="/category", tags=["Category"])
 
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/category", tags=["Category"])
 @router.post("/", response_model=CategoryRead)
 async def create_category(
     category: CategoryCreate,
-    current_user: User = Depends(employee_required_from_session()),
+    current_user: User = Depends(get_current_user_from_session),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -55,7 +55,7 @@ async def get_categories(
     page: int = 1,
     limit: int = 8,
     branch: Optional[str] = None,
-    current_user: User = Depends(employee_required_from_session()),
+    current_user: User = Depends(get_current_user_from_session),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -112,7 +112,7 @@ async def get_categories(
 @router.get("/{category_id}", response_model=CategoryRead)
 async def get_category(
     category_id: UUID,
-    current_user: User = Depends(employee_required_from_session()),
+    current_user: User = Depends(get_current_user_from_session),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -137,7 +137,7 @@ async def get_category(
 async def update_category(
     category_id: UUID,
     category_update: CategoryUpdate,
-    current_user: User = Depends(employee_required_from_session()),
+    current_user: User = Depends(get_current_user_from_session),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -170,7 +170,7 @@ async def update_category(
 @router.delete("/{category_id}")
 async def delete_category(
     category_id: UUID,
-    current_user: User = Depends(employee_required_from_session()),
+    current_user: User = Depends(get_current_user_from_session),
     db: AsyncSession = Depends(get_db)
 ):
     """

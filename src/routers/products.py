@@ -13,7 +13,7 @@ from ..models.product import Product, ProductCreate, ProductUpdate, ProductRead
 from ..models.user import User  # Import User at the top to avoid NameError
 from ..services.product_service import ProductService
 from ..services.cloudinary_service import CloudinaryService
-from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session, admin_employee_required_from_session
+from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, admin_employee_required_from_session
 from sqlmodel import select
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ _last_cleanup_time = time.time()
 async def get_products(
     skip: int = 0,
     limit: int = 100,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # Admins and cashiers can view products
+    current_user: User = Depends(get_current_user_from_session),  # Admins and cashiers can view products
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -54,25 +54,37 @@ async def clear_products_cache():
 @router.post("/", response_model=ProductRead)
 async def create_product(
     product_create: ProductCreate,
-    current_user: User = Depends(employee_required_from_session()),  # Admins and employees can create products
+    current_user: User = Depends(get_current_user_from_session),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Create a new product
-    Requires admin or employee role
+    Requires admin, employee, or warehouse role
+    Auto-sets is_warehouse_product = true if role is warehouse
     """
+    # Check role access
+    if current_user.role.name not in ["admin", "employee", "warehouse"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin, employee, or warehouse access required"
+        )
+
+    # Auto-set is_warehouse_product for warehouse role
+    if current_user.role.name == "warehouse":
+        product_create.is_warehouse_product = True
+
     # Check if product name already exists (case-insensitive)
     from sqlmodel import select
     statement = select(Product).where(Product.name == product_create.name)
     result = await db.execute(statement)
     existing_product = result.scalar_one_or_none()
-    
+
     if existing_product:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Product with this name already exists. Please use a different name."
         )
-    
+
     # Check if SKU already exists
     existing_product = await ProductService.get_product_by_sku(db, product_create.sku)
     if existing_product:
@@ -90,7 +102,7 @@ async def create_product(
 @router.get("/getproducts/{id}")
 async def get_product_details(
     id: UUID,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(get_current_user_from_session),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -132,9 +144,10 @@ async def get_product_details(
 async def view_products(
     search_string: str = None,
     branches: str = None,
+    warehouse: str = None,  # Filter for warehouse products only
     page: int = 1,       # Page number for backend pagination
     limit: int = 8,      # 8 items per page (for 5 pages = 40 products total)
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(get_current_user_from_session),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -143,6 +156,13 @@ async def view_products(
     Optimized: Only fetches required fields, no extra data
     Returns: Paginated data + total count for proper frontend pagination
     """
+    # Check role access
+    if current_user.role.name not in ["admin", "employee", "cashier", "warehouse"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Authenticated access required"
+        )
+
     current_time = time.time()
 
     # Calculate skip from page
@@ -178,12 +198,20 @@ async def view_products(
         Product.limited_qty,
         Product.branch,
         Product.brand_action,
-        Product.stock_level
+        Product.stock_level,
+        Product.is_warehouse_product,
+        Product.article_no,
+        Product.warehouse_stock,
+        Product.warehouse_limited_qty
     )
 
     # Apply branch filter at database level (indexed - FAST)
     if branches:
         base_statement = base_statement.where(Product.branch == branches)
+
+    # Apply warehouse filter - only show products where is_warehouse_product = true
+    if warehouse and warehouse.lower() == 'true':
+        base_statement = base_statement.where(Product.is_warehouse_product == True)
 
     # Apply search filter at database level (case-insensitive)
     if search_string and search_string.strip():
@@ -200,6 +228,9 @@ async def view_products(
     count_statement = select(Product.id)
     if branches:
         count_statement = count_statement.where(Product.branch == branches)
+    # Apply warehouse filter to count statement
+    if warehouse and warehouse.lower() == 'true':
+        count_statement = count_statement.where(Product.is_warehouse_product == True)
     if search_string and search_string.strip():
         search_pattern = f"%{search_string.strip()}%"
         count_statement = count_statement.where(
@@ -233,7 +264,11 @@ async def view_products(
             "limitedquan": p[7],
             "branch": p[8] or "",
             "brand": p[9] or "",
-            "stock": p[10]  # stock_level is at index 10
+            "stock": p[10],  # stock_level is at index 10
+            "is_warehouse_product": p[11],
+            "article_no": p[12] or "",
+            "warehouse_stock": p[13],
+            "warehouse_limited_qty": p[14]
         }
         for p in products
     ]
@@ -261,7 +296,7 @@ async def view_products(
 
 @router.get("/getmaxproid")
 async def get_max_pro_id(
-    current_user: User = Depends(employee_required_from_session()),
+    current_user: User = Depends(get_current_user_from_session),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -295,13 +330,20 @@ async def get_max_pro_id(
 
 @router.get("/generatebarcode")
 async def generate_barcode(
-    current_user: User = Depends(employee_required_from_session()),
+    current_user: User = Depends(get_current_user_from_session),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Generate a unique barcode for new products
-    Uses auto-increment approach for production-ready sequential barcodes
+    Access: admin, employee, warehouse
     """
+    # Check role access
+    if current_user.role.name not in ["admin", "employee", "warehouse"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin, employee, or warehouse access required"
+        )
+
     barcode = await ProductService.generate_unique_barcode(db)
     return {"barcode": barcode}
 
@@ -309,7 +351,7 @@ async def generate_barcode(
 @router.post("/upload-image")
 async def upload_product_image(
     file: UploadFile = File(..., description="Product image file"),
-    current_user: User = Depends(employee_required_from_session())
+    current_user: User = Depends(get_current_user_from_session)
 ):
     """
     Upload product image to Cloudinary and return public URL
@@ -363,7 +405,7 @@ async def upload_product_image(
 @router.get("/searchbybarcode")
 async def search_product_by_barcode(
     barcode: str,
-    current_user: User = Depends(employee_required_from_session()),
+    current_user: User = Depends(get_current_user_from_session),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -424,7 +466,7 @@ async def search_product_by_barcode(
 @router.post("/deleteproduct/{id}")
 async def delete_product_frontend(
     id: str,
-    current_user: User = Depends(admin_employee_required_from_session()),  # Admin and Employee only (NOT cashier)
+    current_user: User = Depends(admin_employee_required_from_session),  # Admin and Employee only (NOT cashier)
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -457,7 +499,7 @@ async def delete_product_frontend(
 @router.post("/deleteproductimage/{id}")
 async def delete_product_image(
     id: str,
-    current_user: User = Depends(employee_required_from_session()),  # Allow employees to manage product images
+    current_user: User = Depends(get_current_user_from_session),  # Allow employees to manage product images
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -494,7 +536,7 @@ async def delete_product_image(
 @router.post("/delete-image")
 async def delete_image_from_cloudinary(
     request_data: dict,
-    current_user: User = Depends(employee_required_from_session()),
+    current_user: User = Depends(get_current_user_from_session),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -570,7 +612,7 @@ async def delete_image_from_cloudinary(
 @router.get("/{product_id}", response_model=ProductRead)
 async def get_product(
     product_id: str,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # Admins and cashiers can view product details
+    current_user: User = Depends(get_current_user_from_session),  # Admins and cashiers can view product details
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -599,7 +641,7 @@ async def get_product(
 async def update_product(
     product_id: str,
     product_update: ProductUpdate,
-    current_user: User = Depends(employee_required_from_session()),  # Admins and employees can update products
+    current_user: User = Depends(get_current_user_from_session),  # Admins and employees can update products
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -675,7 +717,7 @@ async def delete_product(
 @router.post("/brand")
 async def create_brand(
     brand: str = None,
-    current_user: User = Depends(employee_required_from_session()),  # Allow employees to create brands
+    current_user: User = Depends(get_current_user_from_session),  # Allow employees to create brands
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -699,7 +741,7 @@ async def create_brand(
 @router.post("/deletebrand")
 async def delete_brand(
     brand: str = None,
-    current_user: User = Depends(employee_required_from_session()),  # Allow employees to delete brands
+    current_user: User = Depends(get_current_user_from_session),  # Allow employees to delete brands
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -722,7 +764,7 @@ async def delete_brand(
 @router.post("/getstockdetail")
 async def get_stock_detail(
     pro_name: str = None,
-    current_user: User = Depends(employee_required_from_session()),  # Allow employees to check stock details
+    current_user: User = Depends(get_current_user_from_session),  # Allow employees to check stock details
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -750,7 +792,7 @@ async def get_stock_detail(
 @router.get("/getcategoriesbybranch")
 async def get_categories_by_branch(
     branch: str = None,
-    current_user: User = Depends(employee_required_from_session()),  # Allow employees to get category info
+    current_user: User = Depends(get_current_user_from_session),  # Allow employees to get category info
     db: AsyncSession = Depends(get_db)
 ):
     """

@@ -89,7 +89,11 @@ class ProductService:
             category=product_create.category,
             branch=product_create.branch,
             limited_qty=product_create.limited_qty,
-            brand_action=product_create.brand_action
+            brand_action=product_create.brand_action,
+            is_warehouse_product=product_create.is_warehouse_product,
+            article_no=product_create.article_no,
+            warehouse_stock=product_create.warehouse_stock,
+            warehouse_limited_qty=product_create.warehouse_limited_qty
         )
 
         db.add(db_product)

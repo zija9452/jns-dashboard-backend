@@ -21,8 +21,12 @@ class Product(SQLModel, table=True):
     discount: Optional[Decimal] = Field(default=0.00, sa_column=Column(Numeric(5, 2), nullable=True))
     category: Optional[str] = Field(default=None, max_length=50)
     branch: Optional[str] = Field(default=None, max_length=50)
-    limited_qty: int = Field(default=0)  # Keep this field as requested
+    limited_qty: int = Field(default=0)  # Shop limited qty
     brand_action: Optional[str] = Field(default=None, max_length=100)
+    is_warehouse_product: bool = Field(default=False)  # True if product belongs to warehouse
+    article_no: Optional[str] = Field(default=None, max_length=50)  # Warehouse article number (optional)
+    warehouse_stock: int = Field(default=0)  # Warehouse stock quantity
+    warehouse_limited_qty: int = Field(default=0)  # Warehouse limited quantity
     created_at: datetime = Field(default_factory=lambda: datetime.now())
     updated_at: datetime = Field(default_factory=lambda: datetime.now(), nullable=False)
 
@@ -41,6 +45,10 @@ class ProductRead(SQLModel):
     branch: Optional[str]
     limited_qty: int
     brand_action: Optional[str]
+    is_warehouse_product: bool
+    article_no: Optional[str]
+    warehouse_stock: int
+    warehouse_limited_qty: int
     created_at: datetime
     updated_at: datetime
 
@@ -58,6 +66,10 @@ class ProductCreate(SQLModel):
     branch: Optional[str] = None
     limited_qty: int = 0
     brand_action: Optional[str] = None
+    is_warehouse_product: bool = False
+    article_no: Optional[str] = None
+    warehouse_stock: int = 0
+    warehouse_limited_qty: int = 0
 
 
 class ProductUpdate(SQLModel):
@@ -72,5 +84,9 @@ class ProductUpdate(SQLModel):
     branch: Optional[str] = None
     limited_qty: Optional[int] = None
     brand_action: Optional[str] = None
+    is_warehouse_product: Optional[bool] = None
+    article_no: Optional[str] = None
+    warehouse_stock: Optional[int] = None
+    warehouse_limited_qty: Optional[int] = None
 
     model_config = ConfigDict(json_encoders={Decimal: float})

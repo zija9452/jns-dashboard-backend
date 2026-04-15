@@ -96,3 +96,27 @@ def admin_employee_required_from_session():
             )
         return current_user
     return role_checker
+
+
+def warehouse_required_from_session():
+    """Require warehouse role from session (warehouse/admin can access)"""
+    async def role_checker(current_user: User = Depends(get_current_user_from_session)):
+        if current_user.role.name not in ["warehouse", "admin"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Warehouse or admin access required"
+            )
+        return current_user
+    return role_checker
+
+
+def all_authenticated_from_session():
+    """Require any authenticated role (admin, cashier, employee, warehouse)"""
+    async def role_checker(current_user: User = Depends(get_current_user_from_session)):
+        if current_user.role.name not in ["admin", "cashier", "employee", "warehouse"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Authenticated access required"
+            )
+        return current_user
+    return role_checker

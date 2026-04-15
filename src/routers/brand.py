@@ -8,7 +8,7 @@ import uuid
 from ..database.database import get_db
 from ..models.brand import Brand, BrandCreate, BrandUpdate, BrandRead
 from ..models.user import User
-from ..auth.session_auth import employee_required_from_session
+from ..auth.session_auth import get_current_user_from_session
 
 router = APIRouter(prefix="/brand", tags=["Brand"])
 
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/brand", tags=["Brand"])
 @router.post("/", response_model=BrandRead)
 async def create_brand(
     brand: BrandCreate,
-    current_user: User = Depends(employee_required_from_session()),
+    current_user: User = Depends(get_current_user_from_session),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -48,7 +48,7 @@ async def create_brand(
 async def get_brands(
     page: int = 1,
     limit: int = 8,
-    current_user: User = Depends(employee_required_from_session()),
+    current_user: User = Depends(get_current_user_from_session),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -97,7 +97,7 @@ async def get_brands(
 @router.get("/{brand_id}", response_model=BrandRead)
 async def get_brand(
     brand_id: UUID,
-    current_user: User = Depends(employee_required_from_session()),
+    current_user: User = Depends(get_current_user_from_session),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -122,7 +122,7 @@ async def get_brand(
 async def update_brand(
     brand_id: UUID,
     brand_update: BrandUpdate,
-    current_user: User = Depends(employee_required_from_session()),
+    current_user: User = Depends(get_current_user_from_session),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -155,7 +155,7 @@ async def update_brand(
 @router.delete("/{brand_id}")
 async def delete_brand(
     brand_id: UUID,
-    current_user: User = Depends(employee_required_from_session()),
+    current_user: User = Depends(get_current_user_from_session),
     db: AsyncSession = Depends(get_db)
 ):
     """
