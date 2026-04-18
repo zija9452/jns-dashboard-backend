@@ -197,6 +197,18 @@ class ProductService:
         if not db_product:
             return False
 
+        # Delete related stock_entries first to avoid foreign key constraint error
+        from ..models.stock_entry import StockEntry
+        from sqlmodel import delete
+        
+        # Delete all stock entries for this product
+        delete_stmt = delete(StockEntry).where(StockEntry.product_id == product_id)
+        await db.execute(delete_stmt)
+        
+        # Commit stock entries deletion before deleting product
+        await db.commit()
+        
+        # Now delete the product
         await db.delete(db_product)
         await db.commit()
 

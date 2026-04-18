@@ -167,7 +167,7 @@ async def get_dashboard_stats(
             func.count(Product.id).filter(
                 and_(
                     Product.stock_level > 0,
-                    Product.stock_level < 10
+                    Product.stock_level < 5
                 )
             ).label('short_stock')
         )

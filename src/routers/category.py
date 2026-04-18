@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, or_, func
 from typing import List, Optional
 from uuid import UUID
 import uuid
@@ -55,11 +55,12 @@ async def get_categories(
     page: int = 1,
     limit: int = 8,
     branch: Optional[str] = None,
+    search: Optional[str] = None,
     current_user: User = Depends(get_current_user_from_session),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get all categories with optional branch filter and pagination
+    Get all categories with optional branch filter, search and pagination
     Requires employee role
     Returns: Paginated data + total count for proper frontend pagination
     """
@@ -69,20 +70,27 @@ async def get_categories(
     # Build base query
     base_statement = select(Category)
 
-    # Apply branch filter
+    # Apply branch filter (exact match)
     if branch:
         base_statement = base_statement.where(Category.branch == branch)
+    
+    # Apply search filter (fuzzy match on name and branch)
+    if search:
+        search_pattern = f"%{search}%"
+        base_statement = base_statement.where(
+            or_(
+                Category.name.ilike(search_pattern),
+                Category.branch.ilike(search_pattern)
+            )
+        )
 
-    # Get total count
-    count_statement = select(Category.id)
-    if branch:
-        count_statement = count_statement.where(Category.branch == branch)
-
+    # Get total count (efficient using func.count)
+    count_statement = select(func.count()).select_from(base_statement.subquery())
     count_result = await db.execute(count_statement)
-    total_count = len(count_result.scalars().all())
+    total_count = count_result.scalar_one()
 
-    # Apply pagination
-    statement = base_statement.offset(skip).limit(limit)
+    # Apply pagination and sorting
+    statement = base_statement.order_by(Category.name.asc()).offset(skip).limit(limit)
     result = await db.execute(statement)
     categories = result.scalars().all()
 

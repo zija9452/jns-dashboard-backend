@@ -13,7 +13,7 @@ from ..models.product import Product, ProductCreate, ProductUpdate, ProductRead
 from ..models.user import User  # Import User at the top to avoid NameError
 from ..services.product_service import ProductService
 from ..services.cloudinary_service import CloudinaryService
-from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, admin_employee_required_from_session
+from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, admin_employee_required_from_session, admin_employee_warehouse_required_from_session
 from sqlmodel import select
 
 logger = logging.getLogger(__name__)
@@ -454,24 +454,28 @@ async def search_product_by_barcode(
         "branch": product.branch or "",
         "brand": product.brand_action or "",
         "pro_image": product.attributes or "",
-        "stock": product.stock_level
+        "stock": product.stock_level,
+        "is_warehouse_product": product.is_warehouse_product,
+        "warehouse_stock": product.warehouse_stock,
+        "warehouse_limited_qty": product.warehouse_limited_qty,
+        "article_no": product.article_no or ""
     }
-    
+
     # Cache for 10 minutes
     await cache.set_product_by_barcode(barcode, result_dict, ttl=600)
     logging.info(f"✓ Cached product for barcode: {barcode}")
-    
+
     return result_dict
 
 @router.post("/deleteproduct/{id}")
 async def delete_product_frontend(
     id: str,
-    current_user: User = Depends(admin_employee_required_from_session),  # Admin and Employee only (NOT cashier)
+    current_user: User = Depends(admin_employee_warehouse_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Delete a product by ID (frontend compatible response)
-    Admin and Employee can delete products. Cashiers cannot delete products.
+    Admin, Employee, and Warehouse can delete products. Cashiers cannot delete products.
     """
     try:
         product_id = UUID(id)

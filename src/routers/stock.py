@@ -24,7 +24,7 @@ from ..models.product import Product
 from ..models.vendor import Vendor
 from ..models.stock_entry import StockEntry, StockEntryType, StockEntryCreate, StockEntryUpdate, StockEntryRead
 from ..services.stock_service import StockService
-from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, cashier_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session
+from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, cashier_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session, warehouse_required_from_session
 
 router = APIRouter()
 
@@ -108,10 +108,11 @@ async def view_stock(
     for p in products:
         product_id = p[0]
         
-        # Get latest vendor from stock entries
+        # Get latest vendor from stock entries (the one that actually has a vendor_id)
         vendor_name = ""
         latest_entry_query = select(StockEntry.vendor_id).where(
-            StockEntry.product_id == product_id
+            StockEntry.product_id == product_id,
+            StockEntry.vendor_id != None
         ).order_by(StockEntry.created_at.desc()).limit(1)
         
         latest_entry_result = await db.execute(latest_entry_query)
@@ -239,10 +240,18 @@ async def adjust_stock(
             })
             continue
         
+        # Get latest vendor_id for this product to maintain association
+        latest_vendor_query = select(StockEntry.vendor_id).where(
+            StockEntry.product_id == product.id,
+            StockEntry.vendor_id != None
+        ).order_by(StockEntry.created_at.desc()).limit(1)
+        latest_vendor_result = await db.execute(latest_vendor_query)
+        inherited_vendor_id = latest_vendor_result.scalar_one_or_none()
+
         # Create stock entry with ADJUST type
         entry = StockEntry(
             product_id=product.id,
-            vendor_id=None,  # No vendor for adjustments
+            vendor_id=inherited_vendor_id,
             qty=adjustment_qty,
             type=StockEntryType.ADJUST,
             location="Stock Adjustment",
@@ -258,9 +267,17 @@ async def adjust_stock(
         if product.stock_level < 0:
             product.stock_level = 0
         
+        # Get vendor name for the result
+        vendor_name = ""
+        if inherited_vendor_id:
+            vendor = await db.get(Vendor, inherited_vendor_id)
+            if vendor:
+                vendor_name = vendor.name
+
         results.append({
             "product_id": item.product_id,
             "product_name": product.name,
+            "vendor_name": vendor_name,
             "action": item.action,
             "quantity_adjusted": item.quantity,
             "old_stock": old_stock,
@@ -323,6 +340,22 @@ async def save_stock_in(
             })
             continue
 
+        # Check if product is warehouse product
+        if product.is_warehouse_product:
+            # Check if enough warehouse stock is available
+            warehouse_stock = product.warehouse_stock or 0
+            if warehouse_stock < quantity:
+                results.append({
+                    "product_id": product_id,
+                    "product_name": product.name,
+                    "status": "error",
+                    "message": f"Insufficient warehouse stock. Available: {warehouse_stock}, Requested: {quantity}"
+                })
+                continue
+            
+            # Deduct from warehouse stock
+            product.warehouse_stock = warehouse_stock - quantity
+
         # Get vendor
         vendor = await db.get(Vendor, UUID(vendor_id))
         if not vendor:
@@ -360,6 +393,7 @@ async def save_stock_in(
             "product_name": product.name,
             "quantity_added": quantity,
             "new_stock_level": product.stock_level,
+            "warehouse_stock_after": product.warehouse_stock if product.is_warehouse_product else None,
             "vendor_id": vendor_id,
             "vendor_name": vendor.name,
             "amount_added_to_balance": total_cost,
@@ -435,6 +469,22 @@ async def save_stock_in_with_barcode(
             })
             continue
 
+        # Check if product is warehouse product
+        if product.is_warehouse_product:
+            # Check if enough warehouse stock is available
+            warehouse_stock = product.warehouse_stock or 0
+            if warehouse_stock < quantity:
+                results.append({
+                    "product_id": product_id,
+                    "product_name": product.name,
+                    "status": "error",
+                    "message": f"Insufficient warehouse stock. Available: {warehouse_stock}, Requested: {quantity}"
+                })
+                continue
+            
+            # Deduct from warehouse stock
+            product.warehouse_stock = warehouse_stock - quantity
+
         # Get vendor
         vendor = await db.get(Vendor, UUID(vendor_id))
         if not vendor:
@@ -472,6 +522,7 @@ async def save_stock_in_with_barcode(
             "product_name": product.name,
             "quantity_added": quantity,
             "new_stock_level": product.stock_level,
+            "warehouse_stock_after": product.warehouse_stock if product.is_warehouse_product else None,
             "vendor_id": vendor_id,
             "vendor_name": vendor.name,
             "amount_added_to_balance": total_cost,
@@ -733,6 +784,7 @@ async def stock_in_report(
     statement = (
         select(StockEntry)
         .where(StockEntry.type == StockEntryType.IN)
+        .where(StockEntry.location == "Stock In")
         .where(StockEntry.created_at >= from_date)
         .where(StockEntry.created_at <= to_date)
         .order_by(StockEntry.created_at.desc())
@@ -907,6 +959,218 @@ async def stock_in_report(
         pdf_content += "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 792 612] /Contents 4 0 R >>\nendobj\n"
         pdf_content += "4 0 obj\n<< /Length 100 >>\nstream\n"
         pdf_content += "BT\n/F1 18 Tf 350 550 Td (Stock In Report) Tj ET\n"
+        pdf_content += "ET\nendstream\nendobj\n"
+        pdf_content += "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n"
+        pdf_content += "xref\n0 6\ntrailer\n<< /Size 6 /Root 1 0 R >>\n%%EOF"
+        encoded_pdf = base64.b64encode(pdf_content.encode()).decode()
+    
+    return encoded_pdf
+
+
+@router.post("/warehousestockinreport")
+async def warehouse_stock_in_report(
+    date_from: str,
+    date_to: str,
+    current_user: User = Depends(warehouse_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate date-wise warehouse stock-in report (PDF base64)
+    Shows quantity added per warehouse product within date range
+    Access: Admin, Cashier, Employee
+    """
+    from datetime import datetime as dt
+    
+    # Parse dates
+    try:
+        from_date = dt.strptime(date_from, "%Y-%m-%d")
+        to_date = dt.strptime(date_to, "%Y-%m-%d")
+        # Set to_date to end of day
+        to_date = to_date.replace(hour=23, minute=59, second=59)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    
+    # Query stock entries with type=IN and location = 'warehouse'
+    statement = (
+        select(StockEntry)
+        .where(StockEntry.type == StockEntryType.IN)
+        .where(StockEntry.location == "warehouse")
+        .where(StockEntry.created_at >= from_date)
+        .where(StockEntry.created_at <= to_date)
+        .order_by(StockEntry.created_at.desc())
+    )
+
+    result = await db.execute(statement)
+    stock_in_entries = result.scalars().all()
+
+    if not stock_in_entries:
+        # Return empty report
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                @page {{ size: A4 landscape; margin: 15mm; }}
+                body {{ font-family: Arial, sans-serif; font-size: 14px; margin: 0; padding: 0; }}
+                h1 {{ text-align: center; color: #333; margin: 0 0 10px 0; font-size: 26px; font-weight: bold; }}
+                .date-range {{ text-align: center; margin-bottom: 15px; color: #666; font-size: 12px; }}
+                .no-data {{ text-align: center; padding: 50px; color: #999; font-size: 16px; }}
+            </style>
+        </head>
+        <body>
+            <h1>Warehouse Stock In Report</h1>
+            <div class="date-range">From: {date_from} | To: {date_to}</div>
+            <div class="no-data">No warehouse stock entries found for this date range</div>
+        </body>
+        </html>
+        """
+    else:
+        # Build product rows
+        product_rows = ""
+        for i, entry in enumerate(stock_in_entries):
+            product = await db.get(Product, entry.product_id)
+            if product:
+                # Format date and time
+                entry_date = entry.created_at.strftime("%d-%m-%Y")
+                entry_time = entry.created_at.strftime("%I:%M %p")
+                
+                product_rows += f"""
+                <tr>
+                    <td class="border" style="text-align: center;">{i+1}</td>
+                    <td class="border">{product.name}</td>
+                    <td class="border">{product.barcode or '-'}</td>
+                    <td class="border">{product.article_no or '-'}</td>
+                    <td class="border text-right">{entry.qty}</td>
+                    <td class="border text-right">{float(product.unit_price) if product.unit_price else 0.0:.2f}</td>
+                    <td class="border text-right">{float(product.cost_price) if product.cost_price else 0.0:.2f}</td>
+                    <td class="border">{product.category or '-'}</td>
+                    <td class="border">{product.branch or '-'}</td>
+                    <td class="border">{entry_date}</td>
+                    <td class="border">{entry_time}</td>
+                </tr>
+                """
+
+        # Calculate total
+        total_qty = sum(entry.qty for entry in stock_in_entries)
+        
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                @page {{
+                    size: A4 landscape;
+                    margin: 15mm;
+                }}
+                body {{
+                    font-family: Arial, sans-serif;
+                    font-size: 14px;
+                    margin: 0;
+                    padding: 0;
+                }}
+                h1 {{
+                    text-align: center;
+                    color: #333;
+                    margin: 0 0 10px 0;
+                    font-size: 26px;
+                    font-weight: bold;
+                }}
+                .date-range {{
+                    text-align: center;
+                    margin-bottom: 15px;
+                    color: #666;
+                    font-size: 12px;
+                }}
+                table {{
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin-top: 10px;
+                }}
+                th {{
+                    background-color: #444;
+                    color: white;
+                    border: 2px solid #000;
+                    padding: 12px 10px;
+                    text-align: left;
+                    font-weight: bold;
+                    font-size: 14px;
+                }}
+                td {{
+                    border: 1px solid #000;
+                    padding: 10px;
+                    font-size: 13px;
+                }}
+                .border {{
+                    border: 1px solid #000;
+                }}
+                .text-right {{
+                    text-align: right;
+                }}
+                tr:nth-child(even) {{
+                    background-color: #f5f5f5;
+                }}
+                tr:nth-child(odd) {{
+                    background-color: #fff;
+                }}
+                .footer {{
+                    margin-top: 20px;
+                    text-align: center;
+                    font-size: 12px;
+                    color: #666;
+                }}
+            </style>
+        </head>
+        <body>
+            <h1>Warehouse Stock In Report</h1>
+            <div class="date-range">From: {date_from} | To: {date_to}</div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>S.No</th>
+                        <th>Product Name</th>
+                        <th>Barcode</th>
+                        <th>Article No</th>
+                        <th>Qty In</th>
+                        <th>Price</th>
+                        <th>Cost</th>
+                        <th>Category</th>
+                        <th>Branch</th>
+                        <th>Date</th>
+                        <th>Time</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {product_rows}
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="4" class="border text-right" style="font-weight: bold;">Total:</td>
+                        <td class="border text-right" style="font-weight: bold;">{total_qty}</td>
+                        <td colspan="6"></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </body>
+        </html>
+        """
+    
+    # Generate PDF
+    try:
+        from weasyprint import HTML
+        from io import BytesIO
+
+        pdf_doc = HTML(string=html_content)
+        pdf_bytes = pdf_doc.write_pdf()
+        encoded_pdf = base64.b64encode(pdf_bytes).decode()
+    except ImportError:
+        # Fallback
+        pdf_content = "%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+        pdf_content += "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"
+        pdf_content += "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 792 612] /Contents 4 0 R >>\nendobj\n"
+        pdf_content += "4 0 obj\n<< /Length 100 >>\nstream\n"
+        pdf_content += "BT\n/F1 18 Tf 350 550 Td (Warehouse Stock In Report) Tj ET\n"
         pdf_content += "ET\nendstream\nendobj\n"
         pdf_content += "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n"
         pdf_content += "xref\n0 6\ntrailer\n<< /Size 6 /Root 1 0 R >>\n%%EOF"

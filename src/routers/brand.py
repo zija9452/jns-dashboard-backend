@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, or_, func
 from typing import List, Optional
 from uuid import UUID
 import uuid
@@ -48,11 +48,12 @@ async def create_brand(
 async def get_brands(
     page: int = 1,
     limit: int = 8,
+    search: Optional[str] = None,
     current_user: User = Depends(get_current_user_from_session),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get all brands with pagination
+    Get all brands with pagination and search
     Requires employee role
     Returns: Paginated data + total count for proper frontend pagination
     """
@@ -62,13 +63,18 @@ async def get_brands(
     # Build base query
     base_statement = select(Brand)
 
-    # Get total count
-    count_statement = select(Brand.id)
-    count_result = await db.execute(count_statement)
-    total_count = len(count_result.scalars().all())
+    # Apply search filter (fuzzy match on name)
+    if search:
+        search_pattern = f"%{search}%"
+        base_statement = base_statement.where(Brand.name.ilike(search_pattern))
 
-    # Apply pagination
-    statement = base_statement.offset(skip).limit(limit)
+    # Get total count (efficient using func.count)
+    count_statement = select(func.count()).select_from(base_statement.subquery())
+    count_result = await db.execute(count_statement)
+    total_count = count_result.scalar_one()
+
+    # Apply pagination and sorting
+    statement = base_statement.order_by(Brand.name.asc()).offset(skip).limit(limit)
     result = await db.execute(statement)
     brands = result.scalars().all()
 

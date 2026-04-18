@@ -1,5 +1,7 @@
 from sqlmodel import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
+from fastapi import HTTPException, status
 from typing import List, Optional
 from uuid import UUID
 from ..models.vendor import Vendor, VendorCreate, VendorUpdate
@@ -100,16 +102,26 @@ class VendorService:
         if not db_vendor:
             return False
 
-        await db.delete(db_vendor)
-        await db.commit()
+        try:
+            await db.delete(db_vendor)
+            await db.commit()
 
-        # Log the action
-        await audit_log(
-            db=db,
-            user_id=user_id,
-            entity="Vendor",
-            action="DELETE",
-            changes={"id": str(vendor_id)}
-        )
+            # Log the action
+            await audit_log(
+                db=db,
+                user_id=user_id,
+                entity="Vendor",
+                action="DELETE",
+                changes={"id": str(vendor_id)}
+            )
 
-        return True
+            return True
+        except IntegrityError:
+            await db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot delete vendor because it has associated records (stock entries or invoices). Please delete those first."
+            )
+        except Exception as e:
+            await db.rollback()
+            raise e
