@@ -59,7 +59,7 @@ gcloud builds submit --tag gcr.io/$PROJECT_ID/backend-api:latest
 gcloud run deploy backend-api \
   --image gcr.io/$PROJECT_ID/backend-api:latest \
   --platform managed \
-  --region us-central1 \
+  --region me-central1 \
   --allow-unauthenticated \
   --set-env-vars ENVIRONMENT=production \
   --set-secrets DATABASE_URL=DATABASE_SECRET:latest \
@@ -77,20 +77,20 @@ gcloud run services update backend-api \
   --set-env-vars CLOUDINARY_CLOUD_NAME=your-cloud-name \
   --set-env-vars CLOUDINARY_API_KEY=your-key \
   --set-env-vars REDIS_URL=redis://your-redis:6379 \
-  --region us-central1
+  --region me-central1
 ```
 
 ### **Step 4: Get Service URL**
 ```bash
 gcloud run services describe backend-api \
   --platform managed \
-  --region us-central1 \
+  --region me-central1 \
   --format 'value(status.url)'
 ```
 
 ### **Step 5: View Logs**
 ```bash
-gcloud run logs read backend-api --region us-central1
+gcloud run logs read backend-api --region me-central1
 ```
 
 ---
@@ -132,7 +132,7 @@ REDIS_URL=redis://host:6379/0
 gcloud sql instances create postgres-instance \
   --database-version=POSTGRES_14 \
   --tier=db-f1-micro \
-  --region=us-central1 \
+  --region=me-central1 \
   --root-password=your-root-password
 
 # Create database
@@ -182,7 +182,7 @@ jobs:
         gcloud run deploy backend-api \
           --image gcr.io/${{ secrets.GCP_PROJECT_ID }}/backend-api:latest \
           --platform managed \
-          --region us-central1 \
+          --region me-central1 \
           --allow-unauthenticated
 ```
 
@@ -193,11 +193,11 @@ jobs:
 ### **View Logs:**
 ```bash
 # Cloud Run
-gcloud run logs read backend-api --region us-central1
+gcloud run logs read backend-api --region me-central1
 
 # Filter by severity
 gcloud run logs read backend-api \
-  --region us-central1 \
+  --region me-central1 \
   --filter="severity>=ERROR"
 ```
 
@@ -220,7 +220,7 @@ gcloud monitoring channels create \
 gcloud run services update backend-api \
   --min-instances=1 \
   --max-instances=10 \
-  --region us-central1
+  --region me-central1
 ```
 
 ### **GKE Auto-scaling:**
@@ -253,7 +253,7 @@ kubectl autoscale deployment backend-api \
 ### **Container won't start:**
 ```bash
 # Check logs
-gcloud run logs read backend-api --region us-central1 --limit 50
+gcloud run logs read backend-api --region me-central1 --limit 50
 
 # Test locally
 docker run -p 8000:8000 --env-file .env backend-api:latest
@@ -274,7 +274,7 @@ gcloud sql instances patch postgres-instance \
 # Increase memory
 gcloud run services update backend-api \
   --memory=1Gi \
-  --region us-central1
+  --region me-central1
 ```
 
 ---
@@ -296,14 +296,14 @@ gcloud run deploy backend-api \
 gcloud run services add-iam-policy-binding backend-api \
   --member=user:your-email@example.com \
   --role=roles/run.invoker \
-  --region us-central1
+  --region me-central1
 ```
 
 3. **Set up VPC (for database access):**
 ```bash
 gcloud run services update backend-api \
   --vpc-connector=your-vpc-connector \
-  --region us-central1
+  --region me-central1
 ```
 
 ---
@@ -324,13 +324,13 @@ gcloud builds submit --tag gcr.io/PROJECT_ID/backend-api
 gcloud run deploy backend-api --image gcr.io/PROJECT_ID/backend-api
 
 # View logs
-gcloud run logs read backend-api --region us-central1
+gcloud run logs read backend-api --region me-central1
 
 # Update environment
 gcloud run services update backend-api --set-env-vars KEY=value
 
 # Delete service
-gcloud run services delete backend-api --region us-central1
+gcloud run services delete backend-api --region me-central1
 ```
 
 ---
