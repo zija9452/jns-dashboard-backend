@@ -616,7 +616,6 @@ async def get_customized_sales_summary(
                         continue
                         
         except Exception as e:
-            print(f"Error processing invoice {inv.id} for summary: {e}")
             continue
 
     return {
