@@ -65,10 +65,10 @@ async def cleanup_vendor_payment_history():
                 continue
 
         await conn.close()
-        print(f"\n✅ Cleanup complete! Updated {updated_count} vendors")
+        print(f"\n[SUCCESS] Cleanup complete! Updated {updated_count} vendors")
 
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"[ERROR] Error: {e}")
         raise
 
 if __name__ == "__main__":

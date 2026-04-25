@@ -248,8 +248,8 @@ async def vendor_view_report(
         except:
             contacts_data = {"phone": "", "email": "", "address": ""}
         
-        # For now, balance is 0 (you can implement actual balance calculation later)
-        vendor_balance = 0.0
+        # Use actual vendor balance from database
+        vendor_balance = float(vendor.balance) if hasattr(vendor, 'balance') and vendor.balance else 0.0
         total_balance += vendor_balance
         
         vendor_rows += f"""
@@ -258,7 +258,7 @@ async def vendor_view_report(
             <td class="border">{vendor.name}</td>
             <td class="border">{contacts_data.get('phone', '')}</td>
             <td class="border">{contacts_data.get('address', '')}</td>
-            <td class="border text-right">{vendor_balance:.2f}</td>
+            <td class="border text-right">{vendor_balance:,.2f}</td>
         </tr>
         """
     
@@ -266,7 +266,7 @@ async def vendor_view_report(
     vendor_rows += f"""
         <tr class="total-row">
             <td class="border" colspan="4" style="text-align: right; font-weight: bold;">Total Market Balance:</td>
-            <td class="border text-right" style="font-weight: bold;">{total_balance:.2f}</td>
+            <td class="border text-right" style="font-weight: bold;">{total_balance:,.2f}</td>
         </tr>
     """
     
@@ -401,11 +401,14 @@ async def vendor_view_report(
                 contacts_data = json.loads(vendor.contacts)
             except:
                 pass
-            vendor_text = f"{i+1} | {vendor.name} | {contacts_data.get('phone', '')} | {getattr(vendor, 'branch', '') or 'N/A'} | 0.00"
+            
+            # Use actual vendor balance
+            vendor_balance = float(vendor.balance) if hasattr(vendor, 'balance') and vendor.balance else 0.0
+            vendor_text = f"{i+1} | {vendor.name} | {contacts_data.get('phone', '')} | {getattr(vendor, 'branch', '') or 'N/A'} | {vendor_balance:,.2f}"
             pdf_content += f"BT\n/F1 9 Tf 50 {y_position} Td ({vendor_text}) Tj ET\n"
             y_position -= 18
         
-        pdf_content += f"BT\n/F1 12 Tf 50 {y_position - 30} Td (Total Market Balance: {total_balance:.2f}) Tj ET\n"
+        pdf_content += f"BT\n/F1 12 Tf 50 {y_position - 30} Td (Total Market Balance: {total_balance:,.2f}) Tj ET\n"
         pdf_content += "ET\nendstream\nendobj\n"
         pdf_content += "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n"
         pdf_content += "xref\n0 6\ntrailer\n<< /Size 6 /Root 1 0 R >>\n%%EOF"

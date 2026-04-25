@@ -523,8 +523,9 @@ async def get_customized_invoices(
                 "payment_status": inv.payment_status,  # paid/partial/unpaid
                 "payment_methods_used": methods_in_range,  # Methods used in selected date
                 "quantity": total_quantity,
-                "invoice_created_at": inv.created_at.isoformat() if inv.created_at else None,
+                "created_at": inv.created_at.isoformat() if inv.created_at else None,
                 "payment_time": latest_payment_time,  # Time of payment (e.g., "02:30 PM")
+                "payment_at": payments_in_range[-1]['date'] if payments_in_range else (inv.created_at.isoformat() if inv.created_at else None),
                 "payments_in_range": payments_in_range  # Detailed payment list for reference
             })
             

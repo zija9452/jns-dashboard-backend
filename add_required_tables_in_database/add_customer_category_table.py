@@ -58,7 +58,7 @@ async def create_tables():
 
         await conn.close()
         
-        print("\n✅ Customer Categories table created successfully!")
+        print("\n[SUCCESS] Customer Categories table created successfully!")
         print("\nTable Structure:")
         print("  - id: UUID (primary key)")
         print("  - main_category: Main category name (unique)")
@@ -80,7 +80,7 @@ async def create_tables():
         ''')
 
     except Exception as e:
-        print(f"❌ Error creating tables: {e}")
+        print(f"[ERROR] Error creating tables: {e}")
         raise
 
 if __name__ == "__main__":

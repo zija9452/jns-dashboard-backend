@@ -84,7 +84,7 @@ async def create_user(
         if not role:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Role '{user_create.role_name}' does not exist. Available roles: admin, cashier, employee"
+                detail=f"Role '{user_create.role_name}' does not exist. Available roles: admin, cashier, employee, warehouse"
             )
         role_id_to_use = role.id
     elif user_create.role_id:

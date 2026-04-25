@@ -41,20 +41,25 @@ async def create_default_roles(db_session):
     """
     from sqlmodel import select
 
-    # Check if roles already exist
-    result = await db_session.execute(select(Role))
-    existing_roles = result.scalars().all()
+    # List of default roles to ensure they exist
+    default_roles = [
+        {"name": "admin", "permissions": '{"all": true}'},
+        {"name": "cashier", "permissions": '{"pos": true, "view_inventory": true}'},
+        {"name": "employee", "permissions": '{"view_products": true, "view_customers": true}'},
+        {"name": "warehouse", "permissions": '{"view_products": true, "manage_stock": true}'}
+    ]
 
-    if not existing_roles:
-        # Create default roles
-        admin_role = Role(name="admin", permissions='{"all": true}')
-        cashier_role = Role(name="cashier", permissions='{"pos": true, "view_inventory": true}')
-        employee_role = Role(name="employee", permissions='{"view_products": true, "view_customers": true}')
-
-        db_session.add(admin_role)
-        db_session.add(cashier_role)
-        db_session.add(employee_role)
-        await db_session.commit()
+    for role_data in default_roles:
+        # Check if role exists
+        result = await db_session.execute(select(Role).where(Role.name == role_data["name"]))
+        existing_role = result.scalar_one_or_none()
+        
+        if not existing_role:
+            new_role = Role(name=role_data["name"], permissions=role_data["permissions"])
+            db_session.add(new_role)
+            print(f"Created role: {role_data['name']}")
+    
+    await db_session.commit()
 
 
 async def create_admin_user(db_session):

@@ -11,7 +11,7 @@ class Role(SQLModel, table=True):
     __tablename__ = "roles"
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    name: str = Field(unique=True, max_length=50)  # admin, cashier, employee
+    name: str = Field(unique=True, max_length=50)  # admin, cashier, employee, warehouse
     permissions: str = Field(default="{}")  # JSON string for permissions
     created_at: datetime = Field(default_factory=lambda: datetime.now())
 
