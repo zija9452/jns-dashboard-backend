@@ -233,7 +233,7 @@ async def vendor_view_report(
     from datetime import datetime
     
     # Fetch all vendors
-    vendors = await VendorService.get_vendors(db, skip=0, limit=100)
+    vendors = await VendorService.get_vendors(db, skip=0, limit=10000)
     
     # Calculate total balance
     total_balance = 0.0

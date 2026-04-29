@@ -159,6 +159,24 @@ async def create_customer(
     """
     return await CustomerService.create_customer(db, customer_create, str(current_user.id))
 
+@router.get("/market-balance")
+async def get_market_balance(
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get the total balance due from all customers (Total Market Balance)
+    Calculated in a single efficient query
+    """
+    from ..models.customer_invoice import CustomerInvoice
+    from sqlalchemy import select, func
+    
+    statement = select(func.sum(CustomerInvoice.balance_due))
+    result = await db.execute(statement)
+    total_market_balance = float(result.scalar() or 0.0)
+    
+    return {"total_market_balance": total_market_balance}
+
 @router.get("/{customer_id}", response_model=CustomerRead)
 async def get_customer(
     customer_id: str,
@@ -373,6 +391,7 @@ async def customer_view_report(
     Generate customer view report with proper table format
     Required by JavaScript frontend
     Admin, Cashier, and Employee can access
+    Optimized to fetch all balances in one query
     """
     import base64
     from datetime import datetime
@@ -380,10 +399,19 @@ async def customer_view_report(
     from ..models.customer_invoice import CustomerInvoice
 
     # Fetch all customers
-    customers = await CustomerService.get_customers(db, skip=0, limit=100)
+    customers = await CustomerService.get_customers(db, skip=0, limit=10000)
 
-    # Calculate total balance
-    total_balance = 0.0
+    # Calculate balances efficiently in one query grouped by customer_id
+    balance_stmt = select(
+        CustomerInvoice.customer_id,
+        func.sum(CustomerInvoice.balance_due).label('total_balance')
+    ).group_by(CustomerInvoice.customer_id)
+    
+    balance_result = await db.execute(balance_stmt)
+    balances_map = {row.customer_id: float(row.total_balance or 0.0) for row in balance_result.all()}
+
+    # Calculate overall market balance
+    total_market_balance = sum(balances_map.values())
 
     # Build customer rows for PDF table
     customer_rows = ""
@@ -395,17 +423,8 @@ async def customer_view_report(
         except:
             contacts_data = {"phone": "", "email": "", "address": ""}
 
-        # Calculate balance from customer invoices
-        balance_stmt = select(
-            func.sum(CustomerInvoice.balance_due)
-        ).where(
-            CustomerInvoice.customer_id == customer.id
-        )
-        balance_result = await db.execute(balance_stmt)
-        customer_balance = float(balance_result.scalar_one_or_none() or 0.0)
+        customer_balance = balances_map.get(customer.id, 0.0)
         
-        total_balance += customer_balance
-
         customer_rows += f"""
         <tr>
             <td class="border" style="text-align: center;">{i+1}</td>
@@ -420,7 +439,7 @@ async def customer_view_report(
     customer_rows += f"""
         <tr class="total-row">
             <td class="border" colspan="4" style="text-align: right; font-weight: bold;">Total Market Balance:</td>
-            <td class="border text-right" style="font-weight: bold;">{total_balance:.2f}</td>
+            <td class="border text-right" style="font-weight: bold;">{total_market_balance:.2f}</td>
         </tr>
     """
     

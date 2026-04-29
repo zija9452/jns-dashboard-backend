@@ -256,7 +256,7 @@ async def salesman_view_report(
     from datetime import datetime
     
     # Fetch all salesmen
-    salesmen = await SalesmanService.get_salesmen(db, skip=0, limit=100)
+    salesmen = await SalesmanService.get_salesmen(db, skip=0, limit=10000)
     
     # Build salesman rows for PDF table
     salesman_rows = ""

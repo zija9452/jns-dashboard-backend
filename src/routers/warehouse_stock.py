@@ -21,12 +21,12 @@ router = APIRouter(prefix="/warehouse-stock", tags=["warehouse-stock"])
 
 
 def warehouse_required():
-    """Require warehouse role from session"""
+    """Require warehouse, admin, or employee role from session"""
     async def role_checker(current_user: User = Depends(get_current_user_from_session)):
-        if current_user.role.name not in ["warehouse", "admin"]:
+        if current_user.role.name not in ["warehouse", "admin", "employee"]:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Warehouse or admin access required"
+                detail="Warehouse, admin or employee access required"
             )
         return current_user
     return role_checker
@@ -573,12 +573,20 @@ async def warehouse_requirement_report(
             @page {{
                 size: A4 landscape;
                 margin: 10mm;
+                margin-bottom: 35mm;
             }}
             body {{
                 font-family: Arial, sans-serif;
                 font-size: 11px;
                 margin: 0;
                 padding: 0;
+            }}
+            .signature-section {{
+                position: fixed;
+                bottom: 0;
+                left: 0;
+                right: 0;
+                height: 25mm;
             }}
             h1 {{
                 text-align: center;
@@ -658,6 +666,25 @@ async def warehouse_requirement_report(
         <div class="footer">
             <p>Total Warehouse Products: {len(products)}</p>
         </div>
+
+        <div class="signature-section" style="margin-top: 50px; width: 100%;">
+            <table style="width: 100%; border: none !important;">
+                <tr>
+                    <td style="border: none !important; width: 50%; padding-top: 40px;">
+                        <div style="width: 200px; text-align: center; font-weight: bold; font-size: 12px;">
+                            <div style="border-top: 1px solid black; margin-bottom: 5px;"></div>
+                            Prepared By
+                        </div>
+                    </td>
+                    <td style="border: none !important; width: 50%; padding-top: 40px;">
+                        <div style="width: 200px; margin-left: auto; text-align: center; font-weight: bold; font-size: 12px;">
+                            <div style="border-top: 1px solid black; margin-bottom: 5px;"></div>
+                            Approved By
+                        </div>
+                    </td>
+                </tr>
+            </table>
+        </div>
     </body>
     </html>
     """
@@ -730,12 +757,20 @@ async def shop_requirement_report(
             @page {{
                 size: A4 portrait;
                 margin: 15mm;
+                margin-bottom: 40mm;
             }}
             body {{
                 font-family: Arial, sans-serif;
                 font-size: 12px;
                 margin: 0;
                 padding: 0;
+            }}
+            .signature-section {{
+                position: fixed;
+                bottom: 0;
+                left: 0;
+                right: 0;
+                height: 30mm;
             }}
             h1 {{
                 text-align: center;
@@ -810,6 +845,25 @@ async def shop_requirement_report(
         </table>
         <div class="footer">
             <p>Total Products: {len(products)}</p>
+        </div>
+        
+        <div class="signature-section" style="margin-top: 50px; width: 100%;">
+            <table style="width: 100%; border: none !important;">
+                <tr>
+                    <td style="border: none !important; width: 50%; padding-top: 40px;">
+                        <div style="width: 200px; text-align: center; font-weight: bold; font-size: 12px;">
+                            <div style="border-top: 1px solid black; margin-bottom: 5px;"></div>
+                            Issued By
+                        </div>
+                    </td>
+                    <td style="border: none !important; width: 50%; padding-top: 40px;">
+                        <div style="width: 200px; margin-left: auto; text-align: center; font-weight: bold; font-size: 12px;">
+                            <div style="border-top: 1px solid black; margin-bottom: 5px;"></div>
+                            Received By
+                        </div>
+                    </td>
+                </tr>
+            </table>
         </div>
     </body>
     </html>

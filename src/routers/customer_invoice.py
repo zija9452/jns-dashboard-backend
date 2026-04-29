@@ -1025,18 +1025,22 @@ async def get_order(
 @router.get("/viewcustomerorder")
 async def view_customer_order(
     searchString: str = None,
+    customer_id: str = None,
     order_status: str = None,
+    payment_status: str = None,
+    include_stats: bool = Query(False),
     skip: int = 0,
     limit: int = 100,
     current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
-    View customer orders (customer invoices) with optional search and status filtering
+    View customer orders (customer invoices) with optional search, customer, status, and payment filtering
     Required by JavaScript frontend
     """
     from ..models.customer_invoice import CustomerInvoice
-    from sqlalchemy import select, func
+    from sqlalchemy import select, func, or_
+    from uuid import UUID
     import json
 
     # Validate pagination parameters
@@ -1044,35 +1048,55 @@ async def view_customer_order(
         skip = 0
     if limit <= 0:
         limit = 100
-    elif limit > 200:  # Set maximum limit for security
-        limit = 200
+    elif limit > 10000:  # Allow larger limit for payment page
+        limit = 10000
 
-    # Build query with filters - now using CustomerInvoice instead of CustomOrder
+    # Build query with filters
     count_statement = select(func.count()).select_from(CustomerInvoice)
+    
+    # Base filters
+    filters = []
 
-    # Apply search filter if provided - searching in invoice_no, customer_name, team_name, and items JSON
+    # Apply customer filter
+    if customer_id:
+        try:
+            customer_uuid = UUID(customer_id)
+            filters.append(CustomerInvoice.customer_id == customer_uuid)
+        except ValueError:
+            pass
+
+    # Apply search filter
     if searchString:
-        # Use parameterized queries to prevent SQL injection - sanitize input
         sanitized_search = searchString.replace('%', '\\%').replace('_', '\\_')
-        # Search across multiple fields: invoice_no, customer_name, team_name, and items
-        count_statement = count_statement.where(
-            (CustomerInvoice.invoice_no.ilike(f"%{sanitized_search}%")) |
-            (CustomerInvoice.customer_name.ilike(f"%{sanitized_search}%")) |
-            (CustomerInvoice.team_name.ilike(f"%{sanitized_search}%")) |
-            (CustomerInvoice.items.ilike(f"%{sanitized_search}%"))
+        filters.append(
+            or_(
+                CustomerInvoice.invoice_no.ilike(f"%{sanitized_search}%"),
+                CustomerInvoice.customer_name.ilike(f"%{sanitized_search}%"),
+                CustomerInvoice.team_name.ilike(f"%{sanitized_search}%"),
+                CustomerInvoice.items.ilike(f"%{sanitized_search}%")
+            )
         )
 
-    # Apply status filter if provided - using the status field from CustomerInvoice
+    # Apply order status filter
     if order_status:
         from ..models.customer_invoice import CustomerInvoiceStatus
         try:
             status_enum = CustomerInvoiceStatus(order_status.upper())
-            count_statement = count_statement.where(CustomerInvoice.status == status_enum)
+            filters.append(CustomerInvoice.status == status_enum)
         except ValueError:
-            raise HTTPException(
-                status_code=http_status.HTTP_400_BAD_REQUEST,
-                detail="Invalid status value"
-            )
+            pass
+
+    # Apply payment status filter
+    if payment_status:
+        # Support comma separated values like "unpaid,partial"
+        statuses = [s.strip().lower() for s in payment_status.split(',')]
+        if len(statuses) == 1:
+            filters.append(CustomerInvoice.payment_status == statuses[0])
+        else:
+            filters.append(CustomerInvoice.payment_status.in_(statuses))
+
+    if filters:
+        count_statement = count_statement.where(*filters)
 
     # Get total count
     total_count_result = await db.execute(count_statement)
@@ -1080,36 +1104,17 @@ async def view_customer_order(
 
     # Build query for fetching data
     statement = select(CustomerInvoice)
+    if filters:
+        statement = statement.where(*filters)
 
-    # Apply same filters as count query - search across multiple fields
-    if searchString:
-        sanitized_search = searchString.replace('%', '\\%').replace('_', '\\_')
-        # Search across multiple fields: invoice_no, customer_name, team_name, and items
-        statement = statement.where(
-            (CustomerInvoice.invoice_no.ilike(f"%{sanitized_search}%")) |
-            (CustomerInvoice.customer_name.ilike(f"%{sanitized_search}%")) |
-            (CustomerInvoice.team_name.ilike(f"%{sanitized_search}%")) |
-            (CustomerInvoice.items.ilike(f"%{sanitized_search}%"))
-        )
-
-    if order_status:
-        try:
-            status_enum = CustomerInvoiceStatus(order_status.upper())
-            statement = statement.where(CustomerInvoice.status == status_enum)
-        except ValueError:
-            raise HTTPException(
-                status_code=http_status.HTTP_400_BAD_REQUEST,
-                detail="Invalid status value"
-            )
-
-    # Apply pagination with ordering - newest first
+    # Apply pagination with ordering
     statement = statement.order_by(CustomerInvoice.created_at.desc()).offset(skip).limit(limit)
 
     result = await db.execute(statement)
     invoices = result.scalars().all()
 
-    # Format the response to match expected frontend structure with required fields
-    result = []
+    # Format the response
+    formatted_data = []
     for invoice in invoices:
         items_data = []
         try:
@@ -1117,92 +1122,153 @@ async def view_customer_order(
         except (json.JSONDecodeError, TypeError):
             items_data = []
 
-        # Calculate total quantity across all items
-        total_quantity = 0
-        for item in items_data:
-            quantity = item.get('quantity', 0)
-            total_quantity += int(quantity) if quantity else 0
+        total_quantity = sum(int(item.get('quantity', 0) or 0) for item in items_data)
 
-        # Extract the first item's product name as the order name for simplicity
-        order_name = ""
-        if items_data and len(items_data) > 0:
-            first_item = items_data[0]
-            order_name = first_item.get('product_name', first_item.get('pro_name', ''))
-
-        # Get customer name associated with this invoice
-        customer_name = getattr(invoice, 'customer_name', 'Unknown Customer')
-        if not customer_name:
-            # If customer name is not directly in the invoice, we can get it from the customer table
-            from sqlalchemy import select
-            from ..models.customer import Customer
-            customer_stmt = select(Customer).where(Customer.id == invoice.customer_id)
-            customer_result = await db.execute(customer_stmt)
-            customer = customer_result.scalar_one_or_none()
-            customer_name = customer.name if customer else 'Unknown Customer'
-
-        # Get team name associated with this invoice
-        team_name = getattr(invoice, 'team_name', 'No Team')
-
-        result.append({
+        formatted_data.append({
             "orderid": str(invoice.id),
             "invoice_no": invoice.invoice_no,
             "status": invoice.status.value if hasattr(invoice.status, 'value') else invoice.status,
-            "customer": customer_name,
-            "teamname": team_name,
+            "customer": invoice.customer_name or "Unknown",
+            "teamname": invoice.team_name or "No Team",
             "quantity": total_quantity,
             "total_amount": float(invoice.total_amount) if invoice.total_amount else 0.0,
-            "date": invoice.created_at.isoformat().split('T')[0] if invoice.created_at else None,  # Date only (YYYY-MM-DD)
-            "fields": {
-                "order_name": order_name,
-                "items": items_data,
-                "total_amount": float(invoice.total_amount) if invoice.total_amount else 0.0  # Use actual field instead of parsed JSON
-            },
-            "created_at": invoice.created_at.isoformat() if invoice.created_at else None,
-            "updated_at": invoice.updated_at.isoformat() if invoice.updated_at else None
+            "amount_paid": float(invoice.amount_paid) if invoice.amount_paid else 0.0,
+            "balance_due": float(invoice.balance_due) if invoice.balance_due else 0.0,
+            "payment_status": invoice.payment_status,
+            "date": invoice.created_at.isoformat().split('T')[0] if invoice.created_at else None,
+            "created_at": invoice.created_at.isoformat() if invoice.created_at else None
         })
 
-    # Calculate total pages (ceiling division)
+    # Calculate total pages
     total_pages = (total_count + limit - 1) // limit if limit > 0 else 0
     current_page = (skip // limit) + 1 if limit > 0 else 1
 
-    # Get pending orders stats (count and total quantity)
-    from ..models.customer_invoice import CustomerInvoiceStatus
-    pending_count_stmt = select(func.count()).select_from(CustomerInvoice).where(
-        CustomerInvoice.status == CustomerInvoiceStatus.PENDING
-    )
-    pending_count_result = await db.execute(pending_count_stmt)
-    pending_count = pending_count_result.scalar() or 0
-
-    # Get total quantity for all pending orders
-    pending_invoices_stmt = select(CustomerInvoice.items).where(
-        CustomerInvoice.status == CustomerInvoiceStatus.PENDING
-    )
-    pending_invoices_result = await db.execute(pending_invoices_stmt)
-    pending_items_list = pending_invoices_result.scalars().all()
+    # Optional heavy stats calculation - Only perform if include_stats is True
+    pending_stats = {"pending_invoices_count": 0, "total_pending_quantity": 0}
     
-    total_pending_quantity = 0
-    for items_json in pending_items_list:
-        if items_json:
-            try:
-                items_data = json.loads(items_json)
-                for item in items_data:
-                    qty = item.get('quantity', 0)
-                    total_pending_quantity += int(qty) if qty else 0
-            except (json.JSONDecodeError, TypeError):
-                pass
+    if include_stats:
+        # Get pending orders count
+        from ..models.customer_invoice import CustomerInvoiceStatus
+        pending_count_stmt = select(func.count()).select_from(CustomerInvoice).where(
+            CustomerInvoice.status == CustomerInvoiceStatus.PENDING
+        )
+        pending_count_result = await db.execute(pending_count_stmt)
+        pending_count = pending_count_result.scalar() or 0
+
+        # Get total quantity for all pending orders
+        pending_invoices_stmt = select(CustomerInvoice.items).where(
+            CustomerInvoice.status == CustomerInvoiceStatus.PENDING
+        )
+        pending_invoices_result = await db.execute(pending_invoices_stmt)
+        pending_items_list = pending_invoices_result.scalars().all()
+        
+        total_pending_quantity = 0
+        for items_json in pending_items_list:
+            if items_json:
+                try:
+                    items_data = json.loads(items_json)
+                    for item in items_data:
+                        qty = item.get('quantity', 0)
+                        total_pending_quantity += int(qty) if qty else 0
+                except (json.JSONDecodeError, TypeError):
+                    pass
+        
+        pending_stats = {
+            "pending_invoices_count": pending_count,
+            "total_pending_quantity": total_pending_quantity
+        }
 
     return {
-        "data": result,
+        "data": formatted_data,
         "page": current_page,
         "limit": limit,
         "total": total_count,
         "total_pages": total_pages,
         "has_more": current_page < total_pages,
-        "pending_stats": {
-            "pending_invoices_count": pending_count,
-            "total_pending_quantity": total_pending_quantity
-        }
+        "pending_stats": pending_stats
     }
+
+
+@router.get("/Getorder/{id}")
+async def get_order(
+    id: str,
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get order details by ID
+    Required by JavaScript frontend
+    """
+    from ..models.customer_invoice import CustomerInvoice
+    from sqlalchemy import select
+    from uuid import UUID
+    import json
+
+    try:
+        order_uuid = UUID(id)
+    except ValueError:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail="Invalid order ID format"
+        )
+
+    statement = select(CustomerInvoice).where(CustomerInvoice.id == order_uuid)
+    result = await db.execute(statement)
+    invoice_record = result.scalar_one_or_none()
+
+    if not invoice_record:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail="Order not found"
+        )
+
+    # Prepare order details
+    items_data = []
+    try:
+        items_data = json.loads(invoice_record.items)
+    except (json.JSONDecodeError, TypeError):
+        items_data = []
+
+    totals_data = {}
+    try:
+        totals_data = json.loads(invoice_record.totals)
+    except (json.JSONDecodeError, TypeError):
+        totals_data = {}
+
+    # Total quantity
+    total_quantity = sum(int(item.get('quantity', 0) or 0) for item in items_data)
+
+    # Get customer name
+    customer_name = invoice_record.customer_name or "Unknown"
+
+    # Map to the expected frontend fields
+    order_data = {
+        "orderid": str(invoice_record.id),
+        "invoice_no": invoice_record.invoice_no,
+        "status": invoice_record.status.value if hasattr(invoice_record.status, 'value') else invoice_record.status,
+        "customer": customer_name,
+        "teamname": invoice_record.team_name or "No Team",
+        "quantity": total_quantity,
+        "total_amount": float(invoice_record.total_amount) if invoice_record.total_amount else 0.0,
+        "date": invoice_record.created_at.isoformat().split('T')[0] if invoice_record.created_at else None,
+        "fields": {
+            "order_name": items_data[0].get('product_name', '') if items_data else '',
+            "items": items_data,
+            "totals": {
+                "subtotal": totals_data.get('subtotal', 0.0),
+                "tax": totals_data.get('tax', 0.0),
+                "discount": totals_data.get('discount', 0.0),
+                "total": float(invoice_record.total_amount) if invoice_record.total_amount else 0.0,
+                "amount_paid": float(invoice_record.amount_paid) if invoice_record.amount_paid else 0.0,
+                "balance_due": float(invoice_record.balance_due) if invoice_record.balance_due else 0.0,
+                "payment_status": invoice_record.payment_status
+            }
+        },
+        "created_at": invoice_record.created_at.isoformat() if invoice_record.created_at else None,
+        "updated_at": invoice_record.updated_at.isoformat() if invoice_record.updated_at else None
+    }
+
+    return order_data
 
 
 @router.get("/customerorderreport")
