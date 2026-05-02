@@ -176,7 +176,9 @@ async def get_product_details(
         "limitedquan": product.limited_qty,
         "branch": product.branch or "",
         "brand": product.brand_action or "",
-        "pro_image": product.attributes or ""
+        "pro_image": product.attributes or "",
+        "article_no": product.article_no or '',
+        "warehouse_limited_qty": product.warehouse_limited_qty
     }
 
     return product_data
