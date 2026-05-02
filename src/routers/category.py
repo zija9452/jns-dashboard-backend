@@ -50,6 +50,43 @@ async def create_category(
     return db_category
 
 
+@router.post("/bulk", response_model=List[CategoryRead])
+async def create_categories_bulk(
+    categories: List[CategoryCreate],
+    current_user: User = Depends(get_current_user_from_session),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Add multiple categories at once
+    Requires employee role
+    """
+    db_categories = []
+    for cat in categories:
+        # Check if category with same name and branch already exists
+        result = await db.execute(
+            select(Category).where(
+                Category.name == cat.name,
+                Category.branch == cat.branch
+            )
+        )
+        existing = result.scalar_one_or_none()
+        
+        if not existing:
+            db_cat = Category(
+                name=cat.name,
+                branch=cat.branch
+            )
+            db.add(db_cat)
+            db_categories.append(db_cat)
+    
+    if db_categories:
+        await db.commit()
+        for cat in db_categories:
+            await db.refresh(cat)
+    
+    return db_categories
+
+
 @router.get("/")
 async def get_categories(
     page: int = 1,

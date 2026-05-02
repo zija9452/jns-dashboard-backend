@@ -117,6 +117,92 @@ class ProductService:
         return db_product
 
     @staticmethod
+    async def bulk_create_products(db: AsyncSession, products_create: List[ProductCreate], user_id: str = "") -> List[Product]:
+        """
+        Create multiple products in a batch
+        """
+        # Collect all SKUs, names, and barcodes to check against DB in bulk
+        skus = [p.sku for p in products_create]
+        names = [p.name for p in products_create]
+        barcodes = [p.barcode for p in products_create if p.barcode]
+
+        # Check for duplicates in the batch itself
+        if len(skus) != len(set(skus)):
+            raise Exception("Duplicate SKUs found in the input list")
+        if len(names) != len(set(names)):
+            raise Exception("Duplicate product names found in the input list")
+        if len(barcodes) != len(set(barcodes)):
+            raise Exception("Duplicate barcodes found in the input list")
+
+        # Check for existing SKUs in DB
+        sku_stmt = select(Product).where(Product.sku.in_(skus))
+        sku_result = await db.execute(sku_stmt)
+        existing_skus = sku_result.scalars().all()
+        if existing_skus:
+            sku_list = ", ".join([p.sku for p in existing_skus])
+            raise Exception(f"Existing SKUs found in DB: {sku_list}")
+
+        # Check for existing Names in DB
+        name_stmt = select(Product).where(Product.name.in_(names))
+        name_result = await db.execute(name_stmt)
+        existing_names = name_result.scalars().all()
+        if existing_names:
+            name_list = ", ".join([p.name for p in existing_names])
+            raise Exception(f"Existing product names found in DB: {name_list}")
+
+        # Check for existing Barcodes in DB
+        if barcodes:
+            barcode_stmt = select(Product).where(Product.barcode.in_(barcodes))
+            barcode_result = await db.execute(barcode_stmt)
+            existing_barcodes = barcode_result.scalars().all()
+            if existing_barcodes:
+                barcode_list = ", ".join([p.barcode for p in existing_barcodes])
+                raise Exception(f"Existing barcodes found in DB: {barcode_list}")
+
+        db_products = []
+        for p in products_create:
+            db_product = Product(
+                sku=p.sku,
+                name=p.name,
+                unit_price=p.unit_price,
+                cost_price=p.cost_price,
+                stock_level=p.stock_level,
+                attributes=p.attributes,
+                barcode=p.barcode,
+                discount=p.discount,
+                category=p.category,
+                branch=p.branch,
+                limited_qty=p.limited_qty,
+                brand_action=p.brand_action,
+                is_warehouse_product=p.is_warehouse_product,
+                article_no=p.article_no,
+                warehouse_stock=p.warehouse_stock,
+                warehouse_limited_qty=p.warehouse_limited_qty
+            )
+            db.add(db_product)
+            db_products.append(db_product)
+
+        await db.commit()
+        
+        # Refresh all products to get their IDs
+        for p in db_products:
+            await db.refresh(p)
+
+        # Log the action (bulk summary)
+        await audit_log(
+            db=db,
+            user_id=user_id,
+            entity="Product",
+            action="BULK_CREATE",
+            changes={
+                "count": len(products_create),
+                "skus": skus[:10]  # Log first 10 SKUs for brevity
+            }
+        )
+
+        return db_products
+
+    @staticmethod
     async def get_product(db: AsyncSession, product_id: UUID) -> Optional[Product]:
         """
         Get a product by ID

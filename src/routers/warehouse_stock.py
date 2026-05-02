@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional
+from typing import Optional, List
 from uuid import UUID
 from pydantic import BaseModel
 from datetime import datetime
@@ -533,7 +533,7 @@ async def warehouse_requirement_report(
 
     # Generate HTML content for PDF
     current_date = datetime.now().strftime('%d-%m-%Y')
-    
+
     # Build product rows for PDF table
     product_rows = ""
     row_count = 0
@@ -546,7 +546,7 @@ async def warehouse_requirement_report(
         # Skip products that don't need restocking
         if required_stock <= 0:
             continue
-            
+
         row_count += 1
         product_rows += f"""
         <tr>
@@ -573,7 +573,7 @@ async def warehouse_requirement_report(
             @page {{
                 size: A4 landscape;
                 margin: 10mm;
-                margin-bottom: 35mm;
+                margin-bottom: 20mm;
             }}
             body {{
                 font-family: Arial, sans-serif;
@@ -582,11 +582,9 @@ async def warehouse_requirement_report(
                 padding: 0;
             }}
             .signature-section {{
-                position: fixed;
-                bottom: 0;
-                left: 0;
-                right: 0;
-                height: 25mm;
+                margin-top: 50px;
+                width: 100%;
+                page-break-inside: avoid;
             }}
             h1 {{
                 text-align: center;
@@ -606,6 +604,9 @@ async def warehouse_requirement_report(
                 border-collapse: collapse;
                 margin-top: 5px;
             }}
+            tr {{
+                page-break-inside: avoid;
+            }}
             th {{
                 background-color: #444;
                 color: white;
@@ -617,7 +618,7 @@ async def warehouse_requirement_report(
             }}
             td {{
                 border: 1px solid #000;
-                padding: 6px 5px;
+                padding: 3px 5px;
                 font-size: 10px;
             }}
             .border {{
@@ -667,16 +668,16 @@ async def warehouse_requirement_report(
             <p>Total Warehouse Products: {len(products)}</p>
         </div>
 
-        <div class="signature-section" style="margin-top: 50px; width: 100%;">
+        <div class="signature-section">
             <table style="width: 100%; border: none !important;">
                 <tr>
-                    <td style="border: none !important; width: 50%; padding-top: 40px;">
+                    <td style="border: none !important; width: 50%; padding-top: 50px;">
                         <div style="width: 200px; text-align: center; font-weight: bold; font-size: 12px;">
                             <div style="border-top: 1px solid black; margin-bottom: 5px;"></div>
                             Prepared By
                         </div>
                     </td>
-                    <td style="border: none !important; width: 50%; padding-top: 40px;">
+                    <td style="border: none !important; width: 50%; padding-top: 50px;">
                         <div style="width: 200px; margin-left: auto; text-align: center; font-weight: bold; font-size: 12px;">
                             <div style="border-top: 1px solid black; margin-bottom: 5px;"></div>
                             Approved By
@@ -721,7 +722,7 @@ async def shop_requirement_report(
 
     # Generate HTML content for PDF
     current_date = datetime.now().strftime('%d-%m-%Y')
-    
+
     # Build product rows for PDF table
     product_rows = ""
     row_count = 0
@@ -734,7 +735,7 @@ async def shop_requirement_report(
         # Skip products that don't need restocking
         if required_stock <= 0:
             continue
-            
+
         row_count += 1
         product_rows += f"""
         <tr>
@@ -757,7 +758,7 @@ async def shop_requirement_report(
             @page {{
                 size: A4 portrait;
                 margin: 15mm;
-                margin-bottom: 40mm;
+                margin-bottom: 20mm;
             }}
             body {{
                 font-family: Arial, sans-serif;
@@ -766,11 +767,9 @@ async def shop_requirement_report(
                 padding: 0;
             }}
             .signature-section {{
-                position: fixed;
-                bottom: 0;
-                left: 0;
-                right: 0;
-                height: 30mm;
+                margin-top: 50px;
+                width: 100%;
+                page-break-inside: avoid;
             }}
             h1 {{
                 text-align: center;
@@ -790,6 +789,9 @@ async def shop_requirement_report(
                 border-collapse: collapse;
                 margin-top: 10px;
             }}
+            tr {{
+                page-break-inside: avoid;
+            }}
             th {{
                 background-color: #444;
                 color: white;
@@ -801,7 +803,7 @@ async def shop_requirement_report(
             }}
             td {{
                 border: 1px solid #000;
-                padding: 8px 8px;
+                padding: 4px 6px;
                 font-size: 11px;
             }}
             .border {{
@@ -846,17 +848,17 @@ async def shop_requirement_report(
         <div class="footer">
             <p>Total Products: {len(products)}</p>
         </div>
-        
-        <div class="signature-section" style="margin-top: 50px; width: 100%;">
+
+        <div class="signature-section">
             <table style="width: 100%; border: none !important;">
                 <tr>
-                    <td style="border: none !important; width: 50%; padding-top: 40px;">
+                    <td style="border: none !important; width: 50%; padding-top: 50px;">
                         <div style="width: 200px; text-align: center; font-weight: bold; font-size: 12px;">
                             <div style="border-top: 1px solid black; margin-bottom: 5px;"></div>
                             Issued By
                         </div>
                     </td>
-                    <td style="border: none !important; width: 50%; padding-top: 40px;">
+                    <td style="border: none !important; width: 50%; padding-top: 50px;">
                         <div style="width: 200px; margin-left: auto; text-align: center; font-weight: bold; font-size: 12px;">
                             <div style="border-top: 1px solid black; margin-bottom: 5px;"></div>
                             Received By

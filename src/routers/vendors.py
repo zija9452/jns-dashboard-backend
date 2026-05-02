@@ -40,6 +40,45 @@ async def create_vendor(
     """
     return await VendorService.create_vendor(db, vendor_create, str(current_user.id))
 
+@router.post("/bulk", response_model=List[VendorRead])
+async def create_vendors_bulk(
+    vendors: List[VendorCreate],
+    current_user: User = Depends(get_current_user_from_session),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Add multiple vendors at once
+    Requires employee role
+    """
+    db_vendors = []
+    for ven in vendors:
+        # Check if vendor with same name and branch already exists
+        result = await db.execute(
+            select(Vendor).where(
+                Vendor.name == ven.name,
+                Vendor.branch == ven.branch
+            )
+        )
+        existing = result.scalar_one_or_none()
+        
+        if not existing:
+            db_ven = Vendor(
+                name=ven.name,
+                contacts=ven.contacts,
+                branch=ven.branch,
+                terms=ven.terms,
+                balance=ven.balance
+            )
+            db.add(db_ven)
+            db_vendors.append(db_ven)
+    
+    if db_vendors:
+        await db.commit()
+        for ven in db_vendors:
+            await db.refresh(ven)
+    
+    return db_vendors
+
 # Endpoints required by the JavaScript frontend (MUST be before dynamic routes)
 
 @router.get("/viewvendor")

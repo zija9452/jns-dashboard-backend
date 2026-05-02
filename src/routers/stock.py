@@ -48,6 +48,8 @@ async def view_stock(
     Access: Admin, Cashier, Employee
     Returns: Paginated data + total count for proper frontend pagination
     """
+    from sqlalchemy import func
+    
     # Calculate skip from page
     skip = (page - 1) * limit
 
@@ -62,13 +64,13 @@ async def view_stock(
         Product.stock_level,
         Product.branch,
         Product.brand_action
-    ).where(Product.stock_level > 0)  # Only products with stock
+    ).where(Product.stock_level > 0)
 
-    # Apply branch filter at database level
+    # Apply branch filter
     if branches:
         base_statement = base_statement.where(Product.branch == branches)
 
-    # Apply search filter at database level (case-insensitive)
+    # Apply search filter
     if search_string and search_string.strip():
         search_pattern = f"%{search_string.strip()}%"
         base_statement = base_statement.where(
@@ -79,8 +81,8 @@ async def view_stock(
             )
         )
 
-    # Get total count - only products with stock
-    count_statement = select(Product.id).where(Product.stock_level > 0)
+    # Get total count
+    count_statement = select(func.count(Product.id)).where(Product.stock_level > 0)
     if branches:
         count_statement = count_statement.where(Product.branch == branches)
     if search_string and search_string.strip():
@@ -94,54 +96,64 @@ async def view_stock(
         )
 
     count_result = await db.execute(count_statement)
-    total_count = len(count_result.scalars().all())
+    total_count = count_result.scalar() or 0
 
-    # Apply pagination at database level
-    statement = base_statement.offset(skip).limit(limit)
+    # Apply pagination and sorting
+    statement = base_statement.order_by(Product.name).offset(skip).limit(limit)
 
     # Execute query
     result = await db.execute(statement)
     products = result.fetchall()
 
-    # Format response with vendor names from latest stock entry
+    if not products:
+        return {
+            'data': [],
+            'page': page,
+            'limit': limit,
+            'total': total_count,
+            'total_pages': 0,
+            'has_more': False
+        }
+
+    # Targeted Vendor Fetch: Get latest vendor for ONLY these products
+    product_ids = [p[0] for p in products]
+    
+    # Efficiently get the latest vendor for each product in the current page
+    # Using a subquery limited to these product IDs
+    vendor_query = select(
+        StockEntry.product_id,
+        Vendor.name
+    ).join(Vendor, StockEntry.vendor_id == Vendor.id).where(
+        StockEntry.product_id.in_(product_ids)
+    ).order_by(StockEntry.product_id, StockEntry.created_at.desc()).distinct(StockEntry.product_id)
+    
+    vendor_result = await db.execute(vendor_query)
+    vendor_map = {row[0]: row[1] for row in vendor_result.fetchall()}
+
     result_list = []
     for p in products:
-        product_id = p[0]
-        
-        # Get latest vendor from stock entries (the one that actually has a vendor_id)
-        vendor_name = ""
-        latest_entry_query = select(StockEntry.vendor_id).where(
-            StockEntry.product_id == product_id,
-            StockEntry.vendor_id != None
-        ).order_by(StockEntry.created_at.desc()).limit(1)
-        
-        latest_entry_result = await db.execute(latest_entry_query)
-        latest_vendor_id = latest_entry_result.scalar_one_or_none()
-        
-        if latest_vendor_id:
-            vendor = await db.get(Vendor, latest_vendor_id)
-            if vendor:
-                vendor_name = vendor.name
+        p_id = p[0]
+        cost = float(p[3]) if p[3] else 0.0
+        price = float(p[2]) if p[2] else 0.0
+        margin = round(((price - cost) / cost * 100) if cost != 0 else 0.0, 2)
         
         result_list.append({
-            "pro_id": str(product_id),
-            "vendor_name": vendor_name,
+            "pro_id": str(p_id),
+            "vendor_name": vendor_map.get(p_id, ""),
             "product_name": p[1],
             "category": p[5] or "",
             "stock": p[6],
-            "price": float(p[2]) if p[2] else 0.0,
-            "cost": float(p[3]) if p[3] else 0.0,
+            "price": price,
+            "cost": cost,
             "barcode": p[4] or "",
-            "margin": round(((float(p[2]) - float(p[3])) / float(p[3]) * 100) if p[3] else 0.0, 2),
+            "margin": margin,
             "brand": p[8] or "",
             "branch": p[7] or ""
         })
 
-    # Calculate total pages
-    total_pages = (total_count + limit - 1) // limit  # Ceiling division
+    total_pages = (total_count + limit - 1) // limit if limit > 0 else 1
 
-    # Prepare response with pagination info
-    response_data = {
+    return {
         'data': result_list,
         'page': page,
         'limit': limit,
@@ -149,8 +161,6 @@ async def view_stock(
         'total_pages': total_pages,
         'has_more': page < total_pages
     }
-
-    return response_data
 
 
 @router.get("/searchstock")
@@ -606,27 +616,31 @@ async def stock_report(
     current_date = datetime.now().strftime('%d-%m-%Y')
     
     # Build product rows for PDF table
-    product_rows = ""
+    product_rows_list = []
     for i, product in enumerate(products):
         margin = 0.0
-        if product.unit_price and product.cost_price and float(product.unit_price) != 0:
+        cost = float(product.cost_price) if product.cost_price else 0.0
+        price = float(product.unit_price) if product.unit_price else 0.0
+        if price != 0:
             # Calculate Margin % (Profit / Selling Price × 100)
-            margin = ((float(product.unit_price) - float(product.cost_price)) / float(product.unit_price)) * 100
+            margin = ((price - cost) / price) * 100
 
-        product_rows += f"""
+        product_rows_list.append(f"""
         <tr>
             <td class="border" style="text-align: center;">{i+1}</td>
             <td class="border">{product.name}</td>
             <td class="border">{product.category or '-'}</td>
             <td class="border" style="text-align: right;">{product.stock_level}</td>
-            <td class="border" style="text-align: right;">{float(product.unit_price) if product.unit_price else 0.0:.2f}</td>
-            <td class="border" style="text-align: right;">{float(product.cost_price) if product.cost_price else 0.0:.2f}</td>
+            <td class="border" style="text-align: right;">{price:.2f}</td>
+            <td class="border" style="text-align: right;">{cost:.2f}</td>
             <td class="border" style="text-align: right;">{margin:.1f}%</td>
             <td class="border">{product.barcode or '-'}</td>
             <td class="border">{product.brand_action or '-'}</td>
             <td class="border">{product.branch or '-'}</td>
         </tr>
-        """
+        """)
+    
+    product_rows = "".join(product_rows_list)
 
     html_content = f"""
     <!DOCTYPE html>
@@ -725,13 +739,16 @@ async def stock_report(
     </html>
     """
 
-    # Generate PDF using weasyprint
+    # Generate PDF using weasyprint in a separate thread to avoid blocking
     try:
         from weasyprint import HTML
-        from io import BytesIO
+        import asyncio
 
-        pdf_doc = HTML(string=html_content)
-        pdf_bytes = pdf_doc.write_pdf()
+        def generate_pdf(html):
+            return HTML(string=html).write_pdf()
+
+        # Run in a separate thread
+        pdf_bytes = await asyncio.to_thread(generate_pdf, html_content)
         encoded_pdf = base64.b64encode(pdf_bytes).decode()
 
     except ImportError:
@@ -778,11 +795,10 @@ async def stock_in_report(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
     
-    # Query ALL stock entries with type=IN within date range (not grouped)
-    from sqlalchemy import func
-
+    # Query ALL stock entries with type=IN within date range joined with Product
     statement = (
-        select(StockEntry)
+        select(StockEntry, Product)
+        .join(Product, StockEntry.product_id == Product.id)
         .where(StockEntry.type == StockEntryType.IN)
         .where(StockEntry.location == "Stock In")
         .where(StockEntry.created_at >= from_date)
@@ -791,9 +807,10 @@ async def stock_in_report(
     )
 
     result = await db.execute(statement)
-    stock_in_entries = result.scalars().all()
+    results = result.all()
 
-    if not stock_in_entries:
+    if not results:
+        # ... (no changes to empty case)
         # Return empty report
         html_content = f"""
         <!DOCTYPE html>
@@ -817,31 +834,31 @@ async def stock_in_report(
         """
     else:
         # Build product rows with individual stock-in entries (with date & time at end)
-        product_rows = ""
-        for i, entry in enumerate(stock_in_entries):
-            product = await db.get(Product, entry.product_id)
-            if product:
-                # Format date and time
-                entry_date = entry.created_at.strftime("%d-%m-%Y")
-                entry_time = entry.created_at.strftime("%I:%M %p")
-                
-                product_rows += f"""
-                <tr>
-                    <td class="border" style="text-align: center;">{i+1}</td>
-                    <td class="border">{product.name}</td>
-                    <td class="border">{product.barcode or '-'}</td>
-                    <td class="border text-right">{entry.qty}</td>
-                    <td class="border text-right">{float(product.unit_price) if product.unit_price else 0.0:.2f}</td>
-                    <td class="border text-right">{float(product.cost_price) if product.cost_price else 0.0:.2f}</td>
-                    <td class="border">{product.category or '-'}</td>
-                    <td class="border">{product.branch or '-'}</td>
-                    <td class="border">{entry_date}</td>
-                    <td class="border">{entry_time}</td>
-                </tr>
-                """
+        product_rows_list = []
+        for i, (entry, product) in enumerate(results):
+            # Format date and time
+            entry_date = entry.created_at.strftime("%d-%m-%Y")
+            entry_time = entry.created_at.strftime("%I:%M %p")
+            
+            product_rows_list.append(f"""
+            <tr>
+                <td class="border" style="text-align: center;">{i+1}</td>
+                <td class="border">{product.name}</td>
+                <td class="border">{product.barcode or '-'}</td>
+                <td class="border text-right">{entry.qty}</td>
+                <td class="border text-right">{float(product.unit_price) if product.unit_price else 0.0:.2f}</td>
+                <td class="border text-right">{float(product.cost_price) if product.cost_price else 0.0:.2f}</td>
+                <td class="border">{product.category or '-'}</td>
+                <td class="border">{product.branch or '-'}</td>
+                <td class="border">{entry_date}</td>
+                <td class="border">{entry_time}</td>
+            </tr>
+            """)
+        
+        product_rows = "".join(product_rows_list)
 
         # Calculate total
-        total_qty = sum(entry.qty for entry in stock_in_entries)
+        total_qty = sum(entry.qty for entry, product in results)
         
         html_content = f"""
         <!DOCTYPE html>
@@ -944,13 +961,16 @@ async def stock_in_report(
         </html>
         """
     
-    # Generate PDF
+    # Generate PDF in a separate thread to avoid blocking
     try:
         from weasyprint import HTML
-        from io import BytesIO
+        import asyncio
 
-        pdf_doc = HTML(string=html_content)
-        pdf_bytes = pdf_doc.write_pdf()
+        def generate_pdf(html):
+            return HTML(string=html).write_pdf()
+
+        # Run in a separate thread
+        pdf_bytes = await asyncio.to_thread(generate_pdf, html_content)
         encoded_pdf = base64.b64encode(pdf_bytes).decode()
     except ImportError:
         # Fallback
@@ -990,9 +1010,10 @@ async def warehouse_stock_in_report(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
     
-    # Query stock entries with type=IN and location = 'warehouse'
+    # Query stock entries with type=IN and location = 'warehouse' joined with Product
     statement = (
-        select(StockEntry)
+        select(StockEntry, Product)
+        .join(Product, StockEntry.product_id == Product.id)
         .where(StockEntry.type == StockEntryType.IN)
         .where(StockEntry.location == "warehouse")
         .where(StockEntry.created_at >= from_date)
@@ -1001,9 +1022,9 @@ async def warehouse_stock_in_report(
     )
 
     result = await db.execute(statement)
-    stock_in_entries = result.scalars().all()
+    results = result.all()
 
-    if not stock_in_entries:
+    if not results:
         # Return empty report
         html_content = f"""
         <!DOCTYPE html>
@@ -1027,32 +1048,32 @@ async def warehouse_stock_in_report(
         """
     else:
         # Build product rows
-        product_rows = ""
-        for i, entry in enumerate(stock_in_entries):
-            product = await db.get(Product, entry.product_id)
-            if product:
-                # Format date and time
-                entry_date = entry.created_at.strftime("%d-%m-%Y")
-                entry_time = entry.created_at.strftime("%I:%M %p")
-                
-                product_rows += f"""
-                <tr>
-                    <td class="border" style="text-align: center;">{i+1}</td>
-                    <td class="border">{product.name}</td>
-                    <td class="border">{product.barcode or '-'}</td>
-                    <td class="border">{product.article_no or '-'}</td>
-                    <td class="border text-right">{entry.qty}</td>
-                    <td class="border text-right">{float(product.unit_price) if product.unit_price else 0.0:.2f}</td>
-                    <td class="border text-right">{float(product.cost_price) if product.cost_price else 0.0:.2f}</td>
-                    <td class="border">{product.category or '-'}</td>
-                    <td class="border">{product.branch or '-'}</td>
-                    <td class="border">{entry_date}</td>
-                    <td class="border">{entry_time}</td>
-                </tr>
-                """
+        product_rows_list = []
+        for i, (entry, product) in enumerate(results):
+            # Format date and time
+            entry_date = entry.created_at.strftime("%d-%m-%Y")
+            entry_time = entry.created_at.strftime("%I:%M %p")
+            
+            product_rows_list.append(f"""
+            <tr>
+                <td class="border" style="text-align: center;">{i+1}</td>
+                <td class="border">{product.name}</td>
+                <td class="border">{product.barcode or '-'}</td>
+                <td class="border">{product.article_no or '-'}</td>
+                <td class="border text-right">{entry.qty}</td>
+                <td class="border text-right">{float(product.unit_price) if product.unit_price else 0.0:.2f}</td>
+                <td class="border text-right">{float(product.cost_price) if product.cost_price else 0.0:.2f}</td>
+                <td class="border">{product.category or '-'}</td>
+                <td class="border">{product.branch or '-'}</td>
+                <td class="border">{entry_date}</td>
+                <td class="border">{entry_time}</td>
+            </tr>
+            """)
+        
+        product_rows = "".join(product_rows_list)
 
         # Calculate total
-        total_qty = sum(entry.qty for entry in stock_in_entries)
+        total_qty = sum(entry.qty for entry, product in results)
         
         html_content = f"""
         <!DOCTYPE html>
@@ -1156,13 +1177,16 @@ async def warehouse_stock_in_report(
         </html>
         """
     
-    # Generate PDF
+    # Generate PDF in a separate thread to avoid blocking
     try:
         from weasyprint import HTML
-        from io import BytesIO
+        import asyncio
 
-        pdf_doc = HTML(string=html_content)
-        pdf_bytes = pdf_doc.write_pdf()
+        def generate_pdf(html):
+            return HTML(string=html).write_pdf()
+
+        # Run in a separate thread
+        pdf_bytes = await asyncio.to_thread(generate_pdf, html_content)
         encoded_pdf = base64.b64encode(pdf_bytes).decode()
     except ImportError:
         # Fallback
@@ -1369,11 +1393,16 @@ async def daily_inventory_report(
     </html>
     """
 
-    # Generate PDF
+    # Generate PDF in a separate thread to avoid blocking
     try:
         from weasyprint import HTML
-        pdf_doc = HTML(string=html_content)
-        pdf_bytes = pdf_doc.write_pdf()
+        import asyncio
+
+        def generate_pdf(html):
+            return HTML(string=html).write_pdf()
+
+        # Run in a separate thread
+        pdf_bytes = await asyncio.to_thread(generate_pdf, html_content)
         encoded_pdf = base64.b64encode(pdf_bytes).decode()
     except ImportError:
         pdf_content = "%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"

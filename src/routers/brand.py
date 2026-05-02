@@ -44,6 +44,37 @@ async def create_brand(
     return db_brand
 
 
+@router.post("/bulk", response_model=List[BrandRead])
+async def create_brands_bulk(
+    brands: List[BrandCreate],
+    current_user: User = Depends(get_current_user_from_session),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Add multiple brands at once
+    Requires employee role
+    """
+    db_brands = []
+    for brand_data in brands:
+        # Check if brand with same name already exists
+        result = await db.execute(
+            select(Brand).where(Brand.name == brand_data.name)
+        )
+        existing = result.scalar_one_or_none()
+        
+        if not existing:
+            db_brand = Brand(name=brand_data.name)
+            db.add(db_brand)
+            db_brands.append(db_brand)
+    
+    if db_brands:
+        await db.commit()
+        for brand in db_brands:
+            await db.refresh(brand)
+    
+    return db_brands
+
+
 @router.get("/")
 async def get_brands(
     page: int = 1,

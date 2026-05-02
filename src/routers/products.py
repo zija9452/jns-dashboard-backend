@@ -98,6 +98,47 @@ async def create_product(
 
     return await ProductService.create_product(db, product_create, str(current_user.id))
 
+# --- TEMPORARY BULK INSERT ENDPOINT (Remove after use) ---
+@router.post("/bulk-insert", response_model=List[ProductRead])
+async def create_products_bulk_temp(
+    products_create: List[ProductCreate],
+    current_user: User = Depends(get_current_user_from_session),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Temporary endpoint for bulk product insertion
+    Requires admin, employee, or warehouse role
+    """
+    # Check role access
+    if current_user.role.name not in ["admin", "employee", "warehouse"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin, employee, or warehouse access required"
+        )
+
+    if not products_create:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Product list cannot be empty"
+        )
+
+    # Auto-set is_warehouse_product for warehouse role
+    if current_user.role.name == "warehouse":
+        for p in products_create:
+            p.is_warehouse_product = True
+
+    # Clear cache after bulk creation
+    await clear_products_cache()
+
+    try:
+        return await ProductService.bulk_create_products(db, products_create, str(current_user.id))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+# ---------------------------------------------------------
+
 # Specific routes that should come before the generic /{product_id} route to avoid conflicts
 @router.get("/getproducts/{id}")
 async def get_product_details(
@@ -210,7 +251,7 @@ async def view_products(
         base_statement = base_statement.where(Product.branch == branches)
 
     # Apply warehouse filter - only show products where is_warehouse_product = true
-    if warehouse and warehouse.lower() == 'true':
+    if warehouse is not None and isinstance(warehouse, str) and warehouse.lower() == 'true':
         base_statement = base_statement.where(Product.is_warehouse_product == True)
 
     # Apply search filter at database level (case-insensitive)
