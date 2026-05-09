@@ -26,6 +26,7 @@ class Product(SQLModel, table=True):
     is_warehouse_product: bool = Field(default=False)  # True if product belongs to warehouse
     article_no: Optional[str] = Field(default=None, max_length=50)  # Warehouse article number (optional)
     warehouse_stock: int = Field(default=0)  # Warehouse stock quantity
+    warehouse_cost: Decimal = Field(default=0.00, sa_column=Column(Numeric(10, 2), nullable=False)) # Warehouse cost price
     warehouse_limited_qty: int = Field(default=0)  # Warehouse limited quantity
     created_at: datetime = Field(default_factory=lambda: datetime.now())
     updated_at: datetime = Field(default_factory=lambda: datetime.now(), nullable=False)
@@ -48,6 +49,7 @@ class ProductRead(SQLModel):
     is_warehouse_product: bool
     article_no: Optional[str]
     warehouse_stock: int
+    warehouse_cost: Decimal
     warehouse_limited_qty: int
     created_at: datetime
     updated_at: datetime
@@ -69,6 +71,7 @@ class ProductCreate(SQLModel):
     is_warehouse_product: bool = False
     article_no: Optional[str] = None
     warehouse_stock: int = 0
+    warehouse_cost: Decimal = 0.00
     warehouse_limited_qty: int = 0
 
 
@@ -87,6 +90,7 @@ class ProductUpdate(SQLModel):
     is_warehouse_product: Optional[bool] = None
     article_no: Optional[str] = None
     warehouse_stock: Optional[int] = None
+    warehouse_cost: Optional[Decimal] = None
     warehouse_limited_qty: Optional[int] = None
 
     model_config = ConfigDict(json_encoders={Decimal: float})

@@ -6,7 +6,9 @@ from .models.user import User
 from .models.role import Role
 from .models.product import Product
 from .models.customer import Customer
+from .models.warehouse_customer import WarehouseCustomer
 from .models.vendor import Vendor
+from .models.warehouse_vendor import WarehouseVendor
 from .models.salesman import Salesman
 from .models.stock_entry import StockEntry
 from .models.expense import Expense

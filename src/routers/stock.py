@@ -350,22 +350,6 @@ async def save_stock_in(
             })
             continue
 
-        # Check if product is warehouse product
-        if product.is_warehouse_product:
-            # Check if enough warehouse stock is available
-            warehouse_stock = product.warehouse_stock or 0
-            if warehouse_stock < quantity:
-                results.append({
-                    "product_id": product_id,
-                    "product_name": product.name,
-                    "status": "error",
-                    "message": f"Insufficient warehouse stock. Available: {warehouse_stock}, Requested: {quantity}"
-                })
-                continue
-            
-            # Deduct from warehouse stock
-            product.warehouse_stock = warehouse_stock - quantity
-
         # Get vendor
         vendor = await db.get(Vendor, UUID(vendor_id))
         if not vendor:
@@ -403,7 +387,6 @@ async def save_stock_in(
             "product_name": product.name,
             "quantity_added": quantity,
             "new_stock_level": product.stock_level,
-            "warehouse_stock_after": product.warehouse_stock if product.is_warehouse_product else None,
             "vendor_id": vendor_id,
             "vendor_name": vendor.name,
             "amount_added_to_balance": total_cost,
@@ -479,22 +462,6 @@ async def save_stock_in_with_barcode(
             })
             continue
 
-        # Check if product is warehouse product
-        if product.is_warehouse_product:
-            # Check if enough warehouse stock is available
-            warehouse_stock = product.warehouse_stock or 0
-            if warehouse_stock < quantity:
-                results.append({
-                    "product_id": product_id,
-                    "product_name": product.name,
-                    "status": "error",
-                    "message": f"Insufficient warehouse stock. Available: {warehouse_stock}, Requested: {quantity}"
-                })
-                continue
-            
-            # Deduct from warehouse stock
-            product.warehouse_stock = warehouse_stock - quantity
-
         # Get vendor
         vendor = await db.get(Vendor, UUID(vendor_id))
         if not vendor:
@@ -532,7 +499,6 @@ async def save_stock_in_with_barcode(
             "product_name": product.name,
             "quantity_added": quantity,
             "new_stock_level": product.stock_level,
-            "warehouse_stock_after": product.warehouse_stock if product.is_warehouse_product else None,
             "vendor_id": vendor_id,
             "vendor_name": vendor.name,
             "amount_added_to_balance": total_cost,
@@ -1063,6 +1029,7 @@ async def warehouse_stock_in_report(
                 <td class="border text-right">{entry.qty}</td>
                 <td class="border text-right">{float(product.unit_price) if product.unit_price else 0.0:.2f}</td>
                 <td class="border text-right">{float(product.cost_price) if product.cost_price else 0.0:.2f}</td>
+                <td class="border text-right">{float(product.warehouse_cost) if product.warehouse_cost else 0.0:.2f}</td>
                 <td class="border">{product.category or '-'}</td>
                 <td class="border">{product.branch or '-'}</td>
                 <td class="border">{entry_date}</td>
@@ -1156,6 +1123,7 @@ async def warehouse_stock_in_report(
                         <th>Qty In</th>
                         <th>Price</th>
                         <th>Cost</th>
+                        <th>Warehouse Cost</th>
                         <th>Category</th>
                         <th>Branch</th>
                         <th>Date</th>
@@ -1169,7 +1137,7 @@ async def warehouse_stock_in_report(
                     <tr>
                         <td colspan="4" class="border text-right" style="font-weight: bold;">Total:</td>
                         <td class="border text-right" style="font-weight: bold;">{total_qty}</td>
-                        <td colspan="6"></td>
+                        <td colspan="7"></td>
                     </tr>
                 </tfoot>
             </table>

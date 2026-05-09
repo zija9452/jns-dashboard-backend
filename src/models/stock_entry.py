@@ -3,6 +3,8 @@ from typing import Optional
 from datetime import datetime, date
 import uuid
 from enum import Enum
+from sqlalchemy import Column, Numeric
+from decimal import Decimal
 
 class StockEntryType(str, Enum):
     IN = "IN"
@@ -15,7 +17,9 @@ class StockEntry(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     product_id: uuid.UUID = Field(foreign_key="products.id")
     vendor_id: Optional[uuid.UUID] = Field(default=None, foreign_key="vendors.id")  # Track vendor for each stock entry
+    warehouse_vendor_id: Optional[uuid.UUID] = Field(default=None, foreign_key="warehouse_vendors.id")  # Track warehouse vendor
     qty: int  # Positive for IN, negative for OUT
+    cost_price: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(10, 2), nullable=True))
     type: StockEntryType
     location: Optional[str] = Field(default=None, max_length=100)
     batch: Optional[str] = Field(default=None, max_length=50)
@@ -26,7 +30,10 @@ class StockEntry(SQLModel, table=True):
 class StockEntryRead(SQLModel):
     id: uuid.UUID
     product_id: uuid.UUID
+    vendor_id: Optional[uuid.UUID]
+    warehouse_vendor_id: Optional[uuid.UUID]
     qty: int
+    cost_price: Optional[Decimal]
     type: StockEntryType
     location: Optional[str]
     batch: Optional[str]
@@ -36,7 +43,10 @@ class StockEntryRead(SQLModel):
 
 class StockEntryCreate(SQLModel):
     product_id: uuid.UUID
+    vendor_id: Optional[uuid.UUID] = None
+    warehouse_vendor_id: Optional[uuid.UUID] = None
     qty: int
+    cost_price: Optional[Decimal] = None
     type: StockEntryType
     location: Optional[str] = None
     batch: Optional[str] = None
@@ -45,6 +55,7 @@ class StockEntryCreate(SQLModel):
 
 class StockEntryUpdate(SQLModel):
     qty: Optional[int] = None
+    cost_price: Optional[Decimal] = None
     type: Optional[StockEntryType] = None
     location: Optional[str] = None
     batch: Optional[str] = None

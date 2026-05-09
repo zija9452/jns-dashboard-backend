@@ -178,7 +178,8 @@ async def get_product_details(
         "brand": product.brand_action or "",
         "pro_image": product.attributes or "",
         "article_no": product.article_no or '',
-        "warehouse_limited_qty": product.warehouse_limited_qty
+        "warehouse_limited_qty": product.warehouse_limited_qty,
+        "warehouse_cost": float(product.warehouse_cost) if product.warehouse_cost else 0.0
     }
 
     return product_data
@@ -245,7 +246,8 @@ async def view_products(
         Product.is_warehouse_product,
         Product.article_no,
         Product.warehouse_stock,
-        Product.warehouse_limited_qty
+        Product.warehouse_limited_qty,
+        Product.warehouse_cost
     )
 
     # Apply branch filter at database level (indexed - FAST)
@@ -311,7 +313,8 @@ async def view_products(
             "is_warehouse_product": p[11],
             "article_no": p[12] or "",
             "warehouse_stock": p[13],
-            "warehouse_limited_qty": p[14]
+            "warehouse_limited_qty": p[14],
+            "warehouse_cost": float(p[15]) if p[15] else 0.0
         }
         for p in products
     ]
@@ -501,6 +504,7 @@ async def search_product_by_barcode(
         "is_warehouse_product": product.is_warehouse_product,
         "warehouse_stock": product.warehouse_stock,
         "warehouse_limited_qty": product.warehouse_limited_qty,
+        "warehouse_cost": float(product.warehouse_cost) if product.warehouse_cost else 0.0,
         "article_no": product.article_no or ""
     }
 

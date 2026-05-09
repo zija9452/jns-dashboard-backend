@@ -93,6 +93,7 @@ class ProductService:
             is_warehouse_product=product_create.is_warehouse_product,
             article_no=product_create.article_no,
             warehouse_stock=product_create.warehouse_stock,
+            warehouse_cost=product_create.warehouse_cost,
             warehouse_limited_qty=product_create.warehouse_limited_qty
         )
 
@@ -177,6 +178,7 @@ class ProductService:
                 is_warehouse_product=p.is_warehouse_product,
                 article_no=p.article_no,
                 warehouse_stock=p.warehouse_stock,
+                warehouse_cost=p.warehouse_cost,
                 warehouse_limited_qty=p.warehouse_limited_qty
             )
             db.add(db_product)
