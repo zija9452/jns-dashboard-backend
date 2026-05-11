@@ -16,6 +16,7 @@ from src.models.expense import Expense
 from src.models.stock_entry import StockEntry, StockEntryType
 from src.models.product import Product
 from src.models.refund import Refund
+from src.models.warehouse_invoice import WarehouseInvoice
 from src.auth.session_auth import admin_cashier_employee_required_from_session, admin_employee_required_from_session
 
 router = APIRouter()

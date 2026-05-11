@@ -764,6 +764,129 @@ async def warehouse_requirement_report(
     return encoded_pdf
 
 
+@router.post("/urgent-buy-report")
+async def urgent_buy_report(
+    current_user: User = Depends(warehouse_required()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate urgent buy report (PDF base64)
+    Shows products where Shop Requirement > Warehouse Stock
+    """
+    # Build query - only warehouse products
+    statement = select(Product).where(Product.is_warehouse_product == True)
+    result = await db.execute(statement)
+    products = result.scalars().all()
+
+    current_date = datetime.now().strftime('%d-%m-%Y')
+
+    # Build product rows for PDF table
+    product_rows = ""
+    row_count = 0
+    for product in products:
+        # Shop Deficit
+        shop_limit = product.limited_qty or 0
+        shop_stock = product.stock_level or 0
+        shop_required = max(0, shop_limit - shop_stock)
+
+        # Warehouse Status
+        warehouse_stock = product.warehouse_stock or 0
+        warehouse_limit = product.warehouse_limited_qty or 0
+
+        # Urgent Condition: Shop needs more than what warehouse has
+        if shop_required > warehouse_stock:
+            row_count += 1
+            # How much more to buy? To cover shop requirement + maybe maintain warehouse stock
+            to_buy = shop_required - warehouse_stock
+            
+            product_rows += f"""
+            <tr>
+                <td class="border" style="text-align: center;">{row_count}</td>
+                <td class="border">{product.name}</td>
+                <td class="border" style="text-align: center;">{shop_limit}</td>
+                <td class="border" style="text-align: center;">{shop_stock}</td>
+                <td class="border" style="text-align: center;">{shop_required}</td>
+                <td class="border" style="text-align: center;">{warehouse_limit}</td>
+                <td class="border" style="text-align: center;">{warehouse_stock}</td>
+                <td class="border" style="text-align: right; font-weight: bold; color: #e11d48;">{to_buy}</td>
+            </tr>
+            """
+
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <style>
+            @page {{ size: A4 landscape; margin: 10mm; margin-bottom: 20mm; }}
+            body {{ font-family: Arial, sans-serif; font-size: 11px; margin: 0; padding: 0; }}
+            .signature-section {{ margin-top: 50px; width: 100%; page-break-inside: avoid; }}
+            h1 {{ text-align: center; color: #333; margin: 0 0 10px 0; font-size: 22px; font-weight: bold; }}
+            .print-date {{ text-align: right; margin-bottom: 10px; color: #666; font-size: 10px; }}
+            table {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
+            tr {{ page-break-inside: avoid; }}
+            th {{ background-color: #444; color: white; border: 1px solid #000; padding: 8px 5px; text-align: center; font-weight: bold; font-size: 11px; }}
+            td {{ border: 1px solid #000; padding: 5px; font-size: 10px; }}
+            .border {{ border: 1px solid #000; }}
+            .text-right {{ text-align: right; }}
+            tr:nth-child(even) {{ background-color: #f5f5f5; }}
+            tr:nth-child(odd) {{ background-color: #fff; }}
+        </style>
+    </head>
+    <body>
+        <h1>Warehouse Urgent Buy Report</h1>
+        <div class="print-date"><strong>Print Date:</strong> {current_date}</div>
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 30px;">#</th>
+                    <th>Product Name</th>
+                    <th>Shop Limit</th>
+                    <th>Shop Stock</th>
+                    <th>Shop Required</th>
+                    <th>Warehouse Limit</th>
+                    <th>Warehouse Stock</th>
+                    <th style="text-align: right;">Urgent Buy Qty</th>
+                </tr>
+            </thead>
+            <tbody>
+                {product_rows if product_rows else '<tr><td colspan="8" style="text-align: center; padding: 20px;">No urgent buys required.</td></tr>'}
+            </tbody>
+        </table>
+
+        <div class="signature-section">
+            <table style="width: 100%; border: none !important;">
+                <tr>
+                    <td style="border: none !important; width: 50%; padding-top: 50px;">
+                        <div style="width: 200px; text-align: center; font-weight: bold; font-size: 12px;">
+                            <div style="border-top: 1px solid black; margin-bottom: 5px;"></div>
+                            Verified By
+                        </div>
+                    </td>
+                    <td style="border: none !important; width: 50%; padding-top: 50px;">
+                        <div style="width: 200px; margin-left: auto; text-align: center; font-weight: bold; font-size: 12px;">
+                            <div style="border-top: 1px solid black; margin-bottom: 5px;"></div>
+                            Approved By
+                        </div>
+                    </td>
+                </tr>
+            </table>
+        </div>
+    </body>
+    </html>
+    """
+
+    try:
+        from weasyprint import HTML
+        pdf_bytes = HTML(string=html_content).write_pdf()
+        encoded_pdf = base64.b64encode(pdf_bytes).decode()
+    except Exception:
+        fallback_msg = "PDF Generation Error"
+        encoded_pdf = base64.b64encode(fallback_msg.encode()).decode()
+
+    return encoded_pdf
+
+
 @router.post("/shop-requirement-report")
 async def shop_requirement_report(
     current_user: User = Depends(warehouse_required()),

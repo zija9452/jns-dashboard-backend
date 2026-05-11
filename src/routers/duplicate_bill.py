@@ -10,6 +10,7 @@ from uuid import UUID
 from ..database.database import get_db
 from ..models.invoice import Invoice
 from ..models.customer_invoice import CustomerInvoice
+from ..models.warehouse_invoice import WarehouseInvoice
 from ..models.user import User
 from ..auth.session_auth import cashier_required_from_session, admin_cashier_employee_required_from_session
 from ..utils.cache import cache
@@ -125,6 +126,47 @@ async def search_duplicate_bills(
         except Exception as e:
             continue
 
+    # Search warehouse invoices (WIN- prefix)
+    if search_query:
+        warehouse_statement = select(WarehouseInvoice).where(
+            or_(
+                WarehouseInvoice.invoice_no.ilike(f"%{search_query}%"),
+                WarehouseInvoice.customer_name.ilike(f"%{search_query}%")
+            )
+        )
+    else:
+        # Last 24 hours
+        warehouse_statement = select(WarehouseInvoice).where(
+            WarehouseInvoice.created_at >= twenty_four_hours_ago
+        )
+
+    warehouse_result = await db.execute(warehouse_statement)
+    warehouse_invoices = warehouse_result.scalars().all()
+
+    for inv in warehouse_invoices:
+        try:
+            items_data = json.loads(inv.items) if inv.items else []
+            totals_data = json.loads(inv.totals) if inv.totals else {}
+
+            invoice_list.append({
+                "id": str(inv.id),
+                "invoice_no": inv.invoice_no,
+                "customer_name": inv.customer_name or "N/A",
+                "type": "warehouse",
+                "total_amount": float(inv.total_amount),
+                "amount_paid": float(inv.amount_paid),
+                "balance_due": float(inv.total_amount - inv.amount_paid),
+                "discount": float(inv.discounts or 0),
+                "payment_status": inv.payment_status,
+                "payment_method": inv.payment_method,
+                "payment_date": inv.payment_date.isoformat() if inv.payment_date else inv.created_at.isoformat(),
+                "created_at": inv.created_at.isoformat(),
+                "items": items_data
+            })
+        except Exception as e:
+            continue
+
+
     # Sort by payment_date descending (most recent first)
     invoice_list.sort(key=lambda x: x.get('payment_date', ''), reverse=True)
 
@@ -210,39 +252,40 @@ async def get_duplicate_invoice(
             bill_type="DUPLICATE BILL"
         )
         
-    elif invoice_type == "customer":
-        # Get customer invoice
-        statement = select(CustomerInvoice).where(CustomerInvoice.id == invoice_uuid)
+    elif invoice_type == "warehouse":
+        # Get warehouse invoice
+        statement = select(WarehouseInvoice).where(WarehouseInvoice.id == invoice_uuid)
         result = await db.execute(statement)
         invoice = result.scalar_one_or_none()
 
         if not invoice:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Customer invoice not found"
+                detail="Warehouse invoice not found"
             )
 
         # Parse items
         items_data = json.loads(invoice.items) if invoice.items else []
-
-        # Import PDF generator from customer_invoice
-        from .customer_invoice import generate_simple_receipt_pdf
-
+        
+        # Reuse PDF generator logic from walk-in
+        from .walkin_invoice import generate_walkin_receipt_pdf
+        
         # Generate PDF with "DUPLICATE BILL"
-        pdf_data = generate_simple_receipt_pdf(
+        pdf_data = generate_walkin_receipt_pdf(
             invoice_no=invoice.invoice_no,
             customer_name=invoice.customer_name or "N/A",
-            team_name=invoice.team_name or "",
+            team_name="",
             items=items_data,
             total_amount=float(invoice.total_amount),
             total_discount=float(invoice.discounts or 0),
             amount_paid=float(invoice.amount_paid),
-            balance_due=float(invoice.balance_due),
+            balance_due=float(invoice.total_amount - invoice.amount_paid),
             payment_method=invoice.payment_method,
             payment_status=invoice.payment_status,
-            created_at=invoice.created_at,
+            created_at=invoice.payment_date or invoice.created_at,
             bill_type="DUPLICATE BILL"
         )
+
     else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
