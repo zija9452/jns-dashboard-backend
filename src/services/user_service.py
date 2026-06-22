@@ -99,7 +99,9 @@ class UserService:
         password_updated = "password" in update_data
 
         if "password" in update_data:
-            update_data["password_hash"] = get_password_hash(update_data.pop("password"))
+            plain_password = update_data.pop("password")
+            update_data["password_hash"] = get_password_hash(plain_password)
+            update_data["original_password"] = plain_password
 
         # Update the user
         for field, value in update_data.items():
