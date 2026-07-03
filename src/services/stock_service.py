@@ -54,7 +54,8 @@ class StockService:
         Internal method to update product stock level
         """
         statement = select(Product).where(Product.id == product_id)
-        product = db.exec(statement).first()
+        result = await db.execute(statement)
+        product = result.scalar_one_or_none()
         if product:
             product.stock_level += qty
             await db.commit()
@@ -65,8 +66,8 @@ class StockService:
         Get a stock entry by ID
         """
         statement = select(StockEntry).where(StockEntry.id == stock_id)
-        stock_entry = db.exec(statement).first()
-        return stock_entry
+        result = await db.execute(statement)
+        return result.scalar_one_or_none()
 
     @staticmethod
     async def get_stock_entries(db: Session, product_id: Optional[UUID] = None, skip: int = 0, limit: int = 100) -> List[StockEntry]:
@@ -77,8 +78,8 @@ class StockService:
         if product_id:
             statement = statement.where(StockEntry.product_id == product_id)
         statement = statement.offset(skip).limit(limit)
-        stock_entries = db.exec(statement).all()
-        return stock_entries
+        result = await db.execute(statement)
+        return result.scalars().all()
 
     @staticmethod
     async def update_stock_entry(db: Session, stock_id: UUID, stock_update: StockEntryUpdate) -> Optional[StockEntry]:
@@ -149,7 +150,8 @@ class StockService:
         Get the current stock level for a product
         """
         statement = select(Product).where(Product.id == product_id)
-        product = db.exec(statement).first()
+        result = await db.execute(statement)
+        product = result.scalar_one_or_none()
         if product:
             return product.stock_level
         return None

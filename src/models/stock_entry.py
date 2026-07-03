@@ -21,6 +21,7 @@ class StockEntry(SQLModel, table=True):
     warehouse_vendor_id: Optional[uuid.UUID] = Field(default=None, foreign_key="warehouse_vendors.id")  # Track warehouse vendor
     qty: int  # Positive for IN, negative for OUT
     cost_price: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(10, 2), nullable=True))
+    unit_price: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(10, 2), nullable=True))  # Selling price snapshot at the time of this entry
     type: StockEntryType
     location: Optional[str] = Field(default=None, max_length=100)
     batch: Optional[str] = Field(default=None, max_length=50)
@@ -35,6 +36,7 @@ class StockEntryRead(SQLModel):
     warehouse_vendor_id: Optional[uuid.UUID]
     qty: int
     cost_price: Optional[Decimal]
+    unit_price: Optional[Decimal]
     type: StockEntryType
     location: Optional[str]
     batch: Optional[str]
@@ -48,6 +50,7 @@ class StockEntryCreate(SQLModel):
     warehouse_vendor_id: Optional[uuid.UUID] = None
     qty: int
     cost_price: Optional[Decimal] = None
+    unit_price: Optional[Decimal] = None
     type: StockEntryType
     location: Optional[str] = None
     batch: Optional[str] = None
@@ -57,6 +60,7 @@ class StockEntryCreate(SQLModel):
 class StockEntryUpdate(SQLModel):
     qty: Optional[int] = None
     cost_price: Optional[Decimal] = None
+    unit_price: Optional[Decimal] = None
     type: Optional[StockEntryType] = None
     location: Optional[str] = None
     batch: Optional[str] = None

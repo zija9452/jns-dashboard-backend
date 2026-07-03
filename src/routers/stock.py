@@ -269,31 +269,43 @@ async def adjust_stock(
         latest_vendor_result = await db.execute(latest_vendor_query)
         inherited_vendor_id = latest_vendor_result.scalar_one_or_none()
 
+        # Snapshot the product's current cost_price on the entry, same as stock-in,
+        # so the vendor balance effect below and future reports stay historically accurate.
+        cost_price = product.cost_price
+
         # Create stock entry with ADJUST type
         entry = StockEntry(
             product_id=product.id,
             vendor_id=inherited_vendor_id,
             qty=adjustment_qty,
+            cost_price=cost_price,
+            unit_price=product.unit_price,
             type=StockEntryType.ADJUST,
             location="Stock Adjustment",
             ref=f"ADJ_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
         )
         db.add(entry)
-        
+
         # Update product stock
         old_stock = product.stock_level
         product.stock_level += adjustment_qty
-        
+
         # Prevent negative stock
         if product.stock_level < 0:
             product.stock_level = 0
-        
-        # Get vendor name for the result
+
+        # Get vendor and adjust its balance by qty * cost_price.
+        # adjustment_qty is already signed (+ for increase, - for decrease), so this
+        # increases the balance on increase and decreases it on decrease.
         vendor_name = ""
+        balance_change = 0.0
         if inherited_vendor_id:
             vendor = await db.get(Vendor, inherited_vendor_id)
             if vendor:
                 vendor_name = vendor.name
+                if cost_price:
+                    balance_change = float(adjustment_qty) * float(cost_price)
+                    vendor.balance = float(vendor.balance) + balance_change
 
         results.append({
             "product_id": item.product_id,
@@ -303,6 +315,7 @@ async def adjust_stock(
             "quantity_adjusted": item.quantity,
             "old_stock": old_stock,
             "new_stock": product.stock_level,
+            "vendor_balance_change": balance_change,
             "status": "success"
         })
     
@@ -349,6 +362,7 @@ async def save_stock_in(
         vendor_id = item.get('vendor_id')
         quantity = int(item.get('quantity', 0))
         cost_price = float(item.get('cost_price', 0))
+        selling_price = float(item.get('selling_price', 0))
         date = item.get('date', datetime.now().strftime('%Y-%m-%d'))
 
         # Get product
@@ -372,11 +386,14 @@ async def save_stock_in(
             continue
 
         # Create stock entry
+        # unit_price snapshots the selling price at the time of this stock-in,
+        # so historical reports don't shift when the product's price changes later.
         entry = StockEntry(
             product_id=product.id,
             vendor_id=vendor.id,
             qty=quantity,
             cost_price=cost_price,
+            unit_price=selling_price if selling_price > 0 else product.unit_price,
             type=StockEntryType.IN,
             location="Stock In",
             ref=f"STOCK_IN_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -484,11 +501,14 @@ async def save_stock_in_with_barcode(
             continue
 
         # Create stock entry
+        # unit_price snapshots the selling price at the time of this stock-in,
+        # so historical reports don't shift when the product's price changes later.
         entry = StockEntry(
             product_id=product.id,
             vendor_id=vendor.id,
             qty=quantity,
             cost_price=cost_price,
+            unit_price=selling_price if selling_price > 0 else product.unit_price,
             type=StockEntryType.IN,
             location="Stock In",
             ref=f"STOCK_IN_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -515,7 +535,7 @@ async def save_stock_in_with_barcode(
             "amount_added_to_balance": total_cost,
             "status": "success"
         })
-        
+
         # Generate ZPL barcode with new format (barcode lines, number, name, price)
         # Generate one barcode per unit (quantity)
         if product.barcode:
@@ -824,7 +844,7 @@ async def stock_in_report(
                 <td class="border">{product.name}</td>
                 <td class="border">{product.barcode or '-'}</td>
                 <td class="border text-right">{entry.qty}</td>
-                <td class="border text-right">{float(product.unit_price) if product.unit_price else 0.0:.2f}</td>
+                <td class="border text-right">{float(entry.unit_price) if entry.unit_price is not None else (float(product.unit_price) if product.unit_price else 0.0):.2f}</td>
                 <td class="border text-right">{float(entry.cost_price) if entry.cost_price else 0.0:.2f}</td>
                 <td class="border">{product.category or '-'}</td>
                 <td class="border">{product.branch or '-'}</td>
@@ -1033,7 +1053,7 @@ async def stock_in_report_excel(
             product.name,
             product.barcode or "",
             qty,
-            float(product.unit_price) if product.unit_price else 0.0,
+            float(entry.unit_price) if entry.unit_price is not None else (float(product.unit_price) if product.unit_price else 0.0),
             cost_price,
             product.category or "",
             product.branch or "",
