@@ -12,7 +12,7 @@ from ..models.invoice import Invoice
 from ..models.customer_invoice import CustomerInvoice
 from ..models.warehouse_invoice import WarehouseInvoice
 from ..models.user import User
-from ..auth.session_auth import cashier_required_from_session, admin_cashier_employee_required_from_session
+from ..auth.session_auth import cashier_required_from_session, admin_cashier_employee_required_from_session, admin_cashier_employee_order_booker_required_from_session
 from ..utils.cache import cache
 
 router = APIRouter()
@@ -23,7 +23,7 @@ async def search_duplicate_bills(
     search_query: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(8, ge=1, le=100),
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -191,7 +191,7 @@ async def search_duplicate_bills(
 async def get_duplicate_invoice(
     invoice_id: str,
     invoice_type: str = Query(..., description="Type: 'walkin' or 'customer'"),
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -286,12 +286,44 @@ async def get_duplicate_invoice(
             bill_type="DUPLICATE BILL"
         )
 
+    elif invoice_type == "customer":
+        # Get customer invoice (CIN- prefix)
+        statement = select(CustomerInvoice).where(CustomerInvoice.id == invoice_uuid)
+        result = await db.execute(statement)
+        invoice = result.scalar_one_or_none()
+
+        if not invoice:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Customer invoice not found"
+            )
+
+        # Parse items
+        items_data = json.loads(invoice.items) if invoice.items else []
+
+        from .customer_invoice import generate_simple_receipt_pdf
+
+        pdf_data = generate_simple_receipt_pdf(
+            invoice_no=invoice.invoice_no,
+            customer_name=invoice.customer_name or "N/A",
+            team_name=invoice.team_name or "",
+            items=items_data,
+            total_amount=float(invoice.total_amount),
+            total_discount=float(invoice.discounts or 0),
+            amount_paid=float(invoice.amount_paid),
+            balance_due=float(invoice.balance_due),
+            payment_method=invoice.payment_method,
+            payment_status=invoice.payment_status,
+            created_at=invoice.created_at,
+            bill_type="DUPLICATE BILL"
+        )
+
     else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid invoice type. Must be 'walkin' or 'customer'"
+            detail="Invalid invoice type. Must be 'walkin', 'customer', or 'warehouse'"
         )
-    
+
     # Save to Redis for 7 days (604800 seconds)
     await cache.set(cache_key, pdf_data, ttl=604800)
     

@@ -12,7 +12,7 @@ from ..models.salesman import Salesman, SalesmanCreate, SalesmanUpdate
 from ..models.stock_entry import StockEntry, StockEntryType
 from ..models.product import Product
 from ..models.vendor import Vendor
-from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session
+from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session, admin_cashier_employee_order_booker_required_from_session
 from ..services.user_service import UserService
 from ..services.product_service import ProductService
 from ..services.invoice_service import InvoiceService
@@ -653,7 +653,7 @@ async def get_stock_detail(
 @router.get("/getcustomervendorbybranch")
 async def get_customer_vendor_by_branch(
     branch: str = None,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # Allow all authenticated users
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),  # Allow all authenticated users (incl. order booker)
     db: AsyncSession = Depends(get_db)
 ):
     """

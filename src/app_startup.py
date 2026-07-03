@@ -48,7 +48,8 @@ async def create_default_roles(db_session):
         {"name": "admin", "permissions": '{"all": true}'},
         {"name": "cashier", "permissions": '{"pos": true, "view_inventory": true}'},
         {"name": "employee", "permissions": '{"view_products": true, "view_customers": true}'},
-        {"name": "warehouse", "permissions": '{"view_products": true, "manage_stock": true}'}
+        {"name": "warehouse", "permissions": '{"view_products": true, "manage_stock": true}'},
+        {"name": "order_booker", "permissions": '{"customers": true, "customer_invoice": true, "view_customer_order": true, "duplicate_bill": true}'}
     ]
 
     for role_data in default_roles:

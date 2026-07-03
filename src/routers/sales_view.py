@@ -17,7 +17,7 @@ from src.models.stock_entry import StockEntry, StockEntryType
 from src.models.product import Product
 from src.models.refund import Refund
 from src.models.warehouse_invoice import WarehouseInvoice
-from src.auth.session_auth import admin_cashier_employee_required_from_session, admin_employee_required_from_session
+from src.auth.session_auth import admin_cashier_employee_required_from_session, admin_employee_required_from_session, admin_cashier_employee_order_booker_required_from_session
 
 router = APIRouter()
 
@@ -28,7 +28,7 @@ async def get_dashboard_stats(
     to_date: str = Query(None, description="End date in YYYY-MM-DD format (overrides month/year)"),
     month: int = None,
     year: int = None,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access dashboard
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),  # All authenticated users (incl. order booker) can access dashboard
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -53,8 +53,8 @@ async def get_dashboard_stats(
     # Get user role for role-based response
     user_role = current_user.role.name if current_user and current_user.role else "admin"
 
-    # CASHIER: Force current date only, ignore all date parameters
-    if user_role == "cashier":
+    # CASHIER / ORDER_BOOKER: Force current date only, ignore all date parameters
+    if user_role in ("cashier", "order_booker"):
         first_day = today
         data_end_date = today
     elif from_date and to_date:
@@ -253,8 +253,8 @@ async def get_dashboard_stats(
         }
     }
 
-    # CASHIER: Do not include chart data (charts only for admin/employee)
-    if user_role != "cashier":
+    # CASHIER / ORDER_BOOKER: Do not include chart data (charts only for admin/employee)
+    if user_role not in ("cashier", "order_booker"):
         response["chartData"] = {
             "dates": dates,
             "sales": sales_data,
@@ -792,21 +792,33 @@ async def get_sales_summary(
     except Exception as e:
         total_refund_amount = 0.0
 
+    # Total Sale = walkin only (net of refund) — customer payments are separate
+    net_walkin_sales = walkin_total_sales - total_refund_amount
+
+    # Gross profit based on net walkin sales only
+    net_gross_profit = net_walkin_sales - walkin_total_cost
+
+    # Net profit = gross profit - expenses
+    net_profit_after_refund = net_gross_profit - total_expenses
+
+    # Net cash: opening + all cash collected (walkin + customer) - expenses - refunds paid out
+    net_cash_after_refund = net_cash - total_refund_amount
+
     return {
         "opening": opening,
-        "totalSale": total_sales,
-        "grossProfit": gross_profit,
+        "totalSale": net_walkin_sales,           # Walk-in only, net of refund
+        "grossProfit": net_gross_profit,
         "totalExpense": total_expenses,
         "totalRecovery": total_cash_sales,
         "vendorPayments": 0.0,
-        "netCash": net_cash,
-        "totalPurchase": total_purchase,  # Now actual cost from walk-in invoices
+        "netCash": net_cash_after_refund,
+        "totalPurchase": total_purchase,
         "totalRefund": total_refund_amount,
-        "netProfit": net_profit,
-        # Breakdown for reference
+        "netProfit": net_profit_after_refund,
+        # walkin_sales = GROSS (before refund) — UI box uses this for breakdown display
         "walkin_sales": walkin_total_sales,
         "customer_payments": customer_total_collection,
-        "walkin_cost": walkin_total_cost  # Actual cost for reference
+        "walkin_cost": walkin_total_cost
     }
 
 
@@ -848,19 +860,37 @@ async def get_walkin_invoices_pdf(
     invoice_rows = ""
     total_amount = 0.0
     total_cost = 0.0
-    
+    grand_total_paid = 0.0
+
+    # PKT offset for time display
+    from datetime import timezone as tz, timedelta as td
+    PKT = tz(td(hours=5))
+
+    def _to_pkt_time(dt):
+        if not dt:
+            return ''
+        return dt.replace(tzinfo=tz.utc).astimezone(PKT).strftime('%I:%M %p')
+
     for inv in invoices:
         try:
             items = json.loads(inv.items) if inv.items else []
-            totals = json.loads(inv.totals) if inv.totals else {}
+            inv_amount_paid = float(inv.amount_paid)
 
+            first_item = True
             for item in items:
                 product_name = item.get('product_name', item.get('pro_name', 'N/A'))
                 quantity = item.get('quantity', 0)
                 unit_price = item.get('unit_price', 0)
                 item_discount = float(item.get('discount', 0))
                 item_total = quantity * unit_price - item_discount
-                item_cost = item_total * 0.7
+                item_cost = float(item.get('cost_price', 0)) * quantity
+
+                # Amount Paid shown only on first row of each invoice (bold green)
+                if first_item:
+                    paid_cell = f'<td class="border text-right" style="font-weight:bold;color:#1a6b1a;">{inv_amount_paid:.0f}</td>'
+                    grand_total_paid += inv_amount_paid
+                else:
+                    paid_cell = '<td class="border"></td>'
 
                 invoice_rows += f"""
                 <tr>
@@ -871,21 +901,25 @@ async def get_walkin_invoices_pdf(
                     <td class="border text-right">{unit_price:.0f}</td>
                     <td class="border text-right">{item_discount:.0f}</td>
                     <td class="border text-right">{item_total:.0f}</td>
+                    {paid_cell}
                     <td class="border text-right">{item_cost:.0f}</td>
-                    <td class="border">{inv.created_at.strftime('%I:%M %p') if inv.created_at else ''}</td>
+                    <td class="border">{_to_pkt_time(inv.created_at)}</td>
                 </tr>
                 """
                 total_amount += item_total
                 total_cost += item_cost
+                first_item = False
         except:
             continue
-    
+
     # Calculate totals
     gross_profit = total_amount - total_cost
-    
+
     # Create HTML content for PDF
-    current_date = datetime.now().strftime('%d-%m-%Y %I:%M %p')
-    
+    from datetime import timezone as tz2, timedelta as td2
+    _pkt_now = datetime.now(tz2(td2(hours=5))).strftime('%d-%m-%Y %I:%M %p')
+    current_date = _pkt_now
+
     html_content = f"""
     <!DOCTYPE html>
     <html>
@@ -898,7 +932,7 @@ async def get_walkin_invoices_pdf(
             }}
             body {{
                 font-family: Arial, sans-serif;
-                font-size: 11px;
+                font-size: 10px;
                 margin: 0;
                 padding: 0;
             }}
@@ -906,14 +940,14 @@ async def get_walkin_invoices_pdf(
                 text-align: center;
                 color: #333;
                 margin: 0 0 10px 0;
-                font-size: 24px;
+                font-size: 22px;
                 font-weight: bold;
             }}
             .date-range {{
                 text-align: center;
                 margin: 0 0 15px 0;
                 color: #666;
-                font-size: 12px;
+                font-size: 11px;
             }}
             table {{
                 width: 100%;
@@ -922,15 +956,15 @@ async def get_walkin_invoices_pdf(
             }}
             .border {{
                 border: 1px solid #000;
-                padding: 6px;
+                padding: 5px;
             }}
             th {{
                 background-color: #444;
                 color: white;
                 font-weight: bold;
                 text-align: left;
-                padding: 8px;
-                font-size: 11px;
+                padding: 7px 5px;
+                font-size: 10px;
             }}
             .text-right {{
                 text-align: right;
@@ -956,20 +990,21 @@ async def get_walkin_invoices_pdf(
     </head>
     <body>
         <h1>Walk-in Invoice Report</h1>
-        <p class="date-range">From: {from_date} To: {to_date} | Generated: {current_date}</p>
-        
+        <p class="date-range">From: {from_date} To: {to_date} | Generated: {current_date} (PKT)</p>
+
         <table>
             <thead>
                 <tr>
-                    <th style="width: 12%;">Invoice No</th>
-                    <th style="width: 12%;">Date</th>
-                    <th style="width: 23%;">Product</th>
-                    <th style="width: 7%;">Qty</th>
-                    <th style="width: 9%;">Price</th>
-                    <th style="width: 9%;">Discount</th>
-                    <th style="width: 11%;">Total</th>
-                    <th style="width: 11%;">Cost</th>
-                    <th style="width: 10%;">Time</th>
+                    <th style="width: 11%;">Invoice No</th>
+                    <th style="width: 10%;">Date</th>
+                    <th style="width: 21%;">Product</th>
+                    <th style="width: 6%;">Qty</th>
+                    <th style="width: 8%;">Price</th>
+                    <th style="width: 8%;">Discount</th>
+                    <th style="width: 10%;">Total</th>
+                    <th style="width: 10%;">Amt Paid</th>
+                    <th style="width: 8%;">Cost</th>
+                    <th style="width: 8%;">Time</th>
                 </tr>
             </thead>
             <tbody>
@@ -980,16 +1015,21 @@ async def get_walkin_invoices_pdf(
                     <td class="border"></td>
                     <td class="border"></td>
                     <td class="border text-right" style="font-weight: bold;">{total_amount:.0f}</td>
+                    <td class="border text-right" style="font-weight: bold;">{grand_total_paid:.0f}</td>
                     <td class="border text-right" style="font-weight: bold;">{total_cost:.0f}</td>
                     <td class="border"></td>
                 </tr>
             </tbody>
         </table>
-        
+
         <div class="summary">
             <div class="summary-row">
-                <span class="summary-label">Total Sales:</span>
+                <span class="summary-label">Total Sales (items):</span>
                 <span>Rs. {total_amount:.0f}</span>
+            </div>
+            <div class="summary-row">
+                <span class="summary-label">Total Amount Paid:</span>
+                <span>Rs. {grand_total_paid:.0f}</span>
             </div>
             <div class="summary-row">
                 <span class="summary-label">Total Cost:</span>

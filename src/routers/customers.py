@@ -8,7 +8,7 @@ from ..database.database import get_db
 from ..models.user import User
 from ..models.customer import Customer, CustomerCreate, CustomerUpdate, CustomerRead
 from ..services.customer_service import CustomerService
-from ..auth.session_auth import admin_required_from_session, cashier_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session
+from ..auth.session_auth import admin_required_from_session, cashier_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session, admin_cashier_employee_order_booker_required_from_session, employee_order_booker_required_from_session
 from sqlalchemy import select, or_, func
 import json
 
@@ -18,7 +18,7 @@ router = APIRouter()
 async def get_customers(
     skip: int = 0,
     limit: int = 100,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can view customers
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),  # All authenticated users can view customers
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -36,7 +36,7 @@ async def view_customers(
     searchaddress: str = None,
     page: int = 1,       # Page number for backend pagination
     limit: int = 10000,      # 10000 items per page
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -150,7 +150,7 @@ async def view_customers(
 @router.post("/", response_model=CustomerRead)
 async def create_customer(
     customer_create: CustomerCreate,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can create customers
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),  # All authenticated users can create customers
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -161,7 +161,7 @@ async def create_customer(
 
 @router.get("/market-balance")
 async def get_market_balance(
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -180,7 +180,7 @@ async def get_market_balance(
 @router.get("/{customer_id}", response_model=CustomerRead)
 async def get_customer(
     customer_id: str,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can view customer details
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),  # All authenticated users can view customer details
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -209,7 +209,7 @@ async def get_customer(
 async def update_customer(
     customer_id: str,
     customer_update: CustomerUpdate,
-    current_user: User = Depends(employee_required_from_session()),  # Employees and above can update customers
+    current_user: User = Depends(employee_order_booker_required_from_session()),  # Employees and above (+ order booker) can update customers
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -266,7 +266,7 @@ async def delete_customer(
 @router.get("/get-customer/{id}")
 async def get_customer_details(
     id: str,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -329,7 +329,7 @@ async def get_customer_details(
 @router.post("/deletecustomer/{id}")
 async def delete_customer_frontend(
     id: str,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can delete customers
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),  # All authenticated users can delete customers
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -360,7 +360,7 @@ async def delete_customer_frontend(
 @router.post("/getcustomerbalance")
 async def get_customer_balance(
     branches: str = None,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can get customer balance
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),  # All authenticated users can get customer balance
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -384,7 +384,7 @@ async def get_customer_balance(
 @router.post("/customerviewreport")
 async def customer_view_report(
     timezone: str = None,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can generate reports
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),  # All authenticated users can generate reports
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -574,7 +574,7 @@ async def customer_view_report(
 @router.get("/getcustomervendorbybranch")
 async def get_customer_vendor_by_branch(
     branch: str = None,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """

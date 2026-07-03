@@ -3,7 +3,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Dict, Any
 from uuid import UUID
 import uuid
-from datetime import datetime, date
+from datetime import datetime, date, timezone, timedelta
+
+PKT = timezone(timedelta(hours=5))  # Pakistan Standard Time = UTC+5
+
+def to_pkt(dt: datetime) -> datetime:
+    """Convert a naive UTC datetime (as stored by GCP server) to PKT."""
+    return dt.replace(tzinfo=timezone.utc).astimezone(PKT)
+
+def pkt_now() -> datetime:
+    return datetime.now(timezone.utc).astimezone(PKT)
 import json
 import base64
 
@@ -14,7 +23,7 @@ from ..models.salesman import Salesman
 from ..models.customer_invoice import CustomerInvoice, CustomerInvoiceCreate, CustomerInvoiceUpdate, CustomerInvoiceRead, CustomerInvoiceStatus
 from ..models.invoice import Invoice
 from ..models.product import Product
-from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, cashier_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session
+from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, cashier_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session, admin_cashier_employee_order_booker_required_from_session, employee_order_booker_required_from_session
 from ..services.customer_service import CustomerService
 from ..services.salesman_service import SalesmanService
 from ..models.customer import CustomerCreate
@@ -25,7 +34,7 @@ router = APIRouter()
 @router.post("/GetCustomerDetails")
 async def get_customer_details(
     request_data: dict,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -71,7 +80,7 @@ async def get_customer_details(
 @router.post("/Getsalesmandetail")
 async def get_salesman_detail(
     request_data: dict,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -109,7 +118,7 @@ async def get_salesman_detail(
 @router.post("/SaveCustomerOrders")
 async def save_customer_orders(
     request_data: dict = None,
-    current_user: User = Depends(employee_required_from_session()),
+    current_user: User = Depends(employee_order_booker_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -428,7 +437,7 @@ async def save_customer_orders(
 @router.post("/receipt/{invoice_id}")
 async def get_invoice_receipt(
     invoice_id: str,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -497,8 +506,9 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
     elif "credit" in display_payment_method.lower():
         display_payment_method = "Credit"
 
-    # Format date
-    date_str = created_at.strftime("%m-%d-%Y %I:%M %p")
+    # Convert UTC stored time to PKT for display
+    created_at_pkt = to_pkt(created_at) if created_at.tzinfo is None else created_at.astimezone(PKT)
+    date_str = created_at_pkt.strftime("%m-%d-%Y %I:%M %p")
     
     # Build items rows
     items_rows = ""
@@ -533,7 +543,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
         total = float(item.get('total_price', 0))
         items_rows += f'<tr><td style="width: 40%; border-bottom: 1px dashed #000; padding: 2px;"><div style="font-weight: bold; margin-bottom: 3px;">{name}</div></td><td style="width: 15%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{price:.0f}</td><td style="width: 12%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{qty}</td><td style="width: 13%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{disc:.0f}</td><td style="width: 20%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{total:.0f}</td></tr>\n'
 
-    current_date = created_at.strftime('%d-%m-%Y %I:%M %p')
+    current_date = created_at_pkt.strftime('%d-%m-%Y %I:%M %p')
     team_line = f"<p>Team: {team_name}</p>" if team_name else ""
 
     # Logo - use European Sports logo from backend Images folder
@@ -795,7 +805,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
 @router.post("/GetCustomerInvoiceBalance")
 async def get_customer_invoice_balance(
     customer_id: str = None,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -850,7 +860,7 @@ async def update_customer_invoice(
     e_name: str = None,
     e_amount: float = None,
     note: str = None,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -947,7 +957,7 @@ async def update_customer_invoice(
 @router.get("/Getorder/{id}")
 async def get_order(
     id: str,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1031,7 +1041,7 @@ async def view_customer_order(
     include_stats: bool = Query(False),
     skip: int = 0,
     limit: int = 100,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1192,7 +1202,7 @@ async def view_customer_order(
 @router.get("/Getorder/{id}")
 async def get_order(
     id: str,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1276,7 +1286,7 @@ async def customer_order_report(
     orderid: str = None,
     timezone: str = None,
     printoption: str = None,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1331,7 +1341,7 @@ async def customer_order_report(
 @router.post("/Deletecustomorder/{id}")
 async def delete_custom_order_endpoint(
     id: str,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1375,7 +1385,7 @@ async def delete_custom_order_endpoint(
 async def update_customer_invoice(
     id: str,
     request_data: dict,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1439,7 +1449,7 @@ async def update_customer_invoice(
 @router.post("/Customers")
 async def create_customer_from_modal(
     request_data: dict,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1522,7 +1532,7 @@ async def create_customer_from_modal(
 @router.post("/GetSalesmanDetails")
 async def get_salesman_details(
     request_data: dict,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1556,7 +1566,7 @@ async def get_salesman_details(
 @router.post("/customerbalance")
 async def customer_balance(
     request_data: dict,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1605,7 +1615,7 @@ async def customer_balance(
 @router.get("/customerbalance/{customer_id}")
 async def get_customer_balance(
     customer_id: str,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1679,7 +1689,7 @@ async def get_customer_orders(
     skip: int = 0,
     limit: int = 10,
     searchString: str = None,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1784,7 +1794,7 @@ async def get_customer_orders(
 @router.get("/order-details/{order_id}")
 async def get_order_details(
     order_id: str,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1853,7 +1863,7 @@ async def get_order_details(
 async def process_payment(
     order_id: str,
     payment_data: dict,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1991,7 +2001,7 @@ async def process_payment(
 @router.get("/payment-history/{order_id}")
 async def get_payment_history(
     order_id: str,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -2042,7 +2052,7 @@ async def get_payment_history(
 async def update_order_status(
     order_id: str,
     request_data: dict,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -2103,7 +2113,7 @@ async def update_order_status(
 @router.get("/daily-collection-report/{date}")
 async def daily_collection_report(
     date: str,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -2172,7 +2182,7 @@ async def daily_collection_report(
 @router.get("/payment-history/{order_id}")
 async def get_payment_history(
     order_id: str,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -2215,7 +2225,7 @@ async def get_payment_history(
 @router.get("/customerinvoicesbydate")
 async def get_customer_invoices_by_date(
     date: str,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
+    current_user: User = Depends(admin_cashier_employee_order_booker_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """

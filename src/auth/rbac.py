@@ -43,6 +43,9 @@ def cashier_required():
 def employee_required():
     return require_role(["admin", "employee"])
 
+def order_booker_required():
+    return require_role(["admin", "order_booker"])
+
 def require_admin_or_self():
     """
     Decorator to require admin role or access to own data

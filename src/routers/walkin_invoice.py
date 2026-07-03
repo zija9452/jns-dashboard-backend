@@ -4,7 +4,12 @@ from typing import List, Dict, Optional
 import uuid
 import json
 import base64
-from datetime import datetime, date
+from datetime import datetime, date, timezone, timedelta
+
+PKT = timezone(timedelta(hours=5))  # Pakistan Standard Time = UTC+5
+
+def pkt_now() -> datetime:
+    return datetime.now(timezone.utc).astimezone(PKT)
 from decimal import Decimal
 from sqlalchemy import select, func
 import logging
@@ -16,6 +21,7 @@ from ..models.customer import Customer
 from ..models.salesman import Salesman
 from ..models.user import User
 from ..models.daily_cash import DailyCash, DailyCashCreate, DailyCashUpdate
+from ..models.stock_entry import StockEntry, StockEntryType
 from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, cashier_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session
 
 router = APIRouter()
@@ -36,13 +42,13 @@ async def create_walkin_invoice(
     salesman_id = request_data.get('salesman_id')
     payment_method = request_data.get('payment_method', 'cash')
     
-    # Get date from frontend, combine with PC current time
-    payment_date_str = request_data.get('payment_date', datetime.now().isoformat())
-    
-    # Parse date and combine with current time
+    # Get date from frontend, combine with current PKT time
+    payment_date_str = request_data.get('payment_date', pkt_now().isoformat())
+
+    # Parse date and combine with current PKT time
     selected_date = datetime.fromisoformat(payment_date_str).date()
-    current_time = datetime.now().time()
-    payment_date = datetime.combine(selected_date, current_time)
+    current_time_pkt = pkt_now().time()
+    payment_date = datetime.combine(selected_date, current_time_pkt)
 
     manual_discount = float(request_data.get('manual_discount', 0))
     notes = request_data.get('notes', '')
@@ -78,6 +84,7 @@ async def create_walkin_invoice(
 
     # Process each order item and update inventory
     items_list = []
+    sold_items_for_stock_entry = []  # collect for StockEntry(OUT) creation after invoice_no is known
     total_amount = Decimal('0')  # Total before discounts (this is the original total)
     total_discount = 0.0  # Total discount amount
 
@@ -112,7 +119,8 @@ async def create_walkin_invoice(
             )
 
         # Verify product exists in the database
-        product_result = await db.execute(select(Product).where(Product.name == pro_name))
+        # with_for_update() locks the row so concurrent requests can't read stale stock
+        product_result = await db.execute(select(Product).where(Product.name == pro_name).with_for_update())
         product = product_result.scalar_one_or_none()
         if not product:
             raise HTTPException(
@@ -156,7 +164,14 @@ async def create_walkin_invoice(
         if new_stock_level < 0:
             new_stock_level = 0  # Don't allow negative stock
         product.stock_level = new_stock_level
-        await db.commit()
+
+        # Collect for StockEntry(OUT) — created after invoice_no is known below
+        sold_items_for_stock_entry.append({
+            "product_id": product.id,
+            "qty": quantity,
+            "cost_price": product.cost_price,
+        })
+        # No commit here — committed atomically with the invoice below
 
     # Add manual discount to total discount
     total_discount += manual_discount
@@ -218,6 +233,18 @@ async def create_walkin_invoice(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Could not generate unique invoice number"
             )
+
+        # Create OUT stock entries — ref=invoice_no so every sale is traceable
+        for si in sold_items_for_stock_entry:
+            stock_out_entry = StockEntry(
+                product_id=si["product_id"],
+                qty=si["qty"],
+                cost_price=si["cost_price"],
+                type=StockEntryType.SALE,
+                location="Sale",
+                ref=invoice_no,
+            )
+            db.add(stock_out_entry)
 
         # Create invoice object
         invoice_obj = Invoice(
@@ -1202,8 +1229,9 @@ def generate_walkin_receipt_pdf(invoice_no, customer_name, team_name, items, tot
     elif "credit" in display_payment_method.lower():
         display_payment_method = "Credit"
 
-    # Format date
-    date_str = created_at.strftime("%m-%d-%Y %I:%M %p")
+    # Convert UTC stored time to PKT for display on bill
+    created_at_pkt = created_at.replace(tzinfo=timezone.utc).astimezone(PKT) if created_at.tzinfo is None else created_at.astimezone(PKT)
+    date_str = created_at_pkt.strftime("%m-%d-%Y %I:%M %p")
 
     # Build items rows (same as customer_invoice.py)
     items_rows = ""
@@ -1215,7 +1243,7 @@ def generate_walkin_receipt_pdf(invoice_no, customer_name, team_name, items, tot
         total = float(item.get('total_price', 0))
         items_rows += f'<tr><td style="width: 40%; border-bottom: 1px dashed #000; padding: 2px;"><div style="font-weight: bold; margin-bottom: 3px;">{name}</div></td><td style="width: 15%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{price:.0f}</td><td style="width: 12%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{qty}</td><td style="width: 13%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{disc:.0f}</td><td style="width: 20%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{total:.0f}</td></tr>\n'
 
-    current_date = created_at.strftime('%d-%m-%Y %I:%M %p')
+    current_date = created_at_pkt.strftime('%d-%m-%Y %I:%M %p')
     team_line = f"<p>Team: {team_name}</p>" if team_name else ""
 
     # Logo - use European Sports logo from backend Images folder
@@ -1423,10 +1451,9 @@ def generate_walkin_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             </tbody>
         </table>
         <div class="totals">
-            <p class="total-row"><span class="total-label">Total Bill:</span><span class="total-value">{total_amount:.0f}</span></p>
-            <p class="total-row"><span class="total-label">Item Discount:</span><span class="total-value">0</span></p>
+            <p class="total-row"><span class="total-label">Sub Total:</span><span class="total-value">{total_amount:.0f}</span></p>
             <p class="total-row"><span class="total-label">Total Discount(Rs):</span><span class="total-value">{total_discount:.0f}</span></p>
-            <p class="total-row"><span class="total-label">Grand Total:</span><span class="total-value">{total_amount - total_discount:.0f}</span></p>
+            <p class="total-row"><span class="total-label">Total Bill:</span><span class="total-value">{total_amount - total_discount:.0f}</span></p>
             <p class="total-row"><span class="total-label">Amount Paid:</span><span class="total-value">{amount_paid:.0f}</span></p>
             <p class="total-row"><span class="total-label">Balance:</span><span class="total-value">{(total_amount - total_discount) - amount_paid:.0f}</span></p>
         </div>

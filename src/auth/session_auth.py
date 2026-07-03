@@ -86,6 +86,39 @@ def admin_cashier_employee_required_from_session():
     return role_checker
 
 
+def admin_cashier_employee_order_booker_required_from_session():
+    """Require admin, cashier, employee, warehouse, or order_booker role from session
+
+    Used for modules order_booker is allowed into (customers, customer invoice,
+    duplicate bill, dashboard) without granting order_booker access to every
+    other module that shares admin_cashier_employee_required_from_session.
+    """
+    async def role_checker(current_user: User = Depends(get_current_user_from_session)):
+        if current_user.role.name not in ["admin", "cashier", "employee", "warehouse", "order_booker"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin, cashier, employee, warehouse, or order booker access required"
+            )
+        return current_user
+    return role_checker
+
+
+def employee_order_booker_required_from_session():
+    """Require admin, cashier, employee, or order_booker role from session
+
+    Narrow variant of employee_required_from_session() that also allows
+    order_booker, for the specific customer-order endpoints order bookers use.
+    """
+    async def role_checker(current_user: User = Depends(get_current_user_from_session)):
+        if current_user.role.name not in ["employee", "cashier", "admin", "order_booker"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Employee, cashier, admin, or order booker access required"
+            )
+        return current_user
+    return role_checker
+
+
 def admin_employee_required_from_session():
     """Require admin or employee role from session (cashier NOT allowed)"""
     async def role_checker(current_user: User = Depends(get_current_user_from_session)):

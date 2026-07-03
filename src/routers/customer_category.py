@@ -15,7 +15,7 @@ from ..models.customer_category import (
 )
 from ..models.ideal_price import IdealPrice
 from ..models.user import User
-from ..auth.session_auth import employee_required_from_session
+from ..auth.session_auth import employee_required_from_session, employee_order_booker_required_from_session
 
 router = APIRouter(prefix="/customer-category", tags=["Customer Category"])
 
@@ -72,7 +72,7 @@ async def get_customer_categories(
     page: int = 1,
     limit: int = 50,
     search_string: Optional[str] = None,
-    current_user: User = Depends(employee_required_from_session()),
+    current_user: User = Depends(employee_order_booker_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -132,7 +132,7 @@ async def get_customer_categories(
 @router.get("/grouped")
 async def get_grouped_customer_categories(
     branch: Optional[str] = None,
-    current_user: User = Depends(employee_required_from_session()),
+    current_user: User = Depends(employee_order_booker_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -203,7 +203,7 @@ async def get_grouped_customer_categories(
 @router.get("/{category_id}", response_model=CustomerCategoryRead)
 async def get_customer_category(
     category_id: UUID,
-    current_user: User = Depends(employee_required_from_session()),
+    current_user: User = Depends(employee_order_booker_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """Get a specific customer category by ID"""

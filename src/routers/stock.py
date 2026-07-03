@@ -5,9 +5,20 @@ from sqlalchemy import select
 from typing import List, Optional
 from uuid import UUID
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import base64
 import os
+
+# Pakistan Standard Time = UTC+5
+PKT = timezone(timedelta(hours=5))
+
+def to_pkt(dt: datetime) -> datetime:
+    """Convert a naive UTC datetime (as stored by GCP server) to PKT."""
+    return dt.replace(tzinfo=timezone.utc).astimezone(PKT)
+
+def pkt_now() -> datetime:
+    """Current time in PKT."""
+    return datetime.now(timezone.utc).astimezone(PKT)
 from pydantic import BaseModel
 
 
@@ -579,8 +590,8 @@ async def stock_report(
     products = result.scalars().all()
 
     # Generate HTML content for PDF
-    current_date = datetime.now().strftime('%d-%m-%Y')
-    
+    current_date = pkt_now().strftime('%d-%m-%Y')
+
     # Build product rows for PDF table
     product_rows_list = []
     for i, product in enumerate(products):
@@ -802,10 +813,11 @@ async def stock_in_report(
         # Build product rows with individual stock-in entries (with date & time at end)
         product_rows_list = []
         for i, (entry, product) in enumerate(results):
-            # Format date and time
-            entry_date = entry.created_at.strftime("%d-%m-%Y")
-            entry_time = entry.created_at.strftime("%I:%M %p")
-            
+            # Convert UTC stored time to PKT for display
+            entry_pkt = to_pkt(entry.created_at)
+            entry_date = entry_pkt.strftime("%d-%m-%Y")
+            entry_time = entry_pkt.strftime("%I:%M %p")
+
             product_rows_list.append(f"""
             <tr>
                 <td class="border" style="text-align: center;">{i+1}</td>
@@ -813,18 +825,19 @@ async def stock_in_report(
                 <td class="border">{product.barcode or '-'}</td>
                 <td class="border text-right">{entry.qty}</td>
                 <td class="border text-right">{float(product.unit_price) if product.unit_price else 0.0:.2f}</td>
-                <td class="border text-right">{float(product.cost_price) if product.cost_price else 0.0:.2f}</td>
+                <td class="border text-right">{float(entry.cost_price) if entry.cost_price else 0.0:.2f}</td>
                 <td class="border">{product.category or '-'}</td>
                 <td class="border">{product.branch or '-'}</td>
                 <td class="border">{entry_date}</td>
                 <td class="border">{entry_time}</td>
             </tr>
             """)
-        
+
         product_rows = "".join(product_rows_list)
 
-        # Calculate total
+        # Calculate totals (exact, based on the cost_price actually recorded for each stock-in entry)
         total_qty = sum(entry.qty for entry, product in results)
+        total_cost = sum(entry.qty * float(entry.cost_price or 0) for entry, product in results)
         
         html_content = f"""
         <!DOCTYPE html>
@@ -919,7 +932,9 @@ async def stock_in_report(
                     <tr>
                         <td colspan="3" class="border text-right" style="font-weight: bold;">Total:</td>
                         <td class="border text-right" style="font-weight: bold;">{total_qty}</td>
-                        <td colspan="6"></td>
+                        <td class="border"></td>
+                        <td class="border text-right" style="font-weight: bold;">{total_cost:.2f}</td>
+                        <td colspan="4"></td>
                     </tr>
                 </tfoot>
             </table>
@@ -951,6 +966,95 @@ async def stock_in_report(
         encoded_pdf = base64.b64encode(pdf_content.encode()).decode()
     
     return encoded_pdf
+
+
+@router.post("/stockinreportexcel")
+async def stock_in_report_excel(
+    date_from: str,
+    date_to: str,
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate date-wise stock-in report in Excel format (base64 encoded).
+    Same data as /stockinreport (PDF), meant for heavy date ranges where the
+    PDF becomes too large to open. Cost is the exact cost_price recorded on
+    each stock-in entry (not the product's current/master cost_price), so it
+    matches the vendor balance added at stock-in time (qty * cost_price).
+    Access: Admin, Cashier, Employee
+
+    Query Params:
+    - date_from: Start date (YYYY-MM-DD)
+    - date_to: End date (YYYY-MM-DD)
+    """
+    import io
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+    from datetime import datetime as dt
+
+    try:
+        from_date = dt.strptime(date_from, "%Y-%m-%d")
+        to_date = dt.strptime(date_to, "%Y-%m-%d")
+        to_date = to_date.replace(hour=23, minute=59, second=59)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+    statement = (
+        select(StockEntry, Product)
+        .join(Product, StockEntry.product_id == Product.id)
+        .where(StockEntry.type == StockEntryType.IN)
+        .where(StockEntry.location == "Stock In")
+        .where(StockEntry.created_at >= from_date)
+        .where(StockEntry.created_at <= to_date)
+        .order_by(StockEntry.created_at.desc())
+    )
+
+    result = await db.execute(statement)
+    results = result.all()
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Stock In Report"
+
+    headers = ["S.No", "Product Name", "Barcode", "Qty In", "Price", "Cost", "Category", "Branch", "Date", "Time"]
+    ws.append(headers)
+
+    total_qty = 0
+    total_cost = 0.0
+    for i, (entry, product) in enumerate(results):
+        entry_pkt = to_pkt(entry.created_at)
+        qty = entry.qty
+        cost_price = float(entry.cost_price) if entry.cost_price is not None else 0.0
+        total_qty += qty
+        total_cost += qty * cost_price
+
+        ws.append([
+            i + 1,
+            product.name,
+            product.barcode or "",
+            qty,
+            float(product.unit_price) if product.unit_price else 0.0,
+            cost_price,
+            product.category or "",
+            product.branch or "",
+            entry_pkt.strftime("%d-%m-%Y"),
+            entry_pkt.strftime("%I:%M %p"),
+        ])
+
+    total_row = ["", "", "", total_qty, "", round(total_cost, 2), "", "", "", ""]
+    ws.append(total_row)
+    last_row = ws.max_row
+    for col in range(1, len(headers) + 1):
+        ws.cell(row=last_row, column=col).font = Font(bold=True)
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+
+    excel_content = buffer.getvalue()
+    encoded_excel = base64.b64encode(excel_content).decode()
+
+    return encoded_excel
 
 
 @router.post("/warehousestockinreport")
@@ -1016,10 +1120,11 @@ async def warehouse_stock_in_report(
         # Build product rows
         product_rows_list = []
         for i, (entry, product) in enumerate(results):
-            # Format date and time
-            entry_date = entry.created_at.strftime("%d-%m-%Y")
-            entry_time = entry.created_at.strftime("%I:%M %p")
-            
+            # Convert UTC stored time to PKT for display
+            entry_pkt = to_pkt(entry.created_at)
+            entry_date = entry_pkt.strftime("%d-%m-%Y")
+            entry_time = entry_pkt.strftime("%I:%M %p")
+
             product_rows_list.append(f"""
             <tr>
                 <td class="border" style="text-align: center;">{i+1}</td>
@@ -1260,8 +1365,8 @@ async def daily_inventory_report(
     products = result.scalars().all()
 
     # Generate HTML content for PDF
-    current_date = datetime.now().strftime('%d-%m-%Y')
-    
+    current_date = pkt_now().strftime('%d-%m-%Y')
+
     product_rows = ""
     for i, product in enumerate(products):
         product_rows += f"""

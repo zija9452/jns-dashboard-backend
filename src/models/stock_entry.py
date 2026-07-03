@@ -9,6 +9,7 @@ from decimal import Decimal
 class StockEntryType(str, Enum):
     IN = "IN"
     OUT = "OUT"
+    SALE = "SALE"
     ADJUST = "ADJUST"
 
 class StockEntry(SQLModel, table=True):
