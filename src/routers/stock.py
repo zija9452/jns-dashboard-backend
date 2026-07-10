@@ -13,8 +13,8 @@ import os
 PKT = timezone(timedelta(hours=5))
 
 def to_pkt(dt: datetime) -> datetime:
-    """Convert a naive UTC datetime (as stored by GCP server) to PKT."""
-    return dt.replace(tzinfo=timezone.utc).astimezone(PKT)
+    """created_at is stored as naive local (Asia/Karachi) time already - no UTC shift needed."""
+    return dt if dt.tzinfo is None else dt.astimezone(PKT)
 
 def pkt_now() -> datetime:
     """Current time in PKT."""

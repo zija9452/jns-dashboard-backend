@@ -607,8 +607,12 @@ async def get_walkin_invoices(
             quantity = item.get('quantity', 0)
             total_quantity += int(quantity) if quantity else 0
 
-        # Calculate balance
-        balance = float(inv.total_amount) - float(inv.amount_paid)
+        # Walk-in invoices are always paid in full immediately (payment_status is
+        # hardcoded "paid" at creation, balance_due is always 0.0) — so
+        # total_amount - amount_paid is never an outstanding balance, it's the
+        # discount that was given (total_amount is pre-discount, amount_paid is
+        # post-discount). Report it as such instead of a misleading "balance".
+        discount = float(inv.discounts) if inv.discounts else 0.0
 
         invoice_list.append({
             "invoice_id": str(inv.id),
@@ -619,7 +623,7 @@ async def get_walkin_invoices(
             "quantity": total_quantity,
             "total_amount": float(inv.total_amount),
             "amount_paid": float(inv.amount_paid),
-            "balance": balance,
+            "discount": discount,
             "date": inv.created_at.strftime("%Y-%m-%d"),
             "status": getattr(inv, 'payment_status', 'paid'),  # Use payment_status instead of status
             "items": items_data,
@@ -1229,8 +1233,8 @@ def generate_walkin_receipt_pdf(invoice_no, customer_name, team_name, items, tot
     elif "credit" in display_payment_method.lower():
         display_payment_method = "Credit"
 
-    # Convert UTC stored time to PKT for display on bill
-    created_at_pkt = created_at.replace(tzinfo=timezone.utc).astimezone(PKT) if created_at.tzinfo is None else created_at.astimezone(PKT)
+    # created_at is stored as naive local (Asia/Karachi) time already - no UTC shift needed
+    created_at_pkt = created_at if created_at.tzinfo is None else created_at.astimezone(PKT)
     date_str = created_at_pkt.strftime("%m-%d-%Y %I:%M %p")
 
     # Build items rows (same as customer_invoice.py)
@@ -1244,7 +1248,7 @@ def generate_walkin_receipt_pdf(invoice_no, customer_name, team_name, items, tot
         items_rows += f'<tr><td style="width: 40%; border-bottom: 1px dashed #000; padding: 2px;"><div style="font-weight: bold; margin-bottom: 3px;">{name}</div></td><td style="width: 15%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{price:.0f}</td><td style="width: 12%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{qty}</td><td style="width: 13%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{disc:.0f}</td><td style="width: 20%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{total:.0f}</td></tr>\n'
 
     current_date = created_at_pkt.strftime('%d-%m-%Y %I:%M %p')
-    team_line = f"<p>Team: {team_name}</p>" if team_name else ""
+    team_line = f" | <strong>Team:</strong> {team_name}" if team_name else ""
 
     # Logo - use European Sports logo from backend Images folder
     import os
@@ -1281,13 +1285,13 @@ def generate_walkin_receipt_pdf(invoice_no, customer_name, team_name, items, tot
         <meta charset="UTF-8">
         <style>
             @page {{
-                size: 300px 1000px;
+                size: 246px 1000px;
                 margin: 0;
             }}
             body {{
-                width: 300px;
+                width: 246px;
                 font-family: Arial, Helvetica, sans-serif;
-                font-size: 12px;
+                font-size: 10px;
                 margin: 0;
                 padding: 0 5px;
                 box-sizing: border-box;
@@ -1301,7 +1305,7 @@ def generate_walkin_receipt_pdf(invoice_no, customer_name, team_name, items, tot
                 padding-top: 5px;
             }}
             .header h1 {{
-                font-size: 16px;
+                font-size: 14px;
                 margin: 2px 0;
                 font-weight: bold;
                 text-transform: uppercase;
@@ -1320,12 +1324,12 @@ def generate_walkin_receipt_pdf(invoice_no, customer_name, team_name, items, tot
                 margin: 0 auto;
             }}
             .contact {{
-                font-size: 12px;
+                font-size: 10px;
                 margin: 3px 0;
                 text-align: center;
             }}
             .info {{
-                font-size: 11px;
+                font-size: 9px;
                 margin: 8px 0;
                 border-bottom: 2px solid #000;
                 padding-bottom: 8px;
@@ -1340,7 +1344,7 @@ def generate_walkin_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             }}
             .duplicate {{
                 text-align: center;
-                font-size: 14px;
+                font-size: 12px;
                 font-weight: bold;
                 margin: 8px 0;
                 border-bottom: 2px solid #000;
@@ -1351,20 +1355,20 @@ def generate_walkin_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             table {{
                 width: 100%;
                 border-collapse: collapse;
-                font-size: 11px;
+                font-size: 9px;
                 margin: 8px 0;
             }}
             th {{
                 border-top: 2px solid #000;
                 border-bottom: 2px solid #000;
-                font-size: 11px;
+                font-size: 9px;
                 font-weight: 600;
                 padding: 5px 2px;
                 text-align: left;
                 font-weight: 500;
             }}
             td {{
-                font-size: 11px;
+                font-size: 9px;
                 padding: 5px 2px;
                 vertical-align: top;
                 text-align: center;
@@ -1386,7 +1390,7 @@ def generate_walkin_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             }}
             .total-row {{
                 font-weight: bold;
-                font-size: 12px;
+                font-size: 10px;
                 margin: 3px 0;
             }}
             .total-label {{
@@ -1404,7 +1408,7 @@ def generate_walkin_receipt_pdf(invoice_no, customer_name, team_name, items, tot
                 padding-top: 2px;
                 padding-bottom: 0px;
                 text-align: center;
-                font-size: 11px;
+                font-size: 9px;
                 font-weight: bold;
             }}
             .footer {{
@@ -1413,7 +1417,7 @@ def generate_walkin_receipt_pdf(invoice_no, customer_name, team_name, items, tot
                 padding-top: 8px;
                 padding-bottom: 8px;
                 text-align: center;
-                font-size: 9px;
+                font-size: 7px;
             }}
             .footer p {{
                 margin: 4px 0;
@@ -1432,7 +1436,7 @@ def generate_walkin_receipt_pdf(invoice_no, customer_name, team_name, items, tot
         <div class="info">
             <p><strong>Date:</strong> {current_date}</p>
             <p><strong>Bill No:</strong> {invoice_no}</p>
-            <p><strong>User:</strong> Admin | <strong>Name:</strong> {customer_name}</p>
+            <p><strong>Name:</strong> {customer_name}{team_line}</p>
             <p><strong>Ph:</strong> 00 | <strong>Remarks:</strong> 0</p>
         </div>
         <div class="duplicate">*** {bill_type} ***</div>
@@ -1462,7 +1466,7 @@ def generate_walkin_receipt_pdf(invoice_no, customer_name, team_name, items, tot
         </div>
         <div class="footer">
             <p>Thankyou For Shopping. Come Again.</p>
-            <p>No Return No Exchange Without Bill</p>
+            <p>No Returns. Exchange is accepted within 2 days only with the original purchase receipt (bill).</p>
         </div>
     </body>
     </html>

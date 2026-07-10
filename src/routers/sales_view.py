@@ -295,7 +295,7 @@ async def get_walkin_invoices(
             func.date(Invoice.payment_date) >= from_date_obj,
             func.date(Invoice.payment_date) <= to_date_obj
         )
-    )
+    ).order_by(Invoice.invoice_no)
 
     result = await db.execute(statement)
     invoices = result.scalars().all()
@@ -852,7 +852,7 @@ async def get_walkin_invoices_pdf(
             func.date(Invoice.payment_date) >= from_date_obj,
             func.date(Invoice.payment_date) <= to_date_obj
         )
-    )
+    ).order_by(Invoice.invoice_no)
     result = await db.execute(statement)
     invoices = result.scalars().all()
 
@@ -869,7 +869,9 @@ async def get_walkin_invoices_pdf(
     def _to_pkt_time(dt):
         if not dt:
             return ''
-        return dt.replace(tzinfo=tz.utc).astimezone(PKT).strftime('%I:%M %p')
+        # created_at is stored as naive local (Asia/Karachi) time already - no UTC shift needed
+        dt_pkt = dt if dt.tzinfo is None else dt.astimezone(PKT)
+        return dt_pkt.strftime('%I:%M %p')
 
     for inv in invoices:
         try:
@@ -1089,7 +1091,7 @@ async def get_walkin_invoices_excel(
             func.date(Invoice.payment_date) >= from_date_obj,
             func.date(Invoice.payment_date) <= to_date_obj
         )
-    )
+    ).order_by(Invoice.invoice_no)
     result = await db.execute(statement)
     invoices = result.scalars().all()
 
@@ -1266,15 +1268,17 @@ async def get_customized_invoices_pdf(
                 payment_date_str = payment.get('date', '')
                 if payment_date_str:
                     try:
+                        payment_datetime = None
                         if 'T' in payment_date_str:
-                            payment_date = datetime.fromisoformat(payment_date_str).date()
+                            payment_datetime = datetime.fromisoformat(payment_date_str)
+                            payment_date = payment_datetime.date()
                         else:
                             payment_date = datetime.strptime(payment_date_str, '%Y-%m-%d').date()
-                        
+
                         if from_date_obj <= payment_date <= to_date_obj:
                             amount = float(payment.get('amount', 0))
                             method = payment.get('payment_method', 'cash')
-                            
+
                             invoice_rows += f"""
                             <tr>
                                 <td class="border">{inv.invoice_no}</td>
@@ -1282,7 +1286,7 @@ async def get_customized_invoices_pdf(
                                 <td class="border">{inv.customer_name or 'N/A'}</td>
                                 <td class="border text-right">{amount:.0f}</td>
                                 <td class="border">{method}</td>
-                                <td class="border">{payment_date.strftime('%I:%M %p') if 'T' in payment_date_str else '12:00 AM'}</td>
+                                <td class="border">{payment_datetime.strftime('%I:%M %p') if payment_datetime else '12:00 AM'}</td>
                             </tr>
                             """
                             total_collection += amount
@@ -1488,22 +1492,24 @@ async def get_customized_invoices_excel(
                 payment_date_str = payment.get('date', '')
                 if payment_date_str:
                     try:
+                        payment_datetime = None
                         if 'T' in payment_date_str:
-                            payment_date = datetime.fromisoformat(payment_date_str).date()
+                            payment_datetime = datetime.fromisoformat(payment_date_str)
+                            payment_date = payment_datetime.date()
                         else:
                             payment_date = datetime.strptime(payment_date_str, '%Y-%m-%d').date()
-                        
+
                         if from_date_obj <= payment_date <= to_date_obj:
                             amount = float(payment.get('amount', 0))
                             method = payment.get('payment_method', 'cash')
-                            
+
                             # Write row data
                             ws.cell(row=row_num, column=1, value=inv.invoice_no).border = thin_border
                             ws.cell(row=row_num, column=2, value=payment_date.strftime('%Y-%m-%d')).border = thin_border
                             ws.cell(row=row_num, column=3, value=inv.customer_name or 'N/A').border = thin_border
                             ws.cell(row=row_num, column=4, value=round(amount, 2)).border = thin_border
                             ws.cell(row=row_num, column=5, value=method).border = thin_border
-                            ws.cell(row=row_num, column=6, value=payment_date.strftime('%I:%M %p') if 'T' in payment_date_str else '12:00 AM').border = thin_border
+                            ws.cell(row=row_num, column=6, value=payment_datetime.strftime('%I:%M %p') if payment_datetime else '12:00 AM').border = thin_border
                             
                             # Apply alignments
                             for col in range(1, 7):
@@ -2246,17 +2252,30 @@ async def get_refunds_pdf(
             
             # Parse refund items to get product details
             refund_items = json.loads(refund.items) if refund.items else []
-            
+
+            # refund.amount is the authoritative refunded amount (what was
+            # actually paid back), not quantity * unit_price. Accumulate it
+            # once per refund, then split across items proportionally to
+            # their computed value so per-row amounts sum back to it.
+            refund_amount = float(refund.amount)
+            total_refund_amount += refund_amount
+
+            items_subtotal = sum(
+                item.get('quantity_returned', 0) * item.get('unit_price', 0)
+                for item in refund_items
+            )
+
             for item in refund_items:
                 product_name = item.get('product_name', 'N/A')
                 quantity = item.get('quantity_returned', 0)
                 unit_price = item.get('unit_price', 0)
-                item_total = quantity * unit_price
-                item_cost = item_total * 0.7  # 70% cost calculation
-                
-                refund_amount = float(refund.amount)
-                total_refund_amount += refund_amount
-                
+                item_computed_total = quantity * unit_price
+                item_amount = (
+                    refund_amount * (item_computed_total / items_subtotal)
+                    if items_subtotal else refund_amount
+                )
+                item_cost = item_computed_total * 0.7  # 70% cost calculation
+
                 refund_rows += f"""
                 <tr>
                     <td class="border">{invoice_no}</td>
@@ -2264,7 +2283,7 @@ async def get_refunds_pdf(
                     <td class="border">{product_name}</td>
                     <td class="border text-right">{quantity}</td>
                     <td class="border text-right">{unit_price:.0f}</td>
-                    <td class="border text-right">{item_total:.0f}</td>
+                    <td class="border text-right">{item_amount:.0f}</td>
                     <td class="border text-right">{item_cost:.0f}</td>
                 </tr>
                 """
@@ -2475,16 +2494,29 @@ async def get_refunds_excel(
             
             # Parse refund items
             refund_items = json.loads(refund.items) if refund.items else []
-            
+
+            # refund.amount is the authoritative refunded amount (what was
+            # actually paid back), not quantity * unit_price. Accumulate it
+            # once per refund, then split across items proportionally to
+            # their computed value so per-row amounts sum back to it.
+            refund_amount = float(refund.amount)
+            total_refund_amount += refund_amount
+
+            items_subtotal = sum(
+                item.get('quantity_returned', 0) * item.get('unit_price', 0)
+                for item in refund_items
+            )
+
             for item in refund_items:
                 product_name = item.get('product_name', 'N/A')
                 quantity = item.get('quantity_returned', 0)
                 unit_price = item.get('unit_price', 0)
-                item_total = quantity * unit_price
-                item_cost = item_total * 0.7  # 70% cost calculation
-                
-                refund_amount = float(refund.amount)
-                total_refund_amount += refund_amount
+                item_computed_total = quantity * unit_price
+                item_amount = (
+                    refund_amount * (item_computed_total / items_subtotal)
+                    if items_subtotal else refund_amount
+                )
+                item_cost = item_computed_total * 0.7  # 70% cost calculation
                 total_cost += item_cost
 
                 # Write row data
@@ -2493,7 +2525,7 @@ async def get_refunds_excel(
                 ws.cell(row=row_num, column=3, value=product_name).border = thin_border
                 ws.cell(row=row_num, column=4, value=quantity).border = thin_border
                 ws.cell(row=row_num, column=5, value=round(unit_price, 2)).border = thin_border
-                ws.cell(row=row_num, column=6, value=round(item_total, 2)).border = thin_border
+                ws.cell(row=row_num, column=6, value=round(item_amount, 2)).border = thin_border
                 ws.cell(row=row_num, column=7, value=round(item_cost, 2)).border = thin_border
 
                 # Apply alignments

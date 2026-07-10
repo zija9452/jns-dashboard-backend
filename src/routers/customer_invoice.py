@@ -7,10 +7,6 @@ from datetime import datetime, date, timezone, timedelta
 
 PKT = timezone(timedelta(hours=5))  # Pakistan Standard Time = UTC+5
 
-def to_pkt(dt: datetime) -> datetime:
-    """Convert a naive UTC datetime (as stored by GCP server) to PKT."""
-    return dt.replace(tzinfo=timezone.utc).astimezone(PKT)
-
 def pkt_now() -> datetime:
     return datetime.now(timezone.utc).astimezone(PKT)
 import json
@@ -506,8 +502,8 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
     elif "credit" in display_payment_method.lower():
         display_payment_method = "Credit"
 
-    # Convert UTC stored time to PKT for display
-    created_at_pkt = to_pkt(created_at) if created_at.tzinfo is None else created_at.astimezone(PKT)
+    # created_at is stored as naive local (Asia/Karachi) time already - no UTC shift needed
+    created_at_pkt = created_at if created_at.tzinfo is None else created_at.astimezone(PKT)
     date_str = created_at_pkt.strftime("%m-%d-%Y %I:%M %p")
     
     # Build items rows
@@ -530,9 +526,6 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
     # Calculate grand total
     grand_total = total_amount - total_discount
     
-    # Team name row (if exists)
-    team_row = f'<p class="team">Team: {team_name}</p>' if team_name else ""
-    
     # Create simple HTML for PDF (same pattern as customers.py)
     items_rows = ""
     for item in items[:10]:
@@ -544,7 +537,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
         items_rows += f'<tr><td style="width: 40%; border-bottom: 1px dashed #000; padding: 2px;"><div style="font-weight: bold; margin-bottom: 3px;">{name}</div></td><td style="width: 15%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{price:.0f}</td><td style="width: 12%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{qty}</td><td style="width: 13%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{disc:.0f}</td><td style="width: 20%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{total:.0f}</td></tr>\n'
 
     current_date = created_at_pkt.strftime('%d-%m-%Y %I:%M %p')
-    team_line = f"<p>Team: {team_name}</p>" if team_name else ""
+    team_line = f" | <strong>Team:</strong> {team_name}" if team_name else ""
 
     # Logo - use European Sports logo from backend Images folder
     import os
@@ -581,13 +574,13 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
         <meta charset="UTF-8">
         <style>
             @page {{
-                size: 300px 1000px;
+                size: 246px 1000px;
                 margin: 0;
             }}
             body {{
-                width: 300px;
+                width: 246px;
                 font-family: Arial, Helvetica, sans-serif;
-                font-size: 12px;
+                font-size: 10px;
                 margin: 0;
                 padding: 0 5px;
                 box-sizing: border-box;
@@ -601,7 +594,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
                 padding-top: 5px;
             }}
             .header h1 {{
-                font-size: 16px;
+                font-size: 14px;
                 margin: 2px 0;
                 font-weight: bold;
                 text-transform: uppercase;
@@ -620,12 +613,12 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
                 margin: 0 auto;
             }}
             .contact {{
-                font-size: 12px;
+                font-size: 10px;
                 margin: 3px 0;
                 text-align: center;
             }}
             .info {{
-                font-size: 11px;
+                font-size: 9px;
                 margin: 8px 0;
                 border-bottom: 2px solid #000;
                 padding-bottom: 8px;
@@ -640,7 +633,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             }}
             .duplicate {{
                 text-align: center;
-                font-size: 14px;
+                font-size: 12px;
                 font-weight: bold;
                 margin: 8px 0;
                 border-bottom: 2px solid #000;
@@ -651,20 +644,20 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             table {{
                 width: 100%;
                 border-collapse: collapse;
-                font-size: 11px;
+                font-size: 9px;
                 margin: 8px 0;
             }}
             th {{
                 border-top: 2px solid #000;
                 border-bottom: 2px solid #000;
-                font-size: 11px;
+                font-size: 9px;
                 font-weight: 600;
                 padding: 5px 2px;
                 text-align: left;
                 font-weight: 500;
             }}
             td {{
-                font-size: 11px;
+                font-size: 9px;
                 padding: 5px 2px;
                 vertical-align: top;
                 text-align: center;
@@ -701,7 +694,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             }}
             .total-row {{
                 font-weight: bold;
-                font-size: 12px;
+                font-size: 10px;
                 margin: 3px 0;
             }}
             .total-label {{
@@ -719,7 +712,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
                 padding-top: 2px;
                 padding-bottom: 0px;
                 text-align: center;
-                font-size: 11px;
+                font-size: 9px;
                 font-weight: bold;
             }}
             .footer {{
@@ -728,7 +721,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
                 padding-top: 8px;
                 padding-bottom: 8px;
                 text-align: center;
-                font-size: 9px;
+                font-size: 7px;
             }}
             .footer p {{
                 margin: 4px 0;
@@ -747,7 +740,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
         <div class="info">
             <p><strong>Date:</strong> {current_date}</p>
             <p><strong>Bill No:</strong> {invoice_no}</p>
-            <p><strong>User:</strong> Admin | <strong>Name:</strong> {customer_name}</p>
+            <p><strong>Name:</strong> {customer_name}{team_line}</p>
             <p><strong>Ph:</strong> 00 | <strong>Remarks:</strong> 0</p>
         </div>
         <div class="duplicate">*** {bill_type} ***</div>
@@ -779,7 +772,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
         </div>
         <div class="footer">
             <p>Thankyou For Shopping. Come Again.</p>
-            <p>No Return No Exchange Without Bill</p>
+            <p>No Returns. Exchange is accepted within 2 days only with the original purchase receipt (bill).</p>
         </div>
     </body>
     </html>

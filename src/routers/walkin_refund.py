@@ -15,7 +15,9 @@ from ..models.invoice import Invoice
 from ..models.product import Product
 from ..models.customer import Customer
 from ..models.user import User
+from ..models.daily_cash import DailyCash
 from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, cashier_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session
+from .walkin_invoice import pkt_now
 
 router = APIRouter()
 
@@ -88,18 +90,12 @@ async def create_walkin_invoice_refund(
                 detail="Invalid customer ID format"
             )
 
-    # Validate refund amount doesn't exceed the item's total price
-    # Get the total price of the refunded items
-    total_refund_items_price = sum(
-        item.get('quantity_returned', 0) * item.get('unit_price', 0) 
-        for item in refunded_items
-    )
-    
-    if Decimal(str(refund_amount)) > Decimal(str(total_refund_items_price)):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Refund amount ({refund_amount}) exceeds the total price of refunded items ({total_refund_items_price})."
-        )
+    # NOTE: the actual refund amount validation happens further below. We don't try
+    # to auto-apply/prorate discounts here — a discount applied at the end of a
+    # multi-product bill isn't reliably attributable to one product, so the cashier
+    # enters the real refund amount themselves. The server just sanity-caps it at
+    # the item's listed (undiscounted) price for the requested quantity, using the
+    # invoice's own stored unit_price — never the client-submitted one.
 
     # Check if invoice is already fully refunded
     if invoice.payment_status == 'refunded':
@@ -138,6 +134,7 @@ async def create_walkin_invoice_refund(
             pass
     
     # Validate each refunded item
+    computed_max_refund_total = Decimal('0')
     for refund_item in refunded_items:
         product_name = refund_item.get('product_name')
         quantity_returned = int(refund_item.get('quantity_returned', 0))
@@ -180,6 +177,13 @@ async def create_walkin_invoice_refund(
                 detail=f"Cannot refund {quantity_returned} of '{product_name}'. Only {remaining_qty} remaining (Original: {original_qty}, Already refunded: {already_refunded})"
             )
 
+        # Sanity ceiling for this line — the item's own listed unit_price (from the
+        # invoice, not the client), never discount-adjusted. The cashier decides
+        # the actual refund amount; this just blocks refunding more than the item
+        # was ever sold for.
+        item_unit_price = float(original_item.get('unit_price', 0))
+        computed_max_refund_total += Decimal(str(item_unit_price * quantity_returned))
+
         # Update product inventory (add back the returned quantity)
         product_result = await db.execute(select(Product).where(Product.name == product_name))
         product = product_result.scalar_one_or_none()
@@ -188,6 +192,14 @@ async def create_walkin_invoice_refund(
             # Increase stock level by the returned amount
             product.stock_level += quantity_returned
             await db.commit()
+
+    # Sanity check only — cashier-entered amount must not exceed the items' listed
+    # (undiscounted) price for the requested quantity. Small epsilon for rounding.
+    if Decimal(str(refund_amount)) > computed_max_refund_total + Decimal("0.01"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Refund amount ({refund_amount}) exceeds the listed price of the refunded items ({computed_max_refund_total:.2f})."
+        )
 
     # Create refund object
     refund_obj = Refund(
@@ -204,17 +216,55 @@ async def create_walkin_invoice_refund(
     await db.commit()
     await db.refresh(refund_obj)
 
-    # Update the original invoice's payment status
-    # Note: We don't reduce amount_paid as it represents the original payment
-    # Just update the status based on remaining inventory
-    
-    # Check if all items have been refunded (compare stock levels)
-    # For now, just mark as partial if there was a partial refund
-    if invoice.payment_status != 'refunded':
-        invoice.payment_status = 'partial'
-    
+    # Update the original invoice's payment status.
+    # Note: we don't reduce amount_paid — it represents the original payment.
+    # Refunds are netted out separately at the reporting layer (see sales_view.py,
+    # which sums Refund.amount), so amount_paid must stay as the historical figure.
+    #
+    # Mark 'refunded' only once every item on the invoice has been fully returned
+    # (across this and any previous refunds); otherwise 'partial'.
+    all_refunded_qty = dict(already_refunded_qty)
+    for ri in refunded_items:
+        ri_name = ri.get('product_name')
+        ri_qty = int(ri.get('quantity_returned', 0))
+        all_refunded_qty[ri_name] = all_refunded_qty.get(ri_name, 0) + ri_qty
+
+    fully_refunded = bool(original_items) and all(
+        all_refunded_qty.get(item.get('product_name'), 0) >= int(item.get('quantity', 0))
+        for item in original_items
+    )
+
+    invoice.payment_status = 'refunded' if fully_refunded else 'partial'
     invoice.updated_at = datetime.now()
     await db.commit()
+
+    # Keep cash-in-hand accurate: reverse this sale's contribution to today's
+    # daily_cash totals by the refunded amount, mirroring how create_walkin_invoice
+    # adds to it (walkin_invoice.py), just subtracted.
+    refund_date_obj = pkt_now().date()
+    daily_cash_result = await db.execute(select(DailyCash).where(DailyCash.date == refund_date_obj))
+    daily_cash = daily_cash_result.scalar_one_or_none()
+
+    if daily_cash:
+        refund_decimal = Decimal(str(refund_amount))
+        payment_method_lower = (invoice.payment_method or 'cash').lower().strip()
+
+        if payment_method_lower == 'cash':
+            daily_cash.cash_sales = daily_cash.cash_sales - refund_decimal
+        elif payment_method_lower == 'easypaisa zohaib':
+            daily_cash.easypaisa_zohaib_sales = daily_cash.easypaisa_zohaib_sales - refund_decimal
+        elif payment_method_lower == 'easypaisa yasir':
+            daily_cash.easypaisa_yasir_sales = daily_cash.easypaisa_yasir_sales - refund_decimal
+        elif payment_method_lower == 'faysal bank':
+            daily_cash.bank_sales = daily_cash.bank_sales - refund_decimal
+        else:
+            daily_cash.cash_sales = daily_cash.cash_sales - refund_decimal
+
+        daily_cash.total_sales = daily_cash.total_sales - refund_decimal
+        daily_cash.updated_at = date.today()
+        await db.commit()
+    # If there's no daily_cash row for today, there's nothing to reconcile against —
+    # the original sale wasn't part of today's opened cash drawer anyway.
 
     # Return success message instead of PDF
     return {
