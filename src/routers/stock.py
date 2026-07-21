@@ -19,6 +19,34 @@ def to_pkt(dt: datetime) -> datetime:
 def pkt_now() -> datetime:
     """Current time in PKT."""
     return datetime.now(timezone.utc).astimezone(PKT)
+
+# Horizontal center point (in ZPL dots) that the barcode label design is built around -
+# matches the center of the name (^FB400 at x=10) and price (^FB250 at x=80) blocks below it.
+BARCODE_CENTER_X = 208
+
+def centered_barcode_x(data: str, module_width: int = 2) -> int:
+    """
+    Code 128 bar width grows to the right from ^FO with no native ZPL centering, so a long
+    barcode (more digits) drifts off-center. Estimate total rendered width (start + one
+    module per data char + check digit, each ~11 modules, plus a 13-module stop pattern) and
+    return the left x so the barcode is centered on BARCODE_CENTER_X regardless of length.
+    """
+    total_modules = 11 * (len(data) + 2) + 13
+    barcode_width = total_modules * module_width
+    x = int(BARCODE_CENTER_X - barcode_width / 2)
+    return max(x, 0)
+
+def fitted_name_font_size(name: str, block_width: int = 400, max_size: int = 19, min_size: int = 16) -> int:
+    """
+    ^FB word-wraps long names onto extra lines and silently drops anything past the line
+    cap - effectively cutting the name. Instead shrink the scalable font (^A0N) so the full
+    name always fits on one line within block_width; short names keep the normal max_size.
+    """
+    if not name:
+        return max_size
+    avg_char_width_ratio = 0.6  # empirical average glyph width for Zebra font 0
+    fitted = int(block_width / (len(name) * avg_char_width_ratio))
+    return max(min_size, min(max_size, fitted))
 from pydantic import BaseModel
 
 
@@ -38,6 +66,23 @@ from ..services.stock_service import StockService
 from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, cashier_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session, warehouse_required_from_session
 
 router = APIRouter()
+
+# Guards against accidental double-submission of the same stock-in (double-click,
+# slow network causing a manual retry, etc.) - if an identical IN entry for the
+# same product/vendor/qty/cost was just recorded, treat the repeat as a duplicate.
+DUPLICATE_STOCK_IN_WINDOW_SECONDS = 30
+
+async def _is_duplicate_stock_in(db: AsyncSession, product_id, vendor_id, qty: int, cost_price: float) -> bool:
+    cutoff = datetime.now() - timedelta(seconds=DUPLICATE_STOCK_IN_WINDOW_SECONDS)
+    statement = select(StockEntry).where(
+        StockEntry.product_id == product_id,
+        StockEntry.vendor_id == vendor_id,
+        StockEntry.qty == qty,
+        StockEntry.type == StockEntryType.IN,
+        StockEntry.created_at >= cutoff,
+    )
+    result = await db.execute(statement)
+    return result.first() is not None
 
 # ============================================================================
 # Frontend-Compatible Stock Management Endpoints (Matching Product Page Pattern)
@@ -385,6 +430,16 @@ async def save_stock_in(
             })
             continue
 
+        # Reject accidental duplicate submissions (double-click, retry, etc.)
+        if await _is_duplicate_stock_in(db, product.id, vendor.id, quantity, cost_price):
+            results.append({
+                "product_id": product_id,
+                "product_name": product.name,
+                "status": "error",
+                "message": f"Duplicate stock-in detected: an identical entry ({quantity} units) for this product/vendor was just saved in the last {DUPLICATE_STOCK_IN_WINDOW_SECONDS} seconds. Skipped to avoid double-counting."
+            })
+            continue
+
         # Create stock entry
         # unit_price snapshots the selling price at the time of this stock-in,
         # so historical reports don't shift when the product's price changes later.
@@ -500,6 +555,16 @@ async def save_stock_in_with_barcode(
             })
             continue
 
+        # Reject accidental duplicate submissions (double-click, retry, etc.)
+        if await _is_duplicate_stock_in(db, product.id, vendor.id, quantity, cost_price):
+            results.append({
+                "product_id": product_id,
+                "product_name": product.name,
+                "status": "error",
+                "message": f"Duplicate stock-in detected: an identical entry ({quantity} units) for this product/vendor was just saved in the last {DUPLICATE_STOCK_IN_WINDOW_SECONDS} seconds. Skipped to avoid double-counting."
+            })
+            continue
+
         # Create stock entry
         # unit_price snapshots the selling price at the time of this stock-in,
         # so historical reports don't shift when the product's price changes later.
@@ -548,13 +613,13 @@ async def save_stock_in_with_barcode(
                 # Center all content horizontally at x=70 (shifted right for better alignment)
                 zpl = "^XA"
 
-                # 1. Barcode - with auto human-readable number below (shifted right to 70, reduced width)
-                zpl += f"^FO70,40^BY2,2,80^BCN,80,Y,N,N^FD{product.barcode}^FS"
+                # 1. Barcode - auto-centered on BARCODE_CENTER_X regardless of digit count
+                barcode_x = centered_barcode_x(product.barcode)
+                zpl += f"^FO{barcode_x},40^BY2,2,80^BCN,80,Y,N,N^FD{product.barcode}^FS"
 
-                # 2. Product name - centered with word wrap (wider field block for longer names)
-                # Adjusted X position to center the wider FB400 block (font size increased from 18 to 19)
-                truncated_name = product.name[:40] if len(product.name) > 40 else product.name
-                zpl += f"^FO10,150^A0N,19,19^FB400,2,0,C^FD{truncated_name}^FS"
+                # 2. Product name - single line, font auto-shrinks to fit instead of wrapping/cutting
+                name_font = fitted_name_font_size(product.name)
+                zpl += f"^FO10,150^A0N,{name_font},{name_font}^FB400,1,0,C^FD{product.name}^FS"
 
                 # 3. Price - centered, larger font (font size increased from 25 to 30)
                 zpl += f"^FO80,175^A0N,30,30^FB250,1,0,C^FDRs. {int(barcode_price)}^FS"
@@ -1548,15 +1613,15 @@ async def print_barcodes(
 
     for i in range(quantity):
         # Center position: x=70, y=40 (adjusted for better alignment)
-        x_center = 70
         y_start = 40
+        x_center = centered_barcode_x(barcode)
 
-        # 1. Barcode - with auto human-readable number below (reduced width for compact print)
+        # 1. Barcode - auto-centered on BARCODE_CENTER_X regardless of digit count
         zpl_commands += f"^FO{x_center},{y_start}^BY2,2,80^BCN,80,Y,N,N^FD{barcode}^FS"
 
-        # 2. Product name - centered with word wrap (font size increased from 18 to 19)
-        truncated_name = pro_name[:40] if len(pro_name) > 40 else pro_name
-        zpl_commands += f"^FO10,{y_start + 110}^A0N,19,19^FB400,2,0,C^FD{truncated_name}^FS"
+        # 2. Product name - single line, font auto-shrinks to fit instead of wrapping/cutting
+        name_font = fitted_name_font_size(pro_name)
+        zpl_commands += f"^FO10,{y_start + 110}^A0N,{name_font},{name_font}^FB400,1,0,C^FD{pro_name}^FS"
 
         # 3. Price - centered, larger font (font size increased from 25 to 30)
         zpl_commands += f"^FO80,{y_start + 135}^A0N,30,30^FB250,1,0,C^FDRs. {int(price)}^FS"
@@ -1618,12 +1683,13 @@ async def generate_barcodes_only(
             # Complete ZPL label
             zpl = "^XA"
 
-            # 1. Barcode with auto human-readable (shifted right to 70, reduced width)
-            zpl += f"^FO70,40^BY2,2,80^BCN,80,Y,N,N^FD{barcode}^FS"
+            # 1. Barcode - auto-centered on BARCODE_CENTER_X regardless of digit count
+            barcode_x = centered_barcode_x(barcode)
+            zpl += f"^FO{barcode_x},40^BY2,2,80^BCN,80,Y,N,N^FD{barcode}^FS"
 
-            # 2. Product name - truncated and centered (font size increased from 18 to 19)
-            truncated_name = pro_name[:40] if len(pro_name) > 40 else pro_name
-            zpl += f"^FO10,150^A0N,19,19^FB400,2,0,C^FD{truncated_name}^FS"
+            # 2. Product name - single line, font auto-shrinks to fit instead of wrapping/cutting
+            name_font = fitted_name_font_size(pro_name)
+            zpl += f"^FO10,150^A0N,{name_font},{name_font}^FB400,1,0,C^FD{pro_name}^FS"
 
             # 3. Price - centered, larger font (font size increased from 25 to 30)
             zpl += f"^FO80,175^A0N,30,30^FB250,1,0,C^FDRs. {int(price)}^FS"
