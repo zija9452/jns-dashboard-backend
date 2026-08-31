@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     cloudinary_api_key: str = os.getenv("CLOUDINARY_API_KEY", "")
     cloudinary_api_secret: str = os.getenv("CLOUDINARY_API_SECRET", "")
 
+    # Sports tournament sync (free-tier API keys - sync is skipped if unset)
+    cricapi_key: str = os.getenv("CRICAPI_KEY", "")
+    api_football_key: str = os.getenv("API_FOOTBALL_KEY", "")
+
     # Logging settings
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
     log_format: str = os.getenv("LOG_FORMAT", "%(asctime)s - %(name)s - %(levelname)s - %(message)s")

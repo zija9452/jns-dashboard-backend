@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 import os
 from decimal import Decimal
 
-from src.routers import auth, users, products, customers, vendors, salesman, stock, expenses, customer_invoice, refunds, admin, pos, walkin_invoice, walkin_refund, category, brand, expense_type, sales_view, duplicate_bill, customer_category, ideal_price, warehouse_stock, warehouse_customers, warehouse_vendors, warehouse_invoice, warehouse_sales_view
+from src.routers import auth, users, products, customers, vendors, salesman, stock, expenses, customer_invoice, refunds, admin, pos, walkin_invoice, walkin_refund, category, brand, expense_type, sales_view, duplicate_bill, customer_category, ideal_price, warehouse_stock, warehouse_customers, warehouse_vendors, warehouse_invoice, warehouse_sales_view, shop_order, demand, tournament
 from src.utils.error_handlers import setup_error_handlers
 from src.middleware.security import SecurityHeadersMiddleware
 from src.utils.metrics import MetricsMiddleware, start_metrics_server
@@ -28,9 +28,21 @@ async def lifespan(app: FastAPI):
     metrics_thread = threading.Thread(target=start_metrics_server, daemon=True)
     metrics_thread.start()
 
+    # Tournament schedule sync (cricket + football) - just twice a day
+    # (09:00 and 21:00, local time / TZ=Asia/Karachi), well under either
+    # free-tier daily quota. Admin's "Sync Now" button on /tournaments
+    # triggers both sources on demand for anything in between.
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    from src.services.sports_sync import run_cricket_sync_job, run_football_sync_job
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(run_cricket_sync_job, "cron", hour="9,21", minute=0, next_run_time=None)
+    scheduler.add_job(run_football_sync_job, "cron", hour="9,21", minute=5, next_run_time=None)
+    scheduler.start()
+
     yield
 
     # Shutdown
+    scheduler.shutdown(wait=False)
     from src.database.database import close_cache
     await close_cache()
 
@@ -153,6 +165,9 @@ app.include_router(warehouse_customers.router, prefix="/warehouse-customers", ta
 app.include_router(warehouse_vendors.router, prefix="/warehouse-vendors", tags=["warehouse-vendors"])
 app.include_router(warehouse_invoice.router, tags=["warehouse-invoice"])
 app.include_router(warehouse_sales_view.router, tags=["warehouse-salesview"])
+app.include_router(shop_order.router, prefix="/shoporder", tags=["shop-order"])
+app.include_router(demand.router, prefix="/demand", tags=["demand"])
+app.include_router(tournament.router, prefix="/tournament", tags=["tournament"])
 
 if __name__ == "__main__":
     import uvicorn
