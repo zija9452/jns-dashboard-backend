@@ -16,7 +16,7 @@ class Demand(SQLModel, table=True):
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     demand_text: str = Field(max_length=255)
-    category: Optional[str] = Field(default=None, max_length=50)
+    category: Optional[str] = Field(default=None, max_length=100)
     customer_name: Optional[str] = Field(default=None, max_length=100)
     customer_phone: Optional[str] = Field(default=None, max_length=20)
     status: DemandStatus = Field(default=DemandStatus.PENDING, index=True)
@@ -43,7 +43,7 @@ class DemandRead(SQLModel):
 
 class DemandCreate(SQLModel):
     demand_text: str
-    category: Optional[str] = None
+    category: str
     customer_name: Optional[str] = None
     customer_phone: Optional[str] = None
 

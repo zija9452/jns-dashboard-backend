@@ -26,9 +26,15 @@ async def create_demand(
             detail="Demand text is required"
         )
 
+    if not demand_data.category or not demand_data.category.strip():
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail="Category is required"
+        )
+
     demand = Demand(
         demand_text=demand_data.demand_text.strip(),
-        category=demand_data.category,
+        category=demand_data.category.strip(),
         customer_name=demand_data.customer_name.strip() if demand_data.customer_name else None,
         customer_phone=demand_data.customer_phone.strip() if demand_data.customer_phone else None,
         status=DemandStatus.PENDING,
@@ -152,7 +158,13 @@ async def update_demand(
         demand.demand_text = new_text
 
     if "category" in request_data:
-        demand.category = request_data.get("category") or None
+        new_category = (request_data.get("category") or "").strip()
+        if not new_category:
+            raise HTTPException(
+                status_code=http_status.HTTP_400_BAD_REQUEST,
+                detail="Category is required"
+            )
+        demand.category = new_category
 
     if "customer_name" in request_data:
         value = (request_data.get("customer_name") or "").strip()
