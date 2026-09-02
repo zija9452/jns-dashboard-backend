@@ -1239,13 +1239,26 @@ def generate_walkin_receipt_pdf(invoice_no, customer_name, team_name, items, tot
 
     # Build items rows (same as customer_invoice.py)
     items_rows = ""
-    for item in items[:10]:
+    items_block_height = 0
+    for item in items:
         name = str(item.get('product_name', ''))  # No truncation - show full name
         qty = int(item.get('quantity', 0))
         price = float(item.get('unit_price', 0))
         disc = float(item.get('discount', 0))
         total = float(item.get('total_price', 0))
         items_rows += f'<tr><td style="width: 40%; border-bottom: 1px dashed #000; padding: 2px;"><div style="font-weight: bold; margin-bottom: 3px;">{name}</div></td><td style="width: 15%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{price:.0f}</td><td style="width: 12%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{qty}</td><td style="width: 13%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{disc:.0f}</td><td style="width: 20%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{total:.0f}</td></tr>\n'
+        # Name column is only ~40% of the 246px receipt width and unrestricted
+        # in length, so long names wrap onto multiple lines - account for that
+        # when sizing the page, or long-name rows would overflow onto a 2nd page
+        wrapped_lines = max(1, -(-max(len(name), 1) // 14))
+        items_block_height += 28 + max(0, wrapped_lines - 1) * 15
+
+    # Page height must grow with item count (and wrapped name lines),
+    # otherwise rows get pushed past the fixed-size @page box.
+    # 570 = measured CSS box height of everything except the item rows
+    # (header/logo + info + duplicate label + table head/margins + totals +
+    # payment + footer) + 10% buffer.
+    page_height = 570 + items_block_height
 
     current_date = created_at_pkt.strftime('%d-%m-%Y %I:%M %p')
     team_line = f" | <strong>Team:</strong> {team_name}" if team_name else ""
@@ -1285,7 +1298,7 @@ def generate_walkin_receipt_pdf(invoice_no, customer_name, team_name, items, tot
         <meta charset="UTF-8">
         <style>
             @page {{
-                size: 246px 1000px;
+                size: 246px {page_height}px;
                 margin: 0;
             }}
             body {{

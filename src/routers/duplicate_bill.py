@@ -215,7 +215,9 @@ async def get_duplicate_invoice(
         )
     
     # Check Redis cache first (7 days)
-    cache_key = f"invoice:duplicate:{invoice_type}:{invoice_id}"
+    # v4: bumped after retuning the @page height constants (v3 had too much
+    # trailing whitespace) so stale cached PDFs get regenerated
+    cache_key = f"invoice:duplicate:v4:{invoice_type}:{invoice_id}"
     cached_pdf = await cache.get(cache_key)
     
     if cached_pdf:

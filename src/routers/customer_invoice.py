@@ -508,12 +508,13 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
     
     # Build items rows
     items_rows = ""
-    for item in items[:12]:  # Limit to 12 items
+    items_block_height = 0
+    for item in items:
         name = str(item.get('product_name', ''))[:15]
         qty = int(item.get('quantity', 0))
         price = float(item.get('unit_price', 0))
         total = float(item.get('total_price', 0))
-        
+
         items_rows += f"""
         <tr>
             <td class="item-name">{name}</td>
@@ -522,7 +523,19 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             <td class="text-right">{total:.0f}</td>
         </tr>
         """
-    
+        # Name column is only ~35% of the 246px receipt width, so even a
+        # 15-char truncated name often wraps onto a 2nd line - account for
+        # that when sizing the page, or rows would overflow onto a 2nd page
+        wrapped_lines = max(1, -(-max(len(name), 1) // 13))
+        items_block_height += 28 + max(0, wrapped_lines - 1) * 15
+
+    # Page height must grow with item count (and wrapped name lines),
+    # otherwise rows get pushed past the fixed-size @page box.
+    # 585 = measured CSS box height of everything except the item rows
+    # (header/logo + info + duplicate label + table head/margins + totals +
+    # payment + footer) + 10% buffer.
+    page_height = 585 + items_block_height
+
     # Calculate grand total
     grand_total = total_amount - total_discount
     
@@ -574,7 +587,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
         <meta charset="UTF-8">
         <style>
             @page {{
-                size: 246px 1000px;
+                size: 246px {page_height}px;
                 margin: 0;
             }}
             body {{
