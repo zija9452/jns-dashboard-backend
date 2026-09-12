@@ -10,6 +10,7 @@ from .models.warehouse_customer import WarehouseCustomer
 from .models.vendor import Vendor
 from .models.warehouse_vendor import WarehouseVendor
 from .models.salesman import Salesman
+from .models.salesman_attendance import SalesmanAttendance
 from .models.stock_entry import StockEntry
 from .models.expense import Expense
 from .models.invoice import Invoice

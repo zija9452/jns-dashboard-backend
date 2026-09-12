@@ -120,6 +120,7 @@ async def create_shop_order(
         category=product.category,
         stock_at_order_time=product.stock_level,
         quantity_ordered=order_data.quantity_ordered,
+        note=order_data.note.strip() if order_data.note and order_data.note.strip() else None,
         status=ShopOrderStatus.PENDING,
         created_by=current_user.id,
     )
@@ -163,7 +164,7 @@ async def get_shop_orders(
             pass
 
     count_statement = select(func.count(ShopOrder.id))
-    statement = select(ShopOrder)
+    statement = select(ShopOrder, Product.stock_level).outerjoin(Product, ShopOrder.product_id == Product.id)
     for condition in conditions:
         count_statement = count_statement.where(condition)
         statement = statement.where(condition)
@@ -173,7 +174,7 @@ async def get_shop_orders(
 
     statement = statement.order_by(ShopOrder.created_at.desc()).offset(skip).limit(limit)
     result = await db.execute(statement)
-    orders = result.scalars().all()
+    rows = result.all()
 
     data = [
         {
@@ -182,12 +183,15 @@ async def get_shop_orders(
             "barcode": order.barcode or "",
             "category": order.category or "",
             "quantity_ordered": order.quantity_ordered,
+            "note": order.note or "",
+            "current_stock": current_stock if current_stock is not None else order.stock_at_order_time,
             "status": order.status.value,
             "created_at": order.created_at.isoformat(),
+            "in_production_at": order.in_production_at.isoformat() if order.in_production_at else None,
             "delivered_at": order.delivered_at.isoformat() if order.delivered_at else None,
             "cancelled_at": order.cancelled_at.isoformat() if order.cancelled_at else None,
         }
-        for order in orders
+        for order, current_stock in rows
     ]
 
     total_pages = (total_count + limit - 1) // limit if limit > 0 else 1
@@ -238,11 +242,13 @@ async def update_shop_order_status(
     except ValueError:
         raise HTTPException(
             status_code=http_status.HTTP_400_BAD_REQUEST,
-            detail="Invalid status. Must be one of: PENDING, DELIVERED, CANCEL"
+            detail="Invalid status. Must be one of: PENDING, IN_PRODUCTION, DELIVERED, CANCEL"
         )
 
     now = datetime.now()
-    if shop_order.status == ShopOrderStatus.DELIVERED:
+    if shop_order.status == ShopOrderStatus.IN_PRODUCTION:
+        shop_order.in_production_at = now
+    elif shop_order.status == ShopOrderStatus.DELIVERED:
         shop_order.delivered_at = now
     elif shop_order.status == ShopOrderStatus.CANCEL:
         shop_order.cancelled_at = now
@@ -255,6 +261,7 @@ async def update_shop_order_status(
         "success": True,
         "id": str(shop_order.id),
         "status": shop_order.status.value,
+        "in_production_at": shop_order.in_production_at.isoformat() if shop_order.in_production_at else None,
         "delivered_at": shop_order.delivered_at.isoformat() if shop_order.delivered_at else None,
         "cancelled_at": shop_order.cancelled_at.isoformat() if shop_order.cancelled_at else None,
     }

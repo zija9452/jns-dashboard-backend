@@ -210,12 +210,9 @@ async def delete_tournament(
 
 @router.post("/sync-now")
 async def sync_now(
-    current_user: User = Depends(get_current_user_from_session),
+    current_user: User = Depends(employee_required_from_session()),
 ):
-    """Manually trigger both source syncs immediately (admin only) - useful right after adding API keys."""
-    if current_user.role.name != "admin":
-        raise HTTPException(status_code=http_status.HTTP_403_FORBIDDEN, detail="Only admin can trigger a manual sync")
-
+    """Manually trigger both source syncs immediately (admin/cashier/employee) - useful right after adding API keys, or whenever a scheduled cycle was missed."""
     from ..services.sports_sync import run_cricket_sync_job, run_football_sync_job
 
     cricket_count = await run_cricket_sync_job()

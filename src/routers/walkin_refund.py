@@ -38,6 +38,7 @@ async def create_walkin_invoice_refund(
     refund_amount = request_data.get('amount', 0.0)
     refund_reason = request_data.get('reason', '')
     customer_id = request_data.get('customer_id')  # Optional
+    refund_created_at_raw = request_data.get('created_at')  # Optional: from the Refund Date picker
 
     # Validate required fields
     if not invoice_id:
@@ -51,6 +52,18 @@ async def create_walkin_invoice_refund(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Refunded items are required"
         )
+
+    refund_created_at = None
+    if refund_created_at_raw:
+        try:
+            refund_created_at = datetime.fromisoformat(str(refund_created_at_raw).replace('Z', '+00:00'))
+            if refund_created_at.tzinfo is not None:
+                refund_created_at = refund_created_at.replace(tzinfo=None)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid refund date format"
+            )
 
     # Validate invoice exists
     try:
@@ -208,7 +221,8 @@ async def create_walkin_invoice_refund(
         items=json.dumps(refunded_items),
         amount=Decimal(str(refund_amount)),
         reason=refund_reason,
-        processed_by=current_user.id
+        processed_by=current_user.id,
+        **({"created_at": refund_created_at} if refund_created_at else {})
     )
 
     # Add to database
@@ -238,10 +252,12 @@ async def create_walkin_invoice_refund(
     invoice.updated_at = datetime.now()
     await db.commit()
 
-    # Keep cash-in-hand accurate: reverse this sale's contribution to today's
-    # daily_cash totals by the refunded amount, mirroring how create_walkin_invoice
-    # adds to it (walkin_invoice.py), just subtracted.
-    refund_date_obj = pkt_now().date()
+    # Keep cash-in-hand accurate: reverse this sale's contribution to the
+    # refunded date's daily_cash totals by the refunded amount, mirroring how
+    # create_walkin_invoice adds to it (walkin_invoice.py), just subtracted.
+    # Uses the picked Refund Date (if provided) so a backdated refund adjusts
+    # that day's cash drawer, not today's.
+    refund_date_obj = refund_created_at.date() if refund_created_at else pkt_now().date()
     daily_cash_result = await db.execute(select(DailyCash).where(DailyCash.date == refund_date_obj))
     daily_cash = daily_cash_result.scalar_one_or_none()
 
@@ -263,8 +279,8 @@ async def create_walkin_invoice_refund(
         daily_cash.total_sales = daily_cash.total_sales - refund_decimal
         daily_cash.updated_at = date.today()
         await db.commit()
-    # If there's no daily_cash row for today, there's nothing to reconcile against —
-    # the original sale wasn't part of today's opened cash drawer anyway.
+    # If there's no daily_cash row for that date, there's nothing to reconcile against —
+    # the original sale wasn't part of that day's opened cash drawer anyway.
 
     # Return success message instead of PDF
     return {

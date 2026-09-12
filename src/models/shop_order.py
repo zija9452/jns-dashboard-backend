@@ -7,6 +7,7 @@ from enum import Enum
 
 class ShopOrderStatus(str, Enum):
     PENDING = "PENDING"
+    IN_PRODUCTION = "IN_PRODUCTION"
     DELIVERED = "DELIVERED"
     CANCEL = "CANCEL"
 
@@ -21,7 +22,9 @@ class ShopOrder(SQLModel, table=True):
     category: Optional[str] = Field(default=None, max_length=50)  # Snapshot at order time
     stock_at_order_time: int = Field(default=0)
     quantity_ordered: int
+    note: Optional[str] = Field(default=None, max_length=255)
     status: ShopOrderStatus = Field(default=ShopOrderStatus.PENDING, index=True)
+    in_production_at: Optional[datetime] = Field(default=None)  # Set when status moves to IN_PRODUCTION
     delivered_at: Optional[datetime] = Field(default=None)  # Set when status moves to DELIVERED
     cancelled_at: Optional[datetime] = Field(default=None)  # Set when status moves to CANCEL
     created_by: uuid.UUID = Field(foreign_key="users.id", index=True)
@@ -37,7 +40,9 @@ class ShopOrderRead(SQLModel):
     category: Optional[str]
     stock_at_order_time: int
     quantity_ordered: int
+    note: Optional[str]
     status: ShopOrderStatus
+    in_production_at: Optional[datetime]
     delivered_at: Optional[datetime]
     cancelled_at: Optional[datetime]
     created_by: uuid.UUID
@@ -48,6 +53,7 @@ class ShopOrderRead(SQLModel):
 class ShopOrderCreate(SQLModel):
     product_id: uuid.UUID
     quantity_ordered: int
+    note: Optional[str] = Field(default=None, max_length=255)
 
 
 class ShopOrderUpdate(SQLModel):

@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 import os
 from decimal import Decimal
 
-from src.routers import auth, users, products, customers, vendors, salesman, stock, expenses, customer_invoice, refunds, admin, pos, walkin_invoice, walkin_refund, category, brand, expense_type, sales_view, duplicate_bill, customer_category, ideal_price, warehouse_stock, warehouse_customers, warehouse_vendors, warehouse_invoice, warehouse_sales_view, shop_order, demand, demand_category, tournament
+from src.routers import auth, users, products, customers, vendors, salesman, salesman_attendance, stock, expenses, customer_invoice, refunds, admin, pos, walkin_invoice, walkin_refund, category, brand, expense_type, sales_view, duplicate_bill, customer_category, ideal_price, warehouse_stock, warehouse_customers, warehouse_vendors, warehouse_invoice, warehouse_sales_view, shop_order, demand, demand_category, tournament
 from src.utils.error_handlers import setup_error_handlers
 from src.middleware.security import SecurityHeadersMiddleware
 from src.utils.metrics import MetricsMiddleware, start_metrics_server
@@ -38,6 +38,34 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(run_cricket_sync_job, "cron", hour="9,21", minute=0, next_run_time=None)
     scheduler.add_job(run_football_sync_job, "cron", hour="9,21", minute=5, next_run_time=None)
     scheduler.start()
+
+    # Catch-up: this scheduler holds jobs in memory only, so a 9am/21pm cron
+    # tick is silently missed whenever the process isn't up at that exact
+    # moment (e.g. container restarted / machine was off). On every startup,
+    # run any source whose last recorded sync is stale (or missing) once,
+    # so a missed cycle doesn't mean waiting until the next 9/21 slot.
+    import asyncio
+    from datetime import datetime, timedelta
+    from sqlalchemy import select as _select
+    from src.database.database import AsyncSessionLocal
+    from src.models.sync_status import SyncStatus
+    from src.models.tournament import TournamentSource
+
+    async def _catch_up_stale_syncs():
+        stale_cutoff = datetime.now() - timedelta(hours=13)
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(_select(SyncStatus))
+            rows = {row.source: row for row in result.scalars().all()}
+
+        cricket_row = rows.get(TournamentSource.CRICAPI)
+        if cricket_row is None or cricket_row.last_run_at < stale_cutoff:
+            asyncio.create_task(run_cricket_sync_job())
+
+        football_row = rows.get(TournamentSource.API_FOOTBALL)
+        if football_row is None or football_row.last_run_at < stale_cutoff:
+            asyncio.create_task(run_football_sync_job())
+
+    asyncio.create_task(_catch_up_stale_syncs())
 
     yield
 
@@ -147,6 +175,7 @@ app.include_router(brand.router, tags=["brand"])
 app.include_router(customers.router, prefix="/customers", tags=["customers"])
 app.include_router(vendors.router, prefix="/vendors", tags=["vendors"])
 app.include_router(salesman.router, prefix="/salesman", tags=["salesman"])
+app.include_router(salesman_attendance.router, prefix="/salesman-attendance", tags=["salesman-attendance"])
 app.include_router(stock.router, prefix="/stock", tags=["stock"])
 app.include_router(expenses.router, tags=["expenses"])
 app.include_router(customer_invoice.router, prefix="/customerinvoice", tags=["customer-invoice"])
