@@ -33,6 +33,7 @@ class ExpenseCreate(SQLModel):
     created_by: Optional[uuid.UUID] = None
 
 class ExpenseUpdate(SQLModel):
+    expense: Optional[str] = None
     amount: Optional[Decimal] = None
     expense_date: Optional[str] = None
     branch: Optional[str] = None

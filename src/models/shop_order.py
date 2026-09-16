@@ -12,6 +12,12 @@ class ShopOrderStatus(str, Enum):
     CANCEL = "CANCEL"
 
 
+class ShopOrderApprovalStatus(str, Enum):
+    PENDING_APPROVAL = "PENDING_APPROVAL"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+
 class ShopOrder(SQLModel, table=True):
     __tablename__ = "shop_orders"
 
@@ -27,6 +33,12 @@ class ShopOrder(SQLModel, table=True):
     in_production_at: Optional[datetime] = Field(default=None)  # Set when status moves to IN_PRODUCTION
     delivered_at: Optional[datetime] = Field(default=None)  # Set when status moves to DELIVERED
     cancelled_at: Optional[datetime] = Field(default=None)  # Set when status moves to CANCEL
+    approval_status: ShopOrderApprovalStatus = Field(default=ShopOrderApprovalStatus.PENDING_APPROVAL, index=True)
+    approved_by: Optional[uuid.UUID] = Field(default=None, foreign_key="users.id")
+    approved_at: Optional[datetime] = Field(default=None)
+    rejected_at: Optional[datetime] = Field(default=None)
+    seen_by_admin: bool = Field(default=False, index=True)  # Cleared once admin opens the approval list
+    seen_in_shop_orders: bool = Field(default=False, index=True)  # Cleared once someone opens the Shop Orders page
     created_by: uuid.UUID = Field(foreign_key="users.id", index=True)
     created_at: datetime = Field(default_factory=datetime.now, index=True)
     updated_at: datetime = Field(default_factory=datetime.now, index=True)
@@ -45,6 +57,10 @@ class ShopOrderRead(SQLModel):
     in_production_at: Optional[datetime]
     delivered_at: Optional[datetime]
     cancelled_at: Optional[datetime]
+    approval_status: ShopOrderApprovalStatus
+    approved_by: Optional[uuid.UUID]
+    approved_at: Optional[datetime]
+    rejected_at: Optional[datetime]
     created_by: uuid.UUID
     created_at: datetime
     updated_at: datetime
@@ -58,3 +74,7 @@ class ShopOrderCreate(SQLModel):
 
 class ShopOrderUpdate(SQLModel):
     status: Optional[ShopOrderStatus] = None
+
+
+class ShopOrderReview(SQLModel):
+    action: str  # "approve" or "reject"

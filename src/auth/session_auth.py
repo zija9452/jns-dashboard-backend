@@ -155,6 +155,18 @@ def all_authenticated_from_session():
     return role_checker
 
 
+def strict_admin_required_from_session():
+    """Require admin role from session only (cashier NOT allowed, unlike admin_required_from_session)"""
+    async def role_checker(current_user: User = Depends(get_current_user_from_session)):
+        if current_user.role.name != "admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin access required"
+            )
+        return current_user
+    return role_checker
+
+
 def admin_employee_warehouse_required_from_session():
     """Require admin, employee, or warehouse role from session (cashier NOT allowed)"""
     async def role_checker(current_user: User = Depends(get_current_user_from_session)):
