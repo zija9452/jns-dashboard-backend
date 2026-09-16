@@ -224,6 +224,13 @@ async def mark_shop_orders_seen(
         order.seen_in_shop_orders = True
 
     await db.commit()
+
+    if orders:
+        # Tell every other browser with this badge open to recount too, so
+        # someone viewing Shop Orders on one PC clears it everywhere - not
+        # just on the PC that just marked them seen.
+        await shop_order_updates.publish("shop_orders_seen")
+
     return {"success": True, "marked": len(orders)}
 
 
@@ -329,6 +336,13 @@ async def mark_approval_seen(
         order.seen_by_admin = True
 
     await db.commit()
+
+    if orders:
+        # Tell every other admin browser with this badge open to recount too,
+        # so one admin opening the page clears it everywhere - not just on
+        # the PC that just marked them seen.
+        await approval_updates.publish("approval_seen")
+
     return {"success": True, "marked": len(orders)}
 
 
@@ -382,6 +396,10 @@ async def review_shop_order(
     shop_order.updated_at = now
     await db.commit()
     await db.refresh(shop_order)
+
+    # This order just left the pending count - tell every admin browser
+    # (not just the one that clicked) to recount its badge/list.
+    await approval_updates.publish("order_reviewed")
 
     if action == "approve":
         await shop_order_updates.publish("new_approved_order")
