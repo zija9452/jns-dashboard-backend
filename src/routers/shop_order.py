@@ -1,5 +1,5 @@
 import asyncio
-from fastapi import APIRouter, Depends, HTTPException, status as http_status
+from fastapi import APIRouter, Depends, HTTPException, Query, status as http_status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_, and_
@@ -10,7 +10,7 @@ from datetime import datetime
 from ..database.database import get_db
 from ..models.user import User
 from ..models.product import Product
-from ..models.shop_order import ShopOrder, ShopOrderStatus, ShopOrderCreate, ShopOrderApprovalStatus, ShopOrderReview
+from ..models.shop_order import ShopOrder, ShopOrderStatus, ShopOrderCreate, ShopOrderApprovalStatus, ShopOrderReview, ShopOrderSeenByRole
 from ..auth.session_auth import employee_required_from_session, strict_admin_required_from_session
 from ..utils.sse_broadcaster import SSEBroadcaster
 
@@ -199,10 +199,15 @@ async def get_unseen_shop_orders_count(
     current_user: User = Depends(employee_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
-    """Count of newly-approved shop orders not yet viewed on the Shop Orders page."""
+    """Count of newly-approved shop orders not yet viewed by the current user's
+    role on the Shop Orders page. Tracked per role so an employee opening the
+    page doesn't clear the badge for admins/cashiers, and vice versa."""
+    seen_subquery = select(ShopOrderSeenByRole.order_id).where(
+        ShopOrderSeenByRole.role == current_user.role.name
+    )
     statement = select(func.count(ShopOrder.id)).where(
         ShopOrder.approval_status == ShopOrderApprovalStatus.APPROVED,
-        ShopOrder.seen_in_shop_orders == False,  # noqa: E712
+        ShopOrder.id.notin_(seen_subquery),
     )
     result = await db.execute(statement)
     return {"count": result.scalar() or 0}
@@ -213,25 +218,30 @@ async def mark_shop_orders_seen(
     current_user: User = Depends(employee_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
-    """Mark all currently-approved shop orders as seen (clears the Shop Orders badge)."""
-    statement = select(ShopOrder).where(
+    """Mark all currently-approved shop orders as seen by the current user's
+    role (clears the Shop Orders badge only for that role)."""
+    role = current_user.role.name
+    seen_subquery = select(ShopOrderSeenByRole.order_id).where(ShopOrderSeenByRole.role == role)
+    statement = select(ShopOrder.id).where(
         ShopOrder.approval_status == ShopOrderApprovalStatus.APPROVED,
-        ShopOrder.seen_in_shop_orders == False,  # noqa: E712
+        ShopOrder.id.notin_(seen_subquery),
     )
     result = await db.execute(statement)
-    orders = result.scalars().all()
-    for order in orders:
-        order.seen_in_shop_orders = True
+    order_ids = result.scalars().all()
+    for order_id in order_ids:
+        db.add(ShopOrderSeenByRole(order_id=order_id, role=role))
 
     await db.commit()
 
-    if orders:
+    if order_ids:
         # Tell every other browser with this badge open to recount too, so
-        # someone viewing Shop Orders on one PC clears it everywhere - not
-        # just on the PC that just marked them seen.
+        # someone viewing Shop Orders on one PC clears it for their role
+        # everywhere - not just on the PC that just marked them seen. Each
+        # browser recomputes its own role's count, so this is harmless for
+        # roles unaffected by this mark-seen call.
         await shop_order_updates.publish("shop_orders_seen")
 
-    return {"success": True, "marked": len(orders)}
+    return {"success": True, "marked": len(order_ids)}
 
 
 @router.get("/approval/list")
@@ -415,6 +425,7 @@ async def review_shop_order(
 async def get_shop_orders(
     search_string: Optional[str] = None,
     order_status: Optional[str] = None,
+    include_stats: bool = Query(False),
     page: int = 1,
     limit: int = 8,
     current_user: User = Depends(employee_required_from_session()),
@@ -472,6 +483,30 @@ async def get_shop_orders(
 
     total_pages = (total_count + limit - 1) // limit if limit > 0 else 1
 
+    # Optional heavy stats calculation - only performed if include_stats is True.
+    # Mirrors the pending stats on the customer orders page (pending_invoices_count / total_pending_quantity).
+    pending_stats = {"pending_orders_count": 0, "total_pending_quantity": 0}
+
+    if include_stats:
+        pending_conditions = [
+            ShopOrder.approval_status == ShopOrderApprovalStatus.APPROVED,
+            ShopOrder.status == ShopOrderStatus.PENDING,
+        ]
+
+        pending_count_stmt = select(func.count(ShopOrder.id))
+        pending_quantity_stmt = select(func.coalesce(func.sum(ShopOrder.quantity_ordered), 0))
+        for condition in pending_conditions:
+            pending_count_stmt = pending_count_stmt.where(condition)
+            pending_quantity_stmt = pending_quantity_stmt.where(condition)
+
+        pending_count_result = await db.execute(pending_count_stmt)
+        pending_quantity_result = await db.execute(pending_quantity_stmt)
+
+        pending_stats = {
+            "pending_orders_count": pending_count_result.scalar() or 0,
+            "total_pending_quantity": pending_quantity_result.scalar() or 0,
+        }
+
     return {
         "data": data,
         "page": page,
@@ -479,6 +514,7 @@ async def get_shop_orders(
         "total": total_count,
         "total_pages": total_pages,
         "has_more": page < total_pages,
+        "pending_stats": pending_stats,
     }
 
 

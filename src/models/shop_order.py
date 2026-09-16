@@ -38,10 +38,20 @@ class ShopOrder(SQLModel, table=True):
     approved_at: Optional[datetime] = Field(default=None)
     rejected_at: Optional[datetime] = Field(default=None)
     seen_by_admin: bool = Field(default=False, index=True)  # Cleared once admin opens the approval list
-    seen_in_shop_orders: bool = Field(default=False, index=True)  # Cleared once someone opens the Shop Orders page
     created_by: uuid.UUID = Field(foreign_key="users.id", index=True)
     created_at: datetime = Field(default_factory=datetime.now, index=True)
     updated_at: datetime = Field(default_factory=datetime.now, index=True)
+
+
+class ShopOrderSeenByRole(SQLModel, table=True):
+    """Tracks which approved orders each role has already seen on the Shop
+    Orders page, so one role opening the page doesn't clear the "new order"
+    badge for every other role (e.g. an employee viewing it shouldn't clear
+    the admin's badge)."""
+    __tablename__ = "shop_order_seen_by_role"
+
+    order_id: uuid.UUID = Field(foreign_key="shop_orders.id", primary_key=True)
+    role: str = Field(max_length=20, primary_key=True)
 
 
 class ShopOrderRead(SQLModel):
