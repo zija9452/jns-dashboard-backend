@@ -141,6 +141,22 @@ async def save_customer_orders(
     salesman_id = request_data.get('salesman_id') if request_data else None
     timezone = request_data.get('timezone') if request_data else None
     date = request_data.get('date') if request_data else None
+    idempotency_key = request_data.get('idempotency_key') if request_data else None
+
+    # If this exact create attempt already succeeded (client retried after losing
+    # the response, e.g. internet dropped or the page was refreshed), return the
+    # existing invoice instead of creating a duplicate one.
+    if idempotency_key:
+        existing_result = await db.execute(
+            select(CustomerInvoice).where(CustomerInvoice.idempotency_key == idempotency_key)
+        )
+        existing_invoice = existing_result.scalar_one_or_none()
+        if existing_invoice:
+            return {
+                "success": True,
+                "invoice_id": str(existing_invoice.id),
+                "invoice_no": existing_invoice.invoice_no
+            }
 
     # Validate that order items exist
     if not order_items:
@@ -409,7 +425,8 @@ async def save_customer_orders(
             "notes": remarks,  # Use remarks from query parameter
             "created_by": current_user.id,
             "created_at": datetime.now(),
-            "updated_at": datetime.now()
+            "updated_at": datetime.now(),
+            "idempotency_key": idempotency_key
         }
 
         # Add to database - include all fields that exist in the model including total_amount, amount_paid, balance_due, and payment_status
@@ -428,6 +445,28 @@ async def save_customer_orders(
         # Release the advisory lock
         unlock_statement = select(func.pg_advisory_unlock(123456))
         await db.execute(unlock_statement)
+
+
+@router.get("/by-idempotency-key/{idempotency_key}")
+async def get_customer_invoice_by_idempotency_key(
+    idempotency_key: str,
+    current_user: User = Depends(employee_order_booker_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Look up whether a create attempt with this idempotency_key already succeeded.
+    Used by the frontend on page load to resolve a "pending" key left over from a
+    previous attempt whose response never arrived (e.g. lost connection / refresh),
+    without guessing from cart content — the client always asks the server for the
+    authoritative outcome before starting a new checkout attempt.
+    """
+    from sqlalchemy import select
+
+    result = await db.execute(select(CustomerInvoice).where(CustomerInvoice.idempotency_key == idempotency_key))
+    invoice = result.scalar_one_or_none()
+    if not invoice:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="No invoice found for this key")
+    return {"invoice_id": str(invoice.id), "invoice_no": invoice.invoice_no}
 
 
 @router.post("/receipt/{invoice_id}")

@@ -34,6 +34,7 @@ class Invoice(SQLModel, table=True):
     created_by: uuid.UUID = Field(foreign_key="users.id", index=True)  # Who created the invoice with index
     created_at: datetime = Field(default_factory=datetime.now, index=True)  # When created with index
     updated_at: datetime = Field(default_factory=datetime.now, index=True)  # Last updated with index
+    idempotency_key: Optional[str] = Field(default=None, unique=True, index=True)  # Client-generated key to prevent duplicate invoice creation on retry
 
 class InvoiceRead(SQLModel):
     id: uuid.UUID

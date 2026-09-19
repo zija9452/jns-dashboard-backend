@@ -52,6 +52,18 @@ async def create_walkin_invoice(
 
     manual_discount = float(request_data.get('manual_discount', 0))
     notes = request_data.get('notes', '')
+    idempotency_key = request_data.get('idempotency_key')
+
+    # If this exact create attempt already succeeded (client retried after losing
+    # the response, e.g. internet dropped or the page was refreshed), return the
+    # existing invoice instead of creating a duplicate one / deducting stock again.
+    if idempotency_key:
+        existing_result = await db.execute(
+            select(Invoice).where(Invoice.idempotency_key == idempotency_key)
+        )
+        existing_invoice = existing_result.scalar_one_or_none()
+        if existing_invoice:
+            return {"invoice_id": str(existing_invoice.id), "invoice_no": existing_invoice.invoice_no}
 
     # Validate that order items exist
     if not order_items:
@@ -275,7 +287,8 @@ async def create_walkin_invoice(
             payment_method=payment_method,
             payment_date=payment_date,  # Payment date
             notes=notes,
-            created_by=current_user.id
+            created_by=current_user.id,
+            idempotency_key=idempotency_key
         )
         
         # Add to database
@@ -325,24 +338,10 @@ async def create_walkin_invoice(
             db.add(new_daily_cash)
             await db.commit()
 
-        # Generate PDF receipt using WeasyPrint (same as customer_invoice.py)
-        pdf_data = generate_walkin_receipt_pdf(
-            invoice_no=invoice_no,
-            customer_name=customer_name,
-            team_name="",  # No team for walk-in
-            items=items_list,
-            total_amount=float(total_amount),
-            total_discount=float(total_discount),
-            amount_paid=float(amount_paid),
-            balance_due=0.0,
-            payment_method=payment_method,
-            payment_status="paid",
-            created_at=payment_date,  # Use payment_date from request
-            bill_type="SALE RECEIPT"  # Show SALE RECEIPT for new invoices
-        )
-        
-        # Return PDF as JSON (same as customer_invoice.py)
-        return {"pdf": pdf_data}
+        # PDF is generated on demand via GET /walkin-invoices/{invoice_id}/receipt,
+        # not here — keeps this create request small so the "response lost in
+        # transit" window is as short as possible.
+        return {"invoice_id": str(invoice_obj.id), "invoice_no": invoice_no}
     finally:
         # Release the advisory lock
         unlock_result = await db.execute(select(func.pg_advisory_unlock(123459)))
@@ -649,11 +648,14 @@ async def get_walkin_invoices(
 @router.get("/walkin-invoices/{invoice_id}/receipt")
 async def get_walkin_invoice_receipt(
     invoice_id: str,
+    bill_type: str = Query("DUPLICATE BILL"),  # Callers fetching the receipt right after creation pass "SALE RECEIPT"
     current_user: User = Depends(admin_cashier_employee_required_from_session()),  # All authenticated users can access
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get duplicate invoice/receipt for an existing walk-in invoice
+    Get invoice/receipt PDF for an existing walk-in invoice. Used both for the
+    "duplicate bill" lookup feature and for fetching the receipt right after
+    creation (create no longer returns the PDF inline — see create_walkin_invoice).
     """
     try:
         invoice_uuid = uuid.UUID(invoice_id)
@@ -684,7 +686,7 @@ async def get_walkin_invoice_receipt(
     except:
         totals_data = {}
 
-    # Generate duplicate PDF receipt using WeasyPrint with "DUPLICATE BILL" text
+    # Generate PDF receipt using WeasyPrint
     pdf_data = generate_walkin_receipt_pdf(
         invoice_no=invoice.invoice_no,
         customer_name=invoice.customer_name,
@@ -697,11 +699,31 @@ async def get_walkin_invoice_receipt(
         payment_method=invoice.payment_method,
         payment_status=invoice.payment_status,
         created_at=invoice.created_at,
-        bill_type="DUPLICATE BILL"  # Show DUPLICATE BILL for duplicate requests
+        bill_type=bill_type
     )
-    
+
     # Return PDF as JSON (same as customer_invoice.py)
     return {"pdf": pdf_data}
+
+
+@router.get("/walkin-invoices/by-idempotency-key/{idempotency_key}")
+async def get_walkin_invoice_by_idempotency_key(
+    idempotency_key: str,
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Look up whether a create attempt with this idempotency_key already succeeded.
+    Used by the frontend on page load to resolve a "pending" key left over from a
+    previous attempt whose response never arrived (e.g. lost connection / refresh),
+    without guessing from cart content — the client always asks the server for the
+    authoritative outcome before starting a new checkout attempt.
+    """
+    result = await db.execute(select(Invoice).where(Invoice.idempotency_key == idempotency_key))
+    invoice = result.scalar_one_or_none()
+    if not invoice:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No invoice found for this key")
+    return {"invoice_id": str(invoice.id), "invoice_no": invoice.invoice_no}
 
 
 @router.get("/date/{date_str}")
