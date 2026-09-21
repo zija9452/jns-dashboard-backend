@@ -1154,7 +1154,7 @@ async def get_walkin_invoices_excel(
                 unit_price = item.get('unit_price', 0)
                 item_discount = float(item.get('discount', 0))
                 item_total = quantity * unit_price - item_discount
-                item_cost = item_total * 0.7
+                item_cost = float(item.get('cost_price', 0)) * quantity
                 
                 # Write row data
                 ws.cell(row=row_num, column=1, value=inv.invoice_no).border = thin_border
@@ -2250,14 +2250,6 @@ async def get_refunds_pdf(
             invoice = invoice_result.scalar_one_or_none()
             invoice_no = invoice.invoice_no if invoice else "N/A"
 
-            # Refund items don't store cost_price themselves - look it up from
-            # the original invoice's items (saved per-product at sale time).
-            original_items = json.loads(invoice.items) if invoice and invoice.items else []
-            cost_price_by_product = {
-                item.get('product_name'): float(item.get('cost_price', 0) or 0)
-                for item in original_items
-            }
-
             # Parse refund items to get product details
             refund_items = json.loads(refund.items) if refund.items else []
 
@@ -2282,7 +2274,6 @@ async def get_refunds_pdf(
                     refund_amount * (item_computed_total / items_subtotal)
                     if items_subtotal else refund_amount
                 )
-                item_cost = cost_price_by_product.get(product_name, 0) * quantity
 
                 refund_rows += f"""
                 <tr>
@@ -2292,7 +2283,6 @@ async def get_refunds_pdf(
                     <td class="border text-right">{quantity}</td>
                     <td class="border text-right">{unit_price:.0f}</td>
                     <td class="border text-right">{item_amount:.0f}</td>
-                    <td class="border text-right">{item_cost:.0f}</td>
                 </tr>
                 """
         except:
@@ -2364,13 +2354,12 @@ async def get_refunds_pdf(
         <table>
             <thead>
                 <tr>
-                    <th style="width: 15%;">Invoice No</th>
-                    <th style="width: 12%;">Date</th>
-                    <th style="width: 28%;">Product</th>
-                    <th style="width: 8%;">Quantity</th>
-                    <th style="width: 10%;">Price</th>
-                    <th style="width: 12%;">Amount</th>
-                    <th style="width: 12%;">Cost</th>
+                    <th style="width: 17%;">Invoice No</th>
+                    <th style="width: 13%;">Date</th>
+                    <th style="width: 32%;">Product</th>
+                    <th style="width: 9%;">Quantity</th>
+                    <th style="width: 12%;">Price</th>
+                    <th style="width: 17%;">Amount</th>
                 </tr>
             </thead>
             <tbody>
@@ -2378,7 +2367,6 @@ async def get_refunds_pdf(
                 <tr class="total-row">
                     <td class="border" colspan="5" style="text-align: left; font-weight: bold;">TOTAL REFUND</td>
                     <td class="border text-right" style="font-weight: bold;">{total_refund_amount:.0f}</td>
-                    <td class="border"></td>
                 </tr>
             </tbody>
         </table>
@@ -2472,8 +2460,7 @@ async def get_refunds_excel(
         'Product Name',
         'Quantity',
         'Unit Price',
-        'Amount',
-        'Cost'
+        'Amount'
     ]
 
     for col, header in enumerate(headers, 1):
@@ -2484,12 +2471,11 @@ async def get_refunds_excel(
         cell.border = thin_border
 
     # Set column widths
-    column_widths = [15, 12, 30, 10, 12, 12, 12]
+    column_widths = [15, 12, 30, 10, 12, 14]
     for col, width in enumerate(column_widths, 1):
         ws.column_dimensions[chr(64 + col)].width = width
 
     total_refund_amount = 0.0
-    total_cost = 0.0
     row_num = 2
 
     # Write data rows
@@ -2499,14 +2485,6 @@ async def get_refunds_excel(
             invoice_result = await db.execute(select(Invoice).where(Invoice.id == refund.invoice_id))
             invoice = invoice_result.scalar_one_or_none()
             invoice_no = invoice.invoice_no if invoice else "N/A"
-
-            # Refund items don't store cost_price themselves - look it up from
-            # the original invoice's items (saved per-product at sale time).
-            original_items = json.loads(invoice.items) if invoice and invoice.items else []
-            cost_price_by_product = {
-                item.get('product_name'): float(item.get('cost_price', 0) or 0)
-                for item in original_items
-            }
 
             # Parse refund items
             refund_items = json.loads(refund.items) if refund.items else []
@@ -2532,8 +2510,6 @@ async def get_refunds_excel(
                     refund_amount * (item_computed_total / items_subtotal)
                     if items_subtotal else refund_amount
                 )
-                item_cost = cost_price_by_product.get(product_name, 0) * quantity
-                total_cost += item_cost
 
                 # Write row data
                 ws.cell(row=row_num, column=1, value=invoice_no).border = thin_border
@@ -2542,13 +2518,12 @@ async def get_refunds_excel(
                 ws.cell(row=row_num, column=4, value=quantity).border = thin_border
                 ws.cell(row=row_num, column=5, value=round(unit_price, 2)).border = thin_border
                 ws.cell(row=row_num, column=6, value=round(item_amount, 2)).border = thin_border
-                ws.cell(row=row_num, column=7, value=round(item_cost, 2)).border = thin_border
 
                 # Apply alignments
-                for col in range(1, 8):
+                for col in range(1, 7):
                     if col == 4:  # Quantity
                         ws.cell(row=row_num, column=col).alignment = cell_alignment
-                    elif col in [5, 6, 7]:  # Numeric columns
+                    elif col in [5, 6]:  # Numeric columns
                         ws.cell(row=row_num, column=col).alignment = right_alignment
                     else:
                         ws.cell(row=row_num, column=col).alignment = cell_alignment
@@ -2561,18 +2536,16 @@ async def get_refunds_excel(
     total_row = row_num
     ws.cell(row=total_row, column=1, value='TOTAL REFUND').font = Font(bold=True)
     ws.cell(row=total_row, column=6, value=round(total_refund_amount, 2)).font = Font(bold=True)
-    ws.cell(row=total_row, column=7, value=round(total_cost, 2)).font = Font(bold=True)
 
     # Merge cells for TOTAL label
     ws.merge_cells(start_row=total_row, start_column=1, end_row=total_row, end_column=5)
 
     # Style total row
     total_fill = PatternFill(start_color="f0f0f0", end_color="f0f0f0", fill_type="solid")
-    for col in range(1, 8):
+    for col in range(1, 7):
         cell = ws.cell(row=total_row, column=col)
         cell.border = thin_border
-        if col <= 7:
-            cell.fill = total_fill
+        cell.fill = total_fill
         cell.alignment = cell_alignment
 
     # Save to bytes
