@@ -2249,7 +2249,15 @@ async def get_refunds_pdf(
             invoice_result = await db.execute(select(Invoice).where(Invoice.id == refund.invoice_id))
             invoice = invoice_result.scalar_one_or_none()
             invoice_no = invoice.invoice_no if invoice else "N/A"
-            
+
+            # Refund items don't store cost_price themselves - look it up from
+            # the original invoice's items (saved per-product at sale time).
+            original_items = json.loads(invoice.items) if invoice and invoice.items else []
+            cost_price_by_product = {
+                item.get('product_name'): float(item.get('cost_price', 0) or 0)
+                for item in original_items
+            }
+
             # Parse refund items to get product details
             refund_items = json.loads(refund.items) if refund.items else []
 
@@ -2274,7 +2282,7 @@ async def get_refunds_pdf(
                     refund_amount * (item_computed_total / items_subtotal)
                     if items_subtotal else refund_amount
                 )
-                item_cost = item_computed_total * 0.7  # 70% cost calculation
+                item_cost = cost_price_by_product.get(product_name, 0) * quantity
 
                 refund_rows += f"""
                 <tr>
@@ -2491,7 +2499,15 @@ async def get_refunds_excel(
             invoice_result = await db.execute(select(Invoice).where(Invoice.id == refund.invoice_id))
             invoice = invoice_result.scalar_one_or_none()
             invoice_no = invoice.invoice_no if invoice else "N/A"
-            
+
+            # Refund items don't store cost_price themselves - look it up from
+            # the original invoice's items (saved per-product at sale time).
+            original_items = json.loads(invoice.items) if invoice and invoice.items else []
+            cost_price_by_product = {
+                item.get('product_name'): float(item.get('cost_price', 0) or 0)
+                for item in original_items
+            }
+
             # Parse refund items
             refund_items = json.loads(refund.items) if refund.items else []
 
@@ -2516,7 +2532,7 @@ async def get_refunds_excel(
                     refund_amount * (item_computed_total / items_subtotal)
                     if items_subtotal else refund_amount
                 )
-                item_cost = item_computed_total * 0.7  # 70% cost calculation
+                item_cost = cost_price_by_product.get(product_name, 0) * quantity
                 total_cost += item_cost
 
                 # Write row data

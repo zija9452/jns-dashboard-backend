@@ -1,6 +1,4 @@
-import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Query, status as http_status
-from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_, and_
 from typing import Optional
@@ -12,30 +10,9 @@ from ..models.user import User
 from ..models.product import Product
 from ..models.shop_order import ShopOrder, ShopOrderStatus, ShopOrderCreate, ShopOrderApprovalStatus, ShopOrderReview, ShopOrderSeenByRole
 from ..auth.session_auth import employee_required_from_session, strict_admin_required_from_session
-from ..utils.sse_broadcaster import SSEBroadcaster
+from ..utils.firestore_signals import publish_signal
 
 router = APIRouter()
-
-# Pushed to instantly when a new order is placed (admin approval badge) or
-# approved (Shop Orders badge), so the badges don't have to wait for their
-# next poll to notice a change made by a different user/browser.
-approval_updates = SSEBroadcaster()
-shop_order_updates = SSEBroadcaster()
-
-SSE_PING_INTERVAL_SECONDS = 20
-
-
-async def _sse_event_stream(broadcaster: SSEBroadcaster):
-    queue = broadcaster.subscribe()
-    try:
-        while True:
-            try:
-                event = await asyncio.wait_for(queue.get(), timeout=SSE_PING_INTERVAL_SECONDS)
-                yield f"data: {event}\n\n"
-            except asyncio.TimeoutError:
-                yield ": ping\n\n"
-    finally:
-        broadcaster.unsubscribe(queue)
 
 # Matches the "Short Stock" threshold used on the dashboard (salesview/dashboard/stats)
 # so the counts on the dashboard cards and this list stay in sync.
@@ -153,45 +130,13 @@ async def create_shop_order(
     await db.commit()
     await db.refresh(shop_order)
 
-    await approval_updates.publish("new_pending_approval")
+    await publish_signal("shop_order_approval")
 
     return {
         "success": True,
         "id": str(shop_order.id),
         "message": f"Order request sent for approval: {order_data.quantity_ordered} unit(s) of {product.name}"
     }
-
-
-@router.get("/approval/stream")
-async def stream_approval_updates(
-    current_user: User = Depends(strict_admin_required_from_session()),
-):
-    """Server-Sent Events stream: pings the admin's browser the instant a new order is placed."""
-    return StreamingResponse(
-        _sse_event_stream(approval_updates),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache, no-transform",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
-@router.get("/stream")
-async def stream_shop_order_updates(
-    current_user: User = Depends(employee_required_from_session()),
-):
-    """Server-Sent Events stream: pings the browser the instant an order is approved."""
-    return StreamingResponse(
-        _sse_event_stream(shop_order_updates),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache, no-transform",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
 
 
 @router.get("/unseen-count")
@@ -239,7 +184,7 @@ async def mark_shop_orders_seen(
         # everywhere - not just on the PC that just marked them seen. Each
         # browser recomputes its own role's count, so this is harmless for
         # roles unaffected by this mark-seen call.
-        await shop_order_updates.publish("shop_orders_seen")
+        await publish_signal("shop_order_updates")
 
     return {"success": True, "marked": len(order_ids)}
 
@@ -351,7 +296,7 @@ async def mark_approval_seen(
         # Tell every other admin browser with this badge open to recount too,
         # so one admin opening the page clears it everywhere - not just on
         # the PC that just marked them seen.
-        await approval_updates.publish("approval_seen")
+        await publish_signal("shop_order_approval")
 
     return {"success": True, "marked": len(orders)}
 
@@ -409,10 +354,10 @@ async def review_shop_order(
 
     # This order just left the pending count - tell every admin browser
     # (not just the one that clicked) to recount its badge/list.
-    await approval_updates.publish("order_reviewed")
+    await publish_signal("shop_order_approval")
 
     if action == "approve":
-        await shop_order_updates.publish("new_approved_order")
+        await publish_signal("shop_order_updates")
 
     return {
         "success": True,

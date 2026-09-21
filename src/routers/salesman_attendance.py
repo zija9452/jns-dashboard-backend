@@ -1,6 +1,4 @@
-import asyncio
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import StreamingResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
@@ -11,15 +9,9 @@ from ..database.database import get_db
 from ..models.user import User
 from ..services.salesman_attendance_service import SalesmanAttendanceService
 from ..auth.session_auth import admin_cashier_employee_required_from_session, admin_required_from_session
-from ..utils.sse_broadcaster import SSEBroadcaster
+from ..utils.firestore_signals import publish_signal
 
 router = APIRouter()
-
-# Pushed to instantly on check-in/check-out, so the widget doesn't have to
-# wait for its next 45s poll to notice a change made from a different PC.
-attendance_updates = SSEBroadcaster()
-
-SSE_PING_INTERVAL_SECONDS = 20
 
 
 # Frontend-compatible endpoints (MUST be before /{salesman_id} routes)
@@ -82,35 +74,6 @@ async def get_today_attendance(
     return await SalesmanAttendanceService.get_today_overview(db)
 
 
-@router.get("/stream")
-async def stream_attendance_updates(
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
-):
-    """Server-Sent Events stream: pings every connected browser the instant a check-in/out happens."""
-    queue = attendance_updates.subscribe()
-
-    async def event_generator():
-        try:
-            while True:
-                try:
-                    event = await asyncio.wait_for(queue.get(), timeout=SSE_PING_INTERVAL_SECONDS)
-                    yield f"data: {event}\n\n"
-                except asyncio.TimeoutError:
-                    yield ": ping\n\n"
-        finally:
-            attendance_updates.unsubscribe(queue)
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache, no-transform",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
 @router.post("/{salesman_id}/check-in")
 async def check_in_salesman(
     salesman_id: str,
@@ -138,7 +101,7 @@ async def check_in_salesman(
             detail="Salesman is already checked in today"
         )
 
-    await attendance_updates.publish("checked_in")
+    await publish_signal("salesman_attendance")
 
     return {
         "salesman_id": str(attendance.salesman_id),
@@ -168,7 +131,7 @@ async def check_out_salesman(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
-    await attendance_updates.publish("checked_out")
+    await publish_signal("salesman_attendance")
 
     return {
         "salesman_id": str(attendance.salesman_id),
