@@ -130,13 +130,16 @@ async def get_dashboard_stats(
     total_sales = walkin_total_sales + customer_total_collection
     
     # ==================== EXPENSES CALCULATION ====================
+    expense_filters = [
+        Expense.expense_date >= first_day,
+        Expense.expense_date <= data_end_date  # Use data_end_date
+    ]
+    # Admin-only expenses stay invisible to cashiers/order bookers everywhere, including totals
+    if user_role in ("cashier", "order_booker"):
+        expense_filters.append(Expense.is_admin_only == False)
+
     expenses_result = await db.execute(
-        select(func.sum(Expense.amount)).where(
-            and_(
-                Expense.expense_date >= first_day,
-                Expense.expense_date <= data_end_date  # Use data_end_date
-            )
-        )
+        select(func.sum(Expense.amount)).where(and_(*expense_filters))
     )
     total_expenses = float(expenses_result.scalar_one_or_none() or 0)
     
@@ -209,10 +212,7 @@ async def get_dashboard_stats(
         func.date(Expense.expense_date).label('date'),
         func.sum(Expense.amount).label('total')
     ).where(
-        and_(
-            Expense.expense_date >= first_day,
-            Expense.expense_date <= data_end_date
-        )
+        and_(*expense_filters)
     ).group_by(func.date(Expense.expense_date))
 
     daily_expense_result = await db.execute(daily_expense_statement)

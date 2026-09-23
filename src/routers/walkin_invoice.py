@@ -11,7 +11,7 @@ PKT = timezone(timedelta(hours=5))  # Pakistan Standard Time = UTC+5
 def pkt_now() -> datetime:
     return datetime.now(timezone.utc).astimezone(PKT)
 from decimal import Decimal
-from sqlalchemy import select, func
+from sqlalchemy import select, func, and_
 import logging
 
 from ..database.database import get_db
@@ -1203,9 +1203,13 @@ async def get_today_sales_report(
     daily_cash_result = await db.execute(select(DailyCash).where(DailyCash.date == target_date))
     daily_cash = daily_cash_result.scalar_one_or_none()
 
-    # Get total expenses for the date
+    # Get total expenses for the date (admin-only expenses stay hidden from cashiers)
+    expense_conditions = [Expense.expense_date == target_date]
+    if current_user.role.name == "cashier":
+        expense_conditions.append(Expense.is_admin_only == False)
+
     expenses_result = await db.execute(
-        select(func.sum(Expense.amount)).where(Expense.expense_date == target_date)
+        select(func.sum(Expense.amount)).where(and_(*expense_conditions))
     )
     total_expenses = expenses_result.scalar_one_or_none() or Decimal('0.00')
 

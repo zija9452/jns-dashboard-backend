@@ -36,9 +36,10 @@ async def get_expenses(
 
     # Apply role-based filtering
     if current_user.role.name == "cashier":
-        # Cashier can only see current date expenses
+        # Cashier can only see current date expenses, and never admin-only ones
         today = date.today()
         base_statement = base_statement.where(Expense.expense_date == today)
+        base_statement = base_statement.where(Expense.is_admin_only == False)
     # Admin & Employee see all expenses (no filter)
 
     # Apply created_by filter
@@ -59,7 +60,8 @@ async def get_expenses(
     if current_user.role.name == "cashier":
         today = date.today()
         count_statement = count_statement.where(Expense.expense_date == today)
-    
+        count_statement = count_statement.where(Expense.is_admin_only == False)
+
     if created_by:
         try:
             created_by_uuid = UUID(created_by)
@@ -88,7 +90,8 @@ async def get_expenses(
                 "expense_date": expense.expense_date.isoformat() if expense.expense_date else None,
                 "branch": expense.branch or "",
                 "created_by": str(expense.created_by),
-                "created_at": expense.created_at.isoformat() if expense.created_at else None
+                "created_at": expense.created_at.isoformat() if expense.created_at else None,
+                "is_admin_only": expense.is_admin_only
             }
             for expense in expenses
         ],
@@ -119,12 +122,16 @@ async def create_expense(
                 detail="Cashiers can only create expenses for current date"
             )
 
+    # Only admins may mark an expense as admin-only; force it off for everyone else
+    if current_user.role.name != "admin":
+        expense_create.is_admin_only = False
+
     # Set the created_by field to the current user if not specified in the request
     if not expense_create.created_by:
         expense_create.created_by = current_user.id
 
     expense = await ExpenseService.create_expense(db, expense_create)
-    
+
     # Return manually serialized response
     return {
         "id": str(expense.id),
@@ -133,7 +140,8 @@ async def create_expense(
         "expense_date": expense.expense_date.isoformat() if expense.expense_date else None,
         "branch": expense.branch,
         "created_by": str(expense.created_by),
-        "created_at": expense.created_at.isoformat() if expense.created_at else None
+        "created_at": expense.created_at.isoformat() if expense.created_at else None,
+        "is_admin_only": expense.is_admin_only
     }
 
 @router.get("/{expense_id}")
@@ -156,7 +164,7 @@ async def get_expense(
 
     expense = await ExpenseService.get_expense(db, expense_uuid)
 
-    if not expense:
+    if not expense or (current_user.role.name == "cashier" and expense.is_admin_only):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Expense not found"
@@ -170,7 +178,8 @@ async def get_expense(
         "expense_date": expense.expense_date.isoformat() if expense.expense_date else None,
         "branch": expense.branch,
         "created_by": str(expense.created_by),
-        "created_at": expense.created_at.isoformat() if expense.created_at else None
+        "created_at": expense.created_at.isoformat() if expense.created_at else None,
+        "is_admin_only": expense.is_admin_only
     }
 
 @router.put("/{expense_id}")
@@ -195,7 +204,7 @@ async def update_expense(
 
     expense = await ExpenseService.get_expense(db, expense_uuid)
 
-    if not expense:
+    if not expense or (current_user.role.name == "cashier" and expense.is_admin_only):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Expense not found"
@@ -209,8 +218,12 @@ async def update_expense(
                 detail="Cashiers can only update expenses for current date"
             )
 
+    # Only admins may change the admin-only flag
+    if current_user.role.name != "admin":
+        expense_update.is_admin_only = None
+
     updated_expense = await ExpenseService.update_expense(db, expense_uuid, expense_update)
-    
+
     # Return manually serialized response
     return {
         "id": str(updated_expense.id),
@@ -219,7 +232,8 @@ async def update_expense(
         "expense_date": updated_expense.expense_date.isoformat() if updated_expense.expense_date else None,
         "branch": updated_expense.branch,
         "created_by": str(updated_expense.created_by),
-        "created_at": updated_expense.created_at.isoformat() if updated_expense.created_at else None
+        "created_at": updated_expense.created_at.isoformat() if updated_expense.created_at else None,
+        "is_admin_only": updated_expense.is_admin_only
     }
 
 @router.delete("/{expense_id}")
@@ -243,7 +257,7 @@ async def delete_expense(
 
     # Check if expense exists and get it
     expense = await ExpenseService.get_expense(db, expense_uuid)
-    if not expense:
+    if not expense or (current_user.role.name == "cashier" and expense.is_admin_only):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Expense not found"

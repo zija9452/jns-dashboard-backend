@@ -2,13 +2,6 @@ from sqlmodel import SQLModel, Field
 from typing import Optional
 from datetime import datetime
 import uuid
-from enum import Enum
-
-
-class DemandStatus(str, Enum):
-    PENDING = "PENDING"
-    FULFILLED = "FULFILLED"
-    CANCELLED = "CANCELLED"
 
 
 class Demand(SQLModel, table=True):
@@ -16,12 +9,10 @@ class Demand(SQLModel, table=True):
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     demand_text: str = Field(max_length=255)
+    demand_item_id: Optional[uuid.UUID] = Field(default=None, foreign_key="demand_items.id", index=True)
     category: Optional[str] = Field(default=None, max_length=100)
     customer_name: Optional[str] = Field(default=None, max_length=100)
     customer_phone: Optional[str] = Field(default=None, max_length=20)
-    status: DemandStatus = Field(default=DemandStatus.PENDING, index=True)
-    fulfilled_at: Optional[datetime] = Field(default=None)
-    cancelled_at: Optional[datetime] = Field(default=None)
     created_by: uuid.UUID = Field(foreign_key="users.id", index=True)
     created_at: datetime = Field(default_factory=datetime.now, index=True)
     updated_at: datetime = Field(default_factory=datetime.now, index=True)
@@ -30,12 +21,10 @@ class Demand(SQLModel, table=True):
 class DemandRead(SQLModel):
     id: uuid.UUID
     demand_text: str
+    demand_item_id: Optional[uuid.UUID]
     category: Optional[str]
     customer_name: Optional[str]
     customer_phone: Optional[str]
-    status: DemandStatus
-    fulfilled_at: Optional[datetime]
-    cancelled_at: Optional[datetime]
     created_by: uuid.UUID
     created_at: datetime
     updated_at: datetime
@@ -44,6 +33,7 @@ class DemandRead(SQLModel):
 class DemandCreate(SQLModel):
     demand_text: str
     category: str
+    demand_item_id: Optional[uuid.UUID] = None
     customer_name: Optional[str] = None
     customer_phone: Optional[str] = None
 
@@ -53,4 +43,3 @@ class DemandUpdate(SQLModel):
     category: Optional[str] = None
     customer_name: Optional[str] = None
     customer_phone: Optional[str] = None
-    status: Optional[DemandStatus] = None
