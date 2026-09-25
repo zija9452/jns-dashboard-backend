@@ -10,7 +10,7 @@ from ..database.database import get_db
 from ..models.user import User
 from ..models.vendor import Vendor, VendorCreate, VendorUpdate, VendorRead
 from ..services.vendor_service import VendorService
-from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, cashier_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session
+from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, cashier_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session, admin_cashier_production_required_from_session
 
 router = APIRouter()
 
@@ -18,7 +18,7 @@ router = APIRouter()
 async def get_vendors(
     skip: int = 0,
     limit: int = 100,
-    current_user: User = Depends(admin_required_from_session()),  # Only admins can view vendors
+    current_user: User = Depends(admin_cashier_production_required_from_session()),  # Admin, cashier, and production (stock-in vendor dropdown) can view vendors
     db: AsyncSession = Depends(get_db)
 ):
     """

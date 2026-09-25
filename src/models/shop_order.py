@@ -43,15 +43,26 @@ class ShopOrder(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.now, index=True)
 
 
-class ShopOrderSeenByRole(SQLModel, table=True):
-    """Tracks which approved orders each role has already seen on the Shop
-    Orders page, so one role opening the page doesn't clear the "new order"
-    badge for every other role (e.g. an employee viewing it shouldn't clear
-    the admin's badge)."""
-    __tablename__ = "shop_order_seen_by_role"
+class ShopOrderSeenByUser(SQLModel, table=True):
+    """Tracks which approved orders each individual user has already seen on
+    the Shop Orders page, so one user opening the page doesn't clear the
+    "new order" badge for every other user (accounts are unique, so this is
+    tracked per user rather than per role - two admins don't share a badge)."""
+    __tablename__ = "shop_order_seen_by_user"
 
     order_id: uuid.UUID = Field(foreign_key="shop_orders.id", primary_key=True)
-    role: str = Field(max_length=20, primary_key=True)
+    user_id: uuid.UUID = Field(foreign_key="users.id", primary_key=True)
+
+
+class ShopOrderApprovalSeenByUser(SQLModel, table=True):
+    """Tracks which pending-approval orders each individual user has already
+    seen on the Shop Order Approval page, so one admin/production user
+    opening the page doesn't clear the badge for every other admin/production
+    user."""
+    __tablename__ = "shop_order_approval_seen_by_user"
+
+    order_id: uuid.UUID = Field(foreign_key="shop_orders.id", primary_key=True)
+    user_id: uuid.UUID = Field(foreign_key="users.id", primary_key=True)
 
 
 class ShopOrderRead(SQLModel):

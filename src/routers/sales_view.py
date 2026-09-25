@@ -1870,37 +1870,43 @@ async def get_stock_adjustments_pdf(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format")
     
-    # Query stock adjustments for date range
-    statement = select(StockEntry).where(
-        and_(
-            StockEntry.type == StockEntryType.ADJUST,
-            func.date(StockEntry.created_at) >= from_date_obj,
-            func.date(StockEntry.created_at) <= to_date_obj
+    # Query stock adjustments for date range, along with the user who made each one
+    statement = (
+        select(StockEntry, User.username)
+        .outerjoin(User, StockEntry.created_by == User.id)
+        .where(
+            and_(
+                StockEntry.type == StockEntryType.ADJUST,
+                func.date(StockEntry.created_at) >= from_date_obj,
+                func.date(StockEntry.created_at) <= to_date_obj
+            )
         )
     )
     result = await db.execute(statement)
-    adjustments = result.scalars().all()
-    
+    adjustments = result.all()
+
     # Build adjustment rows for PDF
     adjustment_rows = ""
     total_positive = 0
     total_negative = 0
-    
-    for adj in adjustments:
+
+    for adj, username in adjustments:
         # Get product name
         product_result = await db.execute(select(Product).where(Product.id == adj.product_id))
         product = product_result.scalar_one_or_none()
         product_name = product.name if product else 'Unknown'
-        
+
         # Determine if positive or negative adjustment
         adj_type = "Increase" if adj.qty > 0 else "Decrease"
         abs_qty = abs(adj.qty)
-        
+
         if adj.qty > 0:
             total_positive += adj.qty
         else:
             total_negative += abs(adj.qty)
-        
+
+        entered_by = username or "-"
+
         adjustment_rows += f"""
         <tr>
             <td class="border">{adj.created_at.strftime('%Y-%m-%d')}</td>
@@ -1910,6 +1916,7 @@ async def get_stock_adjustments_pdf(
             <td class="border">{adj.location or 'N/A'}</td>
             <td class="border">{adj.batch or '-'}</td>
             <td class="border">{adj.created_at.strftime('%I:%M %p')}</td>
+            <td class="border">{entered_by}</td>
         </tr>
         """
     
@@ -1988,13 +1995,14 @@ async def get_stock_adjustments_pdf(
         <table>
             <thead>
                 <tr>
-                    <th style="width: 12%;">Date</th>
-                    <th style="width: 25%;">Product</th>
-                    <th style="width: 12%;">Type</th>
-                    <th style="width: 10%;">Qty</th>
-                    <th style="width: 15%;">Location</th>
-                    <th style="width: 13%;">Batch</th>
-                    <th style="width: 13%;">Time</th>
+                    <th style="width: 10%;">Date</th>
+                    <th style="width: 20%;">Product</th>
+                    <th style="width: 10%;">Type</th>
+                    <th style="width: 8%;">Qty</th>
+                    <th style="width: 13%;">Location</th>
+                    <th style="width: 12%;">Batch</th>
+                    <th style="width: 12%;">Time</th>
+                    <th style="width: 15%;">User</th>
                 </tr>
             </thead>
             <tbody>
@@ -2002,11 +2010,11 @@ async def get_stock_adjustments_pdf(
                 <tr class="total-row">
                     <td class="border" colspan="3" style="text-align: left; font-weight: bold;">TOTAL</td>
                     <td class="border text-right" style="font-weight: bold;">{total_positive + total_negative}</td>
-                    <td class="border" colspan="3"></td>
+                    <td class="border" colspan="4"></td>
                 </tr>
             </tbody>
         </table>
-        
+
         <div class="summary">
             <div class="summary-row">
                 <span style="font-weight: bold;">Stock Increases:</span>
@@ -2062,36 +2070,40 @@ async def get_stock_adjustments_excel(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format")
     
-    # Query stock adjustments for date range
-    statement = select(StockEntry).where(
-        and_(
-            StockEntry.type == StockEntryType.ADJUST,
-            func.date(StockEntry.created_at) >= from_date_obj,
-            func.date(StockEntry.created_at) <= to_date_obj
+    # Query stock adjustments for date range, along with the user who made each one
+    statement = (
+        select(StockEntry, User.username)
+        .outerjoin(User, StockEntry.created_by == User.id)
+        .where(
+            and_(
+                StockEntry.type == StockEntryType.ADJUST,
+                func.date(StockEntry.created_at) >= from_date_obj,
+                func.date(StockEntry.created_at) <= to_date_obj
+            )
         )
     )
     result = await db.execute(statement)
-    adjustments = result.scalars().all()
-    
+    adjustments = result.all()
+
     # Create Excel workbook
     wb = Workbook()
     ws = wb.active
     ws.title = "Stock Adjustments"
-    
+
     # Define styles
     header_font = Font(bold=True, color="FFFFFF", size=11)
     header_fill = PatternFill(start_color="444444", end_color="444444", fill_type="solid")
     header_alignment = Alignment(horizontal="left", vertical="center")
     cell_alignment = Alignment(vertical="center")
     right_alignment = Alignment(horizontal="right", vertical="center")
-    
+
     thin_border = Border(
         left=Side(style='thin'),
         right=Side(style='thin'),
         top=Side(style='thin'),
         bottom=Side(style='thin')
     )
-    
+
     # Write header
     headers = [
         'Date',
@@ -2100,27 +2112,28 @@ async def get_stock_adjustments_excel(
         'Quantity',
         'Location',
         'Batch',
-        'Time'
+        'Time',
+        'User'
     ]
-    
+
     for col, header in enumerate(headers, 1):
         cell = ws.cell(row=1, column=col, value=header)
         cell.font = header_font
         cell.fill = header_fill
         cell.alignment = header_alignment
         cell.border = thin_border
-    
+
     # Set column widths
-    column_widths = [15, 30, 15, 12, 20, 15, 12]
+    column_widths = [15, 30, 15, 12, 20, 15, 12, 15]
     for col, width in enumerate(column_widths, 1):
         ws.column_dimensions[chr(64 + col)].width = width
-    
+
     total_positive = 0
     total_negative = 0
     row_num = 2
-    
+
     # Write data rows
-    for adj in adjustments:
+    for adj, username in adjustments:
         # Get product name
         try:
             product_result = await db.execute(select(Product).where(Product.id == adj.product_id))
@@ -2128,16 +2141,16 @@ async def get_stock_adjustments_excel(
             product_name = product.name if product else 'Unknown'
         except:
             product_name = 'Unknown'
-        
+
         # Determine adjustment type
         adj_type = "Increase" if adj.qty > 0 else "Decrease"
         abs_qty = abs(adj.qty)
-        
+
         if adj.qty > 0:
             total_positive += adj.qty
         else:
             total_negative += abs(adj.qty)
-        
+
         # Write row data
         ws.cell(row=row_num, column=1, value=adj.created_at.strftime('%Y-%m-%d')).border = thin_border
         ws.cell(row=row_num, column=2, value=product_name).border = thin_border
@@ -2146,28 +2159,29 @@ async def get_stock_adjustments_excel(
         ws.cell(row=row_num, column=5, value=adj.location or 'N/A').border = thin_border
         ws.cell(row=row_num, column=6, value=adj.batch or '-').border = thin_border
         ws.cell(row=row_num, column=7, value=adj.created_at.strftime('%I:%M %p')).border = thin_border
-        
+        ws.cell(row=row_num, column=8, value=username or '-').border = thin_border
+
         # Apply alignments
-        for col in range(1, 8):
+        for col in range(1, 9):
             if col in [4]:  # Quantity column
                 ws.cell(row=row_num, column=col).alignment = right_alignment
             else:
                 ws.cell(row=row_num, column=col).alignment = cell_alignment
-        
+
         row_num += 1
-    
+
     # Write total row
     total_row = row_num
     ws.cell(row=total_row, column=1, value='TOTAL').font = Font(bold=True)
     ws.cell(row=total_row, column=4, value=total_positive + total_negative).font = Font(bold=True)
-    
+
     # Merge cells for TOTAL label (columns 1-3)
     ws.merge_cells(start_row=total_row, start_column=1, end_row=total_row, end_column=3)
-    # Merge empty cells (columns 5-7)
-    ws.merge_cells(start_row=total_row, start_column=5, end_row=total_row, end_column=7)
-    
+    # Merge empty cells (columns 5-8)
+    ws.merge_cells(start_row=total_row, start_column=5, end_row=total_row, end_column=8)
+
     # Apply border to total row (only non-merged cells)
-    for col in range(1, 8):
+    for col in range(1, 9):
         cell = ws.cell(row=total_row, column=col)
         cell.border = thin_border
     

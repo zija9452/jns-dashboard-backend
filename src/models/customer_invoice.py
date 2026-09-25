@@ -2,7 +2,7 @@ from sqlmodel import SQLModel, Field
 from sqlalchemy import Column, Numeric, Text
 from typing import Optional, List
 from decimal import Decimal
-from datetime import datetime
+from datetime import datetime, date
 import uuid
 from enum import Enum
 import sqlalchemy as sa
@@ -33,6 +33,16 @@ class CustomerInvoice(SQLModel, table=True):
     payments_history: str = Field(default="[]")  # JSON array of payment records
     taxes: Decimal = Field(sa_column=Column(Numeric(10, 2)))
     discounts: Optional[Decimal] = Field(default=0.00, sa_column=Column(Numeric(10, 2)))
+
+    # Rush is derived from required_by_date, never a manual toggle - mirrors Quotation.
+    # Rate/threshold are snapshotted at save time so a later change to the global rush
+    # rule never retroactively changes an already-created invoice's price.
+    required_by_date: Optional[date] = Field(default=None, index=True)
+    is_rush: bool = Field(default=False, index=True)
+    rush_rate_snapshot: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(10, 2)))
+    rush_threshold_snapshot: Optional[int] = Field(default=None)
+    rush_charge: Decimal = Field(default=0.00, sa_column=Column(Numeric(10, 2)))
+
     status: CustomerInvoiceStatus = Field(default=CustomerInvoiceStatus.PENDING, index=True)  # PENDING, DELIVERED, COMPLETED, CANCEL with index
     payment_method: str = Field(default="cash", index=True)  # As per your JavaScript content with index
     notes: Optional[str] = Field(default=None)
@@ -56,6 +66,9 @@ class CustomerInvoiceRead(SQLModel):
     payments_history: str
     taxes: Decimal
     discounts: Optional[Decimal]
+    required_by_date: Optional[date]
+    is_rush: bool
+    rush_charge: Decimal
     status: CustomerInvoiceStatus
     payment_method: str
     notes: Optional[str]

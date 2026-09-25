@@ -29,11 +29,14 @@ async def create_ideal_price(
     Create or update an ideal price for a category options combination
     Requires employee role
     """
-    # Check if price for this combination already exists
+    min_qty = price_data.min_qty or 1
+
+    # Check if price for this combination + quantity tier already exists
     result = await db.execute(
         select(IdealPrice).where(
             IdealPrice.category_id == price_data.category_id,
-            IdealPrice.options_combination == price_data.options_combination
+            IdealPrice.options_combination == price_data.options_combination,
+            IdealPrice.min_qty == min_qty
         )
     )
     existing = result.scalar_one_or_none()
@@ -43,17 +46,18 @@ async def create_ideal_price(
         existing.price = price_data.price
         existing.branch = price_data.branch
         existing.updated_at = datetime.now()
-        
+
         db.add(existing)
         await db.commit()
         await db.refresh(existing)
-        
+
         return existing
 
     # Create new price
     db_price = IdealPrice(
         category_id=price_data.category_id,
         options_combination=price_data.options_combination,
+        min_qty=min_qty,
         price=price_data.price,
         branch=price_data.branch
     )
@@ -108,6 +112,7 @@ async def get_ideal_prices(
                 "id": str(price.id),
                 "category_id": str(price.category_id),
                 "options_combination": price.options_combination,
+                "min_qty": price.min_qty,
                 "price": float(price.price),
                 "branch": price.branch or "",
                 "created_at": price.created_at.isoformat() if price.created_at else None,
@@ -139,11 +144,10 @@ async def get_ideal_prices_by_category(
     result = await db.execute(statement)
     prices = result.scalars().all()
 
-    # Return as dictionary for easy lookup
-    prices_dict = {
-        price.options_combination: float(price.price)
-        for price in prices
-    }
+    # Return as nested dictionary: combination -> { min_qty: price } for easy lookup
+    prices_dict: dict = {}
+    for price in prices:
+        prices_dict.setdefault(price.options_combination, {})[str(price.min_qty)] = float(price.price)
 
     return {
         "category_id": str(category_id),

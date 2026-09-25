@@ -34,6 +34,22 @@ def warehouse_required():
     return role_checker
 
 
+def warehouse_or_production_required():
+    """Require warehouse, admin, employee, or production role from session
+
+    Narrow variant of warehouse_required() that also allows production, for
+    the Shop Requirement Report Quick Action on the dashboard only.
+    """
+    async def role_checker(current_user: User = Depends(get_current_user_from_session)):
+        if current_user.role.name not in ["warehouse", "admin", "employee", "production"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Warehouse, admin, employee, or production access required"
+            )
+        return current_user
+    return role_checker
+
+
 class StockInRequest(BaseModel):
     product_id: str
     qty: int
@@ -889,7 +905,7 @@ async def urgent_buy_report(
 
 @router.post("/shop-requirement-report")
 async def shop_requirement_report(
-    current_user: User = Depends(warehouse_required()),
+    current_user: User = Depends(warehouse_or_production_required()),
     db: AsyncSession = Depends(get_db)
 ):
     """

@@ -14,6 +14,7 @@ from ..models.customer_category import (
     SubCategorySchema
 )
 from ..models.ideal_price import IdealPrice
+from ..models.price_modifier import PriceModifier
 from ..models.user import User
 from ..auth.session_auth import employee_required_from_session, employee_order_booker_required_from_session
 
@@ -111,7 +112,9 @@ async def get_customer_categories(
                 "sub_categories": [
                     {
                         "sub_category": sc["sub_category"],
-                        "options": sc["options"]
+                        "options": sc["options"],
+                        "is_modifier": sc.get("is_modifier", False),
+                        "is_optional": sc.get("is_optional", False)
                     }
                     for sc in cat.sub_categories
                 ],
@@ -149,8 +152,8 @@ async def get_grouped_customer_categories(
           }
         ],
         "ideal_prices": {
-          "Round Neck|Half|Polyzone 130gsm": 950,
-          "Round Neck|Full|Polyzone 160gsm": 1400
+          "Round Neck|Half|Polyzone 130gsm": {"1": 950, "5": 880},
+          "Round Neck|Full|Polyzone 160gsm": {"1": 1400}
         }
       }
     ]
@@ -172,14 +175,30 @@ async def get_grouped_customer_categories(
         prices_result = await db.execute(prices_statement)
         all_prices = prices_result.scalars().all()
 
-        # Group prices by category_id
+        # Group prices by category_id -> combination -> { min_qty: price }
         prices_by_category = {}
         for price in all_prices:
             if price.category_id not in prices_by_category:
                 prices_by_category[price.category_id] = {}
-            prices_by_category[price.category_id][price.options_combination] = float(price.price)
+            combo_prices = prices_by_category[price.category_id].setdefault(price.options_combination, {})
+            combo_prices[str(price.min_qty)] = float(price.price)
     else:
         prices_by_category = {}
+
+    # Fetch all price modifiers for these categories in one query
+    if categories:
+        modifiers_statement = select(PriceModifier).where(PriceModifier.category_id.in_(category_ids))
+        modifiers_result = await db.execute(modifiers_statement)
+        all_modifiers = modifiers_result.scalars().all()
+
+        # Group modifiers by category_id -> sub_category -> option -> { type, value }
+        modifiers_by_category = {}
+        for m in all_modifiers:
+            cat_modifiers = modifiers_by_category.setdefault(m.category_id, {})
+            sub_modifiers = cat_modifiers.setdefault(m.sub_category, {})
+            sub_modifiers[m.option_value] = {"type": m.adjustment_type, "value": float(m.value)}
+    else:
+        modifiers_by_category = {}
 
     grouped_list = [
         {
@@ -188,11 +207,14 @@ async def get_grouped_customer_categories(
             "sub_categories": [
                 {
                     "sub_category": sc["sub_category"],
-                    "options": sc["options"]
+                    "options": sc["options"],
+                    "is_modifier": sc.get("is_modifier", False),
+                    "is_optional": sc.get("is_optional", False)
                 }
                 for sc in cat.sub_categories
             ],
-            "ideal_prices": prices_by_category.get(cat.id, {})
+            "ideal_prices": prices_by_category.get(cat.id, {}),
+            "modifiers": modifiers_by_category.get(cat.id, {})
         }
         for cat in categories
     ]

@@ -8,8 +8,8 @@ from datetime import datetime
 from ..database.database import get_db
 from ..models.user import User
 from ..models.product import Product
-from ..models.shop_order import ShopOrder, ShopOrderStatus, ShopOrderCreate, ShopOrderApprovalStatus, ShopOrderReview, ShopOrderSeenByRole
-from ..auth.session_auth import employee_required_from_session, strict_admin_required_from_session
+from ..models.shop_order import ShopOrder, ShopOrderStatus, ShopOrderCreate, ShopOrderApprovalStatus, ShopOrderReview, ShopOrderSeenByUser, ShopOrderApprovalSeenByUser
+from ..auth.session_auth import strict_admin_required_from_session, employee_production_required_from_session
 from ..utils.firestore_signals import publish_signal
 
 router = APIRouter()
@@ -25,7 +25,7 @@ async def get_stock_list(
     search_string: Optional[str] = None,
     page: int = 1,
     limit: int = 8,
-    current_user: User = Depends(employee_required_from_session()),
+    current_user: User = Depends(employee_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -96,7 +96,7 @@ async def get_stock_list(
 @router.post("/create")
 async def create_shop_order(
     order_data: ShopOrderCreate,
-    current_user: User = Depends(employee_required_from_session()),
+    current_user: User = Depends(employee_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """Place a shop order (restock request) for a product."""
@@ -141,14 +141,15 @@ async def create_shop_order(
 
 @router.get("/unseen-count")
 async def get_unseen_shop_orders_count(
-    current_user: User = Depends(employee_required_from_session()),
+    current_user: User = Depends(employee_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
-    """Count of newly-approved shop orders not yet viewed by the current user's
-    role on the Shop Orders page. Tracked per role so an employee opening the
-    page doesn't clear the badge for admins/cashiers, and vice versa."""
-    seen_subquery = select(ShopOrderSeenByRole.order_id).where(
-        ShopOrderSeenByRole.role == current_user.role.name
+    """Count of newly-approved shop orders not yet viewed by the current user
+    on the Shop Orders page. Tracked per user (not role) since accounts are
+    unique - one user opening the page doesn't clear another user's badge,
+    even if they share a role."""
+    seen_subquery = select(ShopOrderSeenByUser.order_id).where(
+        ShopOrderSeenByUser.user_id == current_user.id
     )
     statement = select(func.count(ShopOrder.id)).where(
         ShopOrder.approval_status == ShopOrderApprovalStatus.APPROVED,
@@ -160,13 +161,12 @@ async def get_unseen_shop_orders_count(
 
 @router.post("/mark-seen")
 async def mark_shop_orders_seen(
-    current_user: User = Depends(employee_required_from_session()),
+    current_user: User = Depends(employee_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
-    """Mark all currently-approved shop orders as seen by the current user's
-    role (clears the Shop Orders badge only for that role)."""
-    role = current_user.role.name
-    seen_subquery = select(ShopOrderSeenByRole.order_id).where(ShopOrderSeenByRole.role == role)
+    """Mark all currently-approved shop orders as seen by the current user
+    (clears the Shop Orders badge only for that user)."""
+    seen_subquery = select(ShopOrderSeenByUser.order_id).where(ShopOrderSeenByUser.user_id == current_user.id)
     statement = select(ShopOrder.id).where(
         ShopOrder.approval_status == ShopOrderApprovalStatus.APPROVED,
         ShopOrder.id.notin_(seen_subquery),
@@ -174,16 +174,16 @@ async def mark_shop_orders_seen(
     result = await db.execute(statement)
     order_ids = result.scalars().all()
     for order_id in order_ids:
-        db.add(ShopOrderSeenByRole(order_id=order_id, role=role))
+        db.add(ShopOrderSeenByUser(order_id=order_id, user_id=current_user.id))
 
     await db.commit()
 
     if order_ids:
         # Tell every other browser with this badge open to recount too, so
-        # someone viewing Shop Orders on one PC clears it for their role
+        # someone viewing Shop Orders on one PC clears it for their account
         # everywhere - not just on the PC that just marked them seen. Each
-        # browser recomputes its own role's count, so this is harmless for
-        # roles unaffected by this mark-seen call.
+        # browser recomputes its own user's count, so this is harmless for
+        # other users unaffected by this mark-seen call.
         await publish_signal("shop_order_updates")
 
     return {"success": True, "marked": len(order_ids)}
@@ -266,10 +266,15 @@ async def get_pending_approval_count(
     current_user: User = Depends(strict_admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
-    """Unseen count for the sidebar notification badge."""
+    """Unseen count for the sidebar notification badge, tracked per user
+    (not role) - one admin/production account opening the approval page
+    doesn't clear another account's badge."""
+    seen_subquery = select(ShopOrderApprovalSeenByUser.order_id).where(
+        ShopOrderApprovalSeenByUser.user_id == current_user.id
+    )
     statement = select(func.count(ShopOrder.id)).where(
         ShopOrder.approval_status == ShopOrderApprovalStatus.PENDING_APPROVAL,
-        ShopOrder.seen_by_admin == False,  # noqa: E712
+        ShopOrder.id.notin_(seen_subquery),
     )
     result = await db.execute(statement)
     return {"count": result.scalar() or 0}
@@ -280,25 +285,29 @@ async def mark_approval_seen(
     current_user: User = Depends(strict_admin_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
-    """Clear the sidebar badge by marking currently pending orders as seen."""
-    statement = select(ShopOrder).where(
+    """Clear the sidebar badge for the current user by marking currently
+    pending orders as seen by them."""
+    seen_subquery = select(ShopOrderApprovalSeenByUser.order_id).where(
+        ShopOrderApprovalSeenByUser.user_id == current_user.id
+    )
+    statement = select(ShopOrder.id).where(
         ShopOrder.approval_status == ShopOrderApprovalStatus.PENDING_APPROVAL,
-        ShopOrder.seen_by_admin == False,  # noqa: E712
+        ShopOrder.id.notin_(seen_subquery),
     )
     result = await db.execute(statement)
-    orders = result.scalars().all()
-    for order in orders:
-        order.seen_by_admin = True
+    order_ids = result.scalars().all()
+    for order_id in order_ids:
+        db.add(ShopOrderApprovalSeenByUser(order_id=order_id, user_id=current_user.id))
 
     await db.commit()
 
-    if orders:
-        # Tell every other admin browser with this badge open to recount too,
-        # so one admin opening the page clears it everywhere - not just on
-        # the PC that just marked them seen.
+    if order_ids:
+        # Tell every other admin/production browser with this badge open to
+        # recount too. Each browser recomputes its own user's count, so this
+        # is harmless for accounts unaffected by this mark-seen call.
         await publish_signal("shop_order_approval")
 
-    return {"success": True, "marked": len(orders)}
+    return {"success": True, "marked": len(order_ids)}
 
 
 @router.put("/approval/{order_id}")
@@ -347,7 +356,6 @@ async def review_shop_order(
         shop_order.approval_status = ShopOrderApprovalStatus.REJECTED
         shop_order.rejected_at = now
 
-    shop_order.seen_by_admin = True
     shop_order.updated_at = now
     await db.commit()
     await db.refresh(shop_order)
@@ -373,7 +381,7 @@ async def get_shop_orders(
     include_stats: bool = Query(False),
     page: int = 1,
     limit: int = 8,
-    current_user: User = Depends(employee_required_from_session()),
+    current_user: User = Depends(employee_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """List placed shop orders with optional search/status filtering."""
@@ -467,7 +475,7 @@ async def get_shop_orders(
 async def update_shop_order_status(
     order_id: str,
     request_data: dict,
-    current_user: User = Depends(employee_required_from_session()),
+    current_user: User = Depends(employee_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """Update the status of a placed shop order (PENDING, DELIVERED, CANCEL)."""

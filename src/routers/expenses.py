@@ -10,7 +10,7 @@ from ..database.database import get_db
 from ..models.user import User
 from ..models.expense import Expense, ExpenseCreate, ExpenseUpdate, ExpenseRead
 from ..services.expense_service import ExpenseService
-from ..auth.session_auth import admin_cashier_employee_required_from_session
+from ..auth.session_auth import admin_cashier_employee_sales_required_from_session
 
 router = APIRouter(prefix="/expenses", tags=["Expenses"])
 
@@ -19,7 +19,7 @@ async def get_expenses(
     page: int = 1,
     limit: int = 8,
     created_by: Optional[str] = None,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_sales_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -106,7 +106,7 @@ async def get_expenses(
 @router.post("/")
 async def create_expense(
     expense_create: ExpenseCreate,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_sales_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -147,7 +147,7 @@ async def create_expense(
 @router.get("/{expense_id}")
 async def get_expense(
     expense_id: str,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_sales_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -186,7 +186,7 @@ async def get_expense(
 async def update_expense(
     expense_id: str,
     expense_update: ExpenseUpdate,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_sales_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -239,7 +239,7 @@ async def update_expense(
 @router.delete("/{expense_id}")
 async def delete_expense(
     expense_id: str,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),  # Admin, cashier, and employee can delete expenses
+    current_user: User = Depends(admin_cashier_employee_sales_required_from_session()),  # Admin, cashier, and employee can delete expenses
     db: AsyncSession = Depends(get_db)
 ):
     """

@@ -50,6 +50,24 @@ def admin_required_from_session():
     return role_checker
 
 
+def admin_cashier_production_required_from_session():
+    """Require admin, cashier, or production role from session
+
+    Narrow variant of admin_required_from_session() that also allows
+    production, for the read-only vendor list the Stock In page needs
+    (vendor dropdown) without granting production the rest of the
+    admin-only Vendors module (create/update/delete/details).
+    """
+    async def role_checker(current_user: User = Depends(get_current_user_from_session)):
+        if current_user.role.name not in ["admin", "cashier", "production"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin, cashier, or production access required"
+            )
+        return current_user
+    return role_checker
+
+
 def cashier_required_from_session():
     """Require cashier role from session (admin/cashier can access)"""
     async def role_checker(current_user: User = Depends(get_current_user_from_session)):
@@ -87,45 +105,94 @@ def admin_cashier_employee_required_from_session():
 
 
 def admin_cashier_employee_order_booker_required_from_session():
-    """Require admin, cashier, employee, warehouse, or order_booker role from session
+    """Require admin, cashier, employee, warehouse, order_booker, production, or sales role from session
 
-    Used for modules order_booker is allowed into (customers, customer invoice,
-    duplicate bill, dashboard) without granting order_booker access to every
-    other module that shares admin_cashier_employee_required_from_session.
+    Used for modules order_booker/production/sales are allowed into (customers,
+    customer invoice, duplicate bill, dashboard) without granting them access to
+    every other module that shares admin_cashier_employee_required_from_session.
     """
     async def role_checker(current_user: User = Depends(get_current_user_from_session)):
-        if current_user.role.name not in ["admin", "cashier", "employee", "warehouse", "order_booker"]:
+        if current_user.role.name not in ["admin", "cashier", "employee", "warehouse", "order_booker", "production", "sales"]:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Admin, cashier, employee, warehouse, or order booker access required"
+                detail="Admin, cashier, employee, warehouse, order booker, production, or sales access required"
             )
         return current_user
     return role_checker
 
 
 def employee_order_booker_required_from_session():
-    """Require admin, cashier, employee, or order_booker role from session
+    """Require admin, cashier, employee, order_booker, production, or sales role from session
 
     Narrow variant of employee_required_from_session() that also allows
-    order_booker, for the specific customer-order endpoints order bookers use.
+    order_booker/production/sales, for the specific customer-order endpoints
+    those roles use.
     """
     async def role_checker(current_user: User = Depends(get_current_user_from_session)):
-        if current_user.role.name not in ["employee", "cashier", "admin", "order_booker"]:
+        if current_user.role.name not in ["employee", "cashier", "admin", "order_booker", "production", "sales"]:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Employee, cashier, admin, or order booker access required"
+                detail="Employee, cashier, admin, order booker, production, or sales access required"
             )
         return current_user
     return role_checker
 
 
 def admin_employee_required_from_session():
-    """Require admin or employee role from session (cashier NOT allowed)"""
+    """Require admin, employee, production, or sales role from session (cashier NOT allowed)"""
     async def role_checker(current_user: User = Depends(get_current_user_from_session)):
-        if current_user.role.name not in ["admin", "employee"]:
+        if current_user.role.name not in ["admin", "employee", "production", "sales"]:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Admin or employee access required. Cashiers cannot perform this action."
+                detail="Admin, employee, production, or sales access required. Cashiers cannot perform this action."
+            )
+        return current_user
+    return role_checker
+
+
+def admin_cashier_employee_production_required_from_session():
+    """Require admin, cashier, employee, warehouse, or production role from session
+
+    Narrow variant of admin_cashier_employee_required_from_session() that also
+    allows production, for the Stock module only.
+    """
+    async def role_checker(current_user: User = Depends(get_current_user_from_session)):
+        if current_user.role.name not in ["admin", "cashier", "employee", "warehouse", "production"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin, cashier, employee, warehouse, or production access required"
+            )
+        return current_user
+    return role_checker
+
+
+def admin_cashier_employee_sales_required_from_session():
+    """Require admin, cashier, employee, warehouse, or sales role from session
+
+    Narrow variant of admin_cashier_employee_required_from_session() that also
+    allows sales, for the Expenses module only.
+    """
+    async def role_checker(current_user: User = Depends(get_current_user_from_session)):
+        if current_user.role.name not in ["admin", "cashier", "employee", "warehouse", "sales"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin, cashier, employee, warehouse, or sales access required"
+            )
+        return current_user
+    return role_checker
+
+
+def employee_production_required_from_session():
+    """Require admin, cashier, employee, or production role from session
+
+    Narrow variant of employee_required_from_session() that also allows
+    production, for the Shop Order (restock request) endpoints.
+    """
+    async def role_checker(current_user: User = Depends(get_current_user_from_session)):
+        if current_user.role.name not in ["employee", "cashier", "admin", "production"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Employee, cashier, admin, or production access required"
             )
         return current_user
     return role_checker
@@ -156,12 +223,15 @@ def all_authenticated_from_session():
 
 
 def strict_admin_required_from_session():
-    """Require admin role from session only (cashier NOT allowed, unlike admin_required_from_session)"""
+    """Require admin or production role from session (cashier NOT allowed, unlike admin_required_from_session)
+
+    Used for the Shop Order Approval screen, which production staff also review.
+    """
     async def role_checker(current_user: User = Depends(get_current_user_from_session)):
-        if current_user.role.name != "admin":
+        if current_user.role.name not in ["admin", "production"]:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Admin access required"
+                detail="Admin or production access required"
             )
         return current_user
     return role_checker
@@ -174,6 +244,22 @@ def admin_employee_warehouse_required_from_session():
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Admin, Employee, or Warehouse access required. Cashiers cannot perform this action."
+            )
+        return current_user
+    return role_checker
+
+
+def admin_employee_warehouse_production_required_from_session():
+    """Require admin, employee, warehouse, or production role from session
+
+    Narrow variant of admin_employee_warehouse_required_from_session() that
+    also allows production, for the Products module only (delete product).
+    """
+    async def role_checker(current_user: User = Depends(get_current_user_from_session)):
+        if current_user.role.name not in ["admin", "employee", "warehouse", "production"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin, employee, warehouse, or production access required"
             )
         return current_user
     return role_checker

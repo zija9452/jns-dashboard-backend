@@ -217,7 +217,7 @@ async def get_duplicate_invoice(
     # Check Redis cache first (7 days)
     # v4: bumped after retuning the @page height constants (v3 had too much
     # trailing whitespace) so stale cached PDFs get regenerated
-    cache_key = f"invoice:duplicate:v4:{invoice_type}:{invoice_id}"
+    cache_key = f"invoice:duplicate:v5:{invoice_type}:{invoice_id}"
     cached_pdf = await cache.get(cache_key)
     
     if cached_pdf:
@@ -314,6 +314,11 @@ async def get_duplicate_invoice(
 
         from .customer_invoice import generate_simple_receipt_pdf
 
+        # invoice.total_amount already has rush baked in - pull the plain item
+        # subtotal back out of totals JSON so the duplicate bill can show them as
+        # distinct lines too (same fix as the regular receipt).
+        invoice_totals = json.loads(invoice.totals) if invoice.totals else {}
+
         pdf_data = generate_simple_receipt_pdf(
             invoice_no=invoice.invoice_no,
             customer_name=invoice.customer_name or "N/A",
@@ -326,7 +331,11 @@ async def get_duplicate_invoice(
             payment_method=invoice.payment_method,
             payment_status=invoice.payment_status,
             created_at=invoice.created_at,
-            bill_type="DUPLICATE BILL"
+            bill_type="DUPLICATE BILL",
+            subtotal=float(invoice_totals.get('subtotal', invoice.total_amount)),
+            is_rush=invoice.is_rush,
+            rush_charge=float(invoice.rush_charge or 0),
+            required_by_date=invoice.required_by_date
         )
 
     else:

@@ -63,7 +63,7 @@ from ..models.product import Product
 from ..models.vendor import Vendor
 from ..models.stock_entry import StockEntry, StockEntryType, StockEntryCreate, StockEntryUpdate, StockEntryRead
 from ..services.stock_service import StockService
-from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, cashier_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session, warehouse_required_from_session
+from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, cashier_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session, admin_cashier_employee_production_required_from_session, warehouse_required_from_session
 
 router = APIRouter()
 
@@ -95,7 +95,7 @@ async def view_stock(
     shelf: Optional[str] = None,
     page: int = 1,
     limit: int = 8,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -223,7 +223,7 @@ async def view_stock(
 async def search_stock(
     branches: Optional[str] = None,
     search_string: Optional[str] = None,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -260,7 +260,7 @@ async def search_stock(
 async def adjust_stock(
     stock_items: List[StockAdjustItem],
     timezone: Optional[str] = None,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -328,6 +328,7 @@ async def adjust_stock(
             type=StockEntryType.ADJUST,
             location="Stock Adjustment",
             ref=f"ADJ_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            created_by=current_user.id,
         )
         db.add(entry)
 
@@ -375,7 +376,7 @@ async def adjust_stock(
 @router.post("/savestockin")
 async def save_stock_in(
     items: List[dict],
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -451,7 +452,8 @@ async def save_stock_in(
             unit_price=selling_price if selling_price > 0 else product.unit_price,
             type=StockEntryType.IN,
             location="Stock In",
-            ref=f"STOCK_IN_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            ref=f"STOCK_IN_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            created_by=current_user.id
         )
         db.add(entry)
 
@@ -492,7 +494,7 @@ async def save_stock_in(
 @router.post("/savestockinwithbarcode")
 async def save_stock_in_with_barcode(
     items: List[dict],
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -576,7 +578,8 @@ async def save_stock_in_with_barcode(
             unit_price=selling_price if selling_price > 0 else product.unit_price,
             type=StockEntryType.IN,
             location="Stock In",
-            ref=f"STOCK_IN_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            ref=f"STOCK_IN_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            created_by=current_user.id
         )
         db.add(entry)
 
@@ -653,7 +656,7 @@ async def stock_report(
     timezone: Optional[str] = None,
     branches: Optional[str] = None,
     shelf: Optional[str] = None,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -834,7 +837,7 @@ async def stock_report(
 async def stock_in_report(
     date_from: str,
     date_to: str,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -857,10 +860,11 @@ async def stock_in_report(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
     
-    # Query ALL stock entries with type=IN within date range joined with Product
+    # Query ALL stock entries with type=IN within date range joined with Product and the user who entered it
     statement = (
-        select(StockEntry, Product)
+        select(StockEntry, Product, User.username)
         .join(Product, StockEntry.product_id == Product.id)
+        .outerjoin(User, StockEntry.created_by == User.id)
         .where(StockEntry.type == StockEntryType.IN)
         .where(StockEntry.location == "Stock In")
         .where(StockEntry.created_at >= from_date)
@@ -897,11 +901,12 @@ async def stock_in_report(
     else:
         # Build product rows with individual stock-in entries (with date & time at end)
         product_rows_list = []
-        for i, (entry, product) in enumerate(results):
+        for i, (entry, product, username) in enumerate(results):
             # Convert UTC stored time to PKT for display
             entry_pkt = to_pkt(entry.created_at)
             entry_date = entry_pkt.strftime("%d-%m-%Y")
             entry_time = entry_pkt.strftime("%I:%M %p")
+            entered_by = username or "-"
 
             product_rows_list.append(f"""
             <tr>
@@ -915,14 +920,15 @@ async def stock_in_report(
                 <td class="border">{product.branch or '-'}</td>
                 <td class="border">{entry_date}</td>
                 <td class="border">{entry_time}</td>
+                <td class="border">{entered_by}</td>
             </tr>
             """)
 
         product_rows = "".join(product_rows_list)
 
         # Calculate totals (exact, based on the cost_price actually recorded for each stock-in entry)
-        total_qty = sum(entry.qty for entry, product in results)
-        total_cost = sum(entry.qty * float(entry.cost_price or 0) for entry, product in results)
+        total_qty = sum(entry.qty for entry, product, username in results)
+        total_cost = sum(entry.qty * float(entry.cost_price or 0) for entry, product, username in results)
         
         html_content = f"""
         <!DOCTYPE html>
@@ -1008,6 +1014,7 @@ async def stock_in_report(
                         <th>Branch</th>
                         <th>Date</th>
                         <th>Time</th>
+                        <th>User</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -1019,7 +1026,7 @@ async def stock_in_report(
                         <td class="border text-right" style="font-weight: bold;">{total_qty}</td>
                         <td class="border"></td>
                         <td class="border text-right" style="font-weight: bold;">{total_cost:.2f}</td>
-                        <td colspan="4"></td>
+                        <td colspan="5"></td>
                     </tr>
                 </tfoot>
             </table>
@@ -1057,7 +1064,7 @@ async def stock_in_report(
 async def stock_in_report_excel(
     date_from: str,
     date_to: str,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1085,8 +1092,9 @@ async def stock_in_report_excel(
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
 
     statement = (
-        select(StockEntry, Product)
+        select(StockEntry, Product, User.username)
         .join(Product, StockEntry.product_id == Product.id)
+        .outerjoin(User, StockEntry.created_by == User.id)
         .where(StockEntry.type == StockEntryType.IN)
         .where(StockEntry.location == "Stock In")
         .where(StockEntry.created_at >= from_date)
@@ -1101,12 +1109,12 @@ async def stock_in_report_excel(
     ws = wb.active
     ws.title = "Stock In Report"
 
-    headers = ["S.No", "Product Name", "Barcode", "Qty In", "Price", "Cost", "Category", "Branch", "Date", "Time"]
+    headers = ["S.No", "Product Name", "Barcode", "Qty In", "Price", "Cost", "Category", "Branch", "Date", "Time", "User"]
     ws.append(headers)
 
     total_qty = 0
     total_cost = 0.0
-    for i, (entry, product) in enumerate(results):
+    for i, (entry, product, username) in enumerate(results):
         entry_pkt = to_pkt(entry.created_at)
         qty = entry.qty
         cost_price = float(entry.cost_price) if entry.cost_price is not None else 0.0
@@ -1124,9 +1132,10 @@ async def stock_in_report_excel(
             product.branch or "",
             entry_pkt.strftime("%d-%m-%Y"),
             entry_pkt.strftime("%I:%M %p"),
+            username or "-",
         ])
 
-    total_row = ["", "", "", total_qty, "", round(total_cost, 2), "", "", "", ""]
+    total_row = ["", "", "", total_qty, "", round(total_cost, 2), "", "", "", "", ""]
     ws.append(total_row)
     last_row = ws.max_row
     for col in range(1, len(headers) + 1):
@@ -1369,7 +1378,7 @@ async def stock_report_excel(
     timezone: Optional[str] = None,
     branches: Optional[str] = None,
     shelf: Optional[str] = None,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1436,7 +1445,7 @@ async def stock_report_excel(
 
 @router.post("/dailyinventoryreport")
 async def daily_inventory_report(
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1579,7 +1588,7 @@ async def print_barcodes(
     quantity: int,
     barcode: Optional[str] = None,
     price: Optional[float] = None,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1646,7 +1655,7 @@ async def print_barcodes(
 @router.post("/generatebarcodesonly")
 async def generate_barcodes_only(
     items: List[dict],
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1720,7 +1729,7 @@ async def save_stock_in_with_barcodes(
     timezone: Optional[str] = None,
     Date: Optional[str] = None,
     print_barcodes: bool = False,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1741,7 +1750,7 @@ async def get_stock_entries(
     product_id: Optional[str] = None,
     skip: int = 0,
     limit: int = 100,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1765,7 +1774,7 @@ async def get_stock_entries(
 @router.post("/", response_model=StockEntryRead)
 async def create_stock_entry(
     stock_entry_create: StockEntryCreate,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1778,7 +1787,7 @@ async def create_stock_entry(
 @router.get("/{stock_id}", response_model=StockEntryRead)
 async def get_stock_entry(
     stock_id: str,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1808,7 +1817,7 @@ async def get_stock_entry(
 async def update_stock_entry(
     stock_id: str,
     stock_entry_update: StockEntryUpdate,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1837,7 +1846,7 @@ async def update_stock_entry(
 @router.delete("/{stock_id}")
 async def delete_stock_entry(
     stock_id: str,
-    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    current_user: User = Depends(admin_cashier_employee_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """

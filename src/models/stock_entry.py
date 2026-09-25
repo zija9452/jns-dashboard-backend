@@ -27,6 +27,7 @@ class StockEntry(SQLModel, table=True):
     batch: Optional[str] = Field(default=None, max_length=50)
     expiry: Optional[date] = Field(default=None)
     ref: Optional[str] = Field(default=None)  # Reference to transaction
+    created_by: Optional[uuid.UUID] = Field(default=None, foreign_key="users.id")  # Who entered this stock-in/adjustment (null for older entries and system-generated sale/out entries)
     created_at: datetime = Field(default_factory=lambda: datetime.now())
 
 class StockEntryRead(SQLModel):
@@ -42,6 +43,7 @@ class StockEntryRead(SQLModel):
     batch: Optional[str]
     expiry: Optional[date]
     ref: Optional[str]
+    created_by: Optional[uuid.UUID]
     created_at: datetime
 
 class StockEntryCreate(SQLModel):

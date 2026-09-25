@@ -17,6 +17,7 @@ from ..models.user import User  # Import User at the top to avoid NameError
 from ..models.customer import Customer
 from ..models.salesman import Salesman
 from ..models.customer_invoice import CustomerInvoice, CustomerInvoiceCreate, CustomerInvoiceUpdate, CustomerInvoiceRead, CustomerInvoiceStatus
+from ..models.rush_pricing import RushPricingSetting
 from ..models.invoice import Invoice
 from ..models.product import Product
 from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, cashier_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session, admin_cashier_employee_order_booker_required_from_session, employee_order_booker_required_from_session
@@ -25,6 +26,42 @@ from ..services.salesman_service import SalesmanService
 from ..models.customer import CustomerCreate
 
 router = APIRouter()
+
+_RUSH_DEFAULT_BRANCH = "European Sports Light House"
+
+
+async def _get_customer_invoice_rush_setting(db: AsyncSession):
+    from sqlalchemy import select
+    result = await db.execute(
+        select(RushPricingSetting).where(RushPricingSetting.branch == _RUSH_DEFAULT_BRANCH)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _compute_customer_invoice_rush(db: AsyncSession, required_by_date, total_pieces: int):
+    """
+    Rush is derived from required_by_date vs rush_pricing_settings, never a manual
+    toggle - mirrors quotation.py's _compute_rush. Returns (is_rush, rate_snapshot,
+    threshold_snapshot, rush_charge). No required_by_date or no rush setting => not
+    rush (never silently charge while unable to resolve a real rate).
+    """
+    from decimal import Decimal
+
+    if not required_by_date:
+        return False, None, None, Decimal("0.00")
+
+    setting = await _get_customer_invoice_rush_setting(db)
+    if not setting:
+        return False, None, None, Decimal("0.00")
+
+    days_until = (required_by_date - date.today()).days
+    is_rush = days_until <= setting.threshold_days
+
+    if not is_rush:
+        return False, setting.price_per_piece, setting.threshold_days, Decimal("0.00")
+
+    rush_charge = setting.price_per_piece * total_pieces
+    return True, setting.price_per_piece, setting.threshold_days, rush_charge
 
 
 @router.post("/GetCustomerDetails")
@@ -140,7 +177,12 @@ async def save_customer_orders(
     remarks = request_data.get('remarks', '') if request_data else ''
     salesman_id = request_data.get('salesman_id') if request_data else None
     timezone = request_data.get('timezone') if request_data else None
+    # Gotcha: this shadows the module-level `datetime.date` import for the rest of
+    # this function's scope - any date parsing below must use `date_cls` instead.
     date = request_data.get('date') if request_data else None
+    from datetime import date as date_cls
+    required_by_date_str = request_data.get('required_by_date') if request_data else None
+    required_by_date_value = date_cls.fromisoformat(required_by_date_str) if required_by_date_str else None
     idempotency_key = request_data.get('idempotency_key') if request_data else None
 
     # If this exact create attempt already succeeded (client retried after losing
@@ -296,8 +338,18 @@ async def save_customer_orders(
                 detail=f"Invalid data format in order item: {str(e)}"
             )
 
-    # Calculate net amount (total after all discounts)
-    net_amount = total_amount
+    # total_pieces used for rush charge - charged per piece across the whole
+    # order, the same way quotation.py's _compute_rush does.
+    total_pieces = sum(i["quantity"] for i in items_list)
+    is_rush, rush_rate_snapshot, rush_threshold_snapshot, rush_charge = await _compute_customer_invoice_rush(
+        db, required_by_date_value, total_pieces
+    )
+
+    # Calculate net amount (total after all discounts). Discount is tracked
+    # (total_discount) but not subtracted here - a pre-existing quirk, not something
+    # this change fixes. Rush *is* added since it's a real amount owed, the same way
+    # quotation.py's _build_totals adds it.
+    net_amount = total_amount + rush_charge
 
     # Generate unique sequential invoice number with database-level locking for concurrency safety
     from datetime import datetime
@@ -408,18 +460,24 @@ async def save_customer_orders(
                 "subtotal": float(total_amount),  # Original total before discounts
                 "tax": 0.0,
                 "discount": total_discount,
-                "total": float(total_amount),  # Original total before discount
+                "rush_charge": float(rush_charge),
+                "total": float(net_amount),  # subtotal + rush (discount not subtracted - pre-existing quirk)
                 "amount_paid": float(calculated_amount_paid),  # Amount actually paid (after discount)
                 "balance_due": float(initial_balance_due),  # Calculate remaining balance
                 "payment_status": payment_status  # Set status based on payment
             }),
-            "total_amount": Decimal(str(total_amount)),  # Original total before discount
+            "total_amount": Decimal(str(net_amount)),  # subtotal + rush
             "amount_paid": calculated_amount_paid,  # Amount actually paid (after discount)
             "balance_due": initial_balance_due,  # Calculate remaining balance
             "payment_status": payment_status,  # Set status based on payment
             "payments_history": json.dumps(initial_payment_history),  # Include initial payment in history
             "taxes": Decimal('0'),
             "discounts": Decimal(str(total_discount)),  # Total discount amount
+            "required_by_date": required_by_date_value,
+            "is_rush": is_rush,
+            "rush_rate_snapshot": rush_rate_snapshot,
+            "rush_threshold_snapshot": rush_threshold_snapshot,
+            "rush_charge": rush_charge,
             "status": CustomerInvoiceStatus.PENDING,  # Default order status
             "payment_method": payment_method,  # Use payment method from query parameter
             "notes": remarks,  # Use remarks from query parameter
@@ -518,7 +576,14 @@ async def get_invoice_receipt(
         balance_due=float(invoice.balance_due),
         payment_method=invoice.payment_method,
         payment_status=invoice.payment_status,
-        created_at=invoice.created_at
+        created_at=invoice.created_at,
+        # invoice.total_amount already has rush baked in (subtotal + rush_charge) -
+        # pass subtotal separately so the receipt can show them as distinct lines
+        # instead of one unexplained number, per the "bill me samajh nahi aata" ask.
+        subtotal=float(totals.get('subtotal', invoice.total_amount)),
+        is_rush=invoice.is_rush,
+        rush_charge=float(invoice.rush_charge or 0),
+        required_by_date=invoice.required_by_date
     )
 
     # generate_simple_receipt_pdf already returns base64-encoded string, use directly
@@ -527,7 +592,9 @@ async def get_invoice_receipt(
 
 def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, total_amount,
                                   total_discount, amount_paid, balance_due, payment_method,
-                                  payment_status, created_at, bill_type: str = "SALE RECEIPT"):
+                                  payment_status, created_at, bill_type: str = "SALE RECEIPT",
+                                  subtotal=None, is_rush: bool = False, rush_charge: float = 0.0,
+                                  required_by_date=None):
     """Generate thermal receipt style PDF using weasyprint (same as customers.py)"""
     
     # Simplify payment method name (e.g., "EasyPaisa Sir Yasir" -> "EasyPaisa")
@@ -577,6 +644,16 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
 
     # Calculate grand total
     grand_total = total_amount - total_discount
+    if subtotal is None:
+        subtotal = total_amount
+    required_by_line = f'<p><strong>Deadline:</strong> {required_by_date.strftime("%d-%m-%Y")}</p>' if required_by_date else ""
+    # Both the Deadline line and the Rush Charge row are extra content on top of
+    # the 585 baseline above - grow the fixed-size @page box for each one present,
+    # same reasoning as the item-row growth just above.
+    if required_by_date:
+        page_height += 18
+    if rush_charge > 0:
+        page_height += 18
     
     # Create simple HTML for PDF (same pattern as customers.py)
     items_rows = ""
@@ -794,8 +871,9 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             <p><strong>Bill No:</strong> {invoice_no}</p>
             <p><strong>Name:</strong> {customer_name}{team_line}</p>
             <p><strong>Ph:</strong> 00 | <strong>Remarks:</strong> 0</p>
+            {required_by_line}
         </div>
-        <div class="duplicate">*** {bill_type} ***</div>
+        <div class="duplicate">*** {bill_type} ***{' [RUSH ORDER]' if is_rush else ''}</div>
         <table>
             <thead>
                 <tr>
@@ -811,9 +889,10 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             </tbody>
         </table>
         <div class="totals">
-            <p class="total-row"><span class="total-label">Total Bill:</span><span class="total-value">{total_amount:.0f}</span></p>
+            <p class="total-row"><span class="total-label">Total Bill:</span><span class="total-value">{subtotal:.0f}</span></p>
             <p class="total-row"><span class="total-label">Item Discount:</span><span class="total-value">0</span></p>
             <p class="total-row"><span class="total-label">Total Discount(Rs):</span><span class="total-value">{total_discount:.0f}</span></p>
+            {f'<p class="total-row"><span class="total-label">Rush Charge:</span><span class="total-value">+{rush_charge:.0f}</span></p>' if rush_charge > 0 else ''}
             <p class="total-row"><span class="total-label">Grand Total:</span><span class="total-value">{total_amount:.0f}</span></p>
             <p class="total-row"><span class="total-label">Amount Paid:</span><span class="total-value">{amount_paid:.0f}</span></p>
             <p class="total-row"><span class="total-label">Balance:</span><span class="total-value">-{balance_due:.0f}</span></p>

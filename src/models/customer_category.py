@@ -10,6 +10,13 @@ class SubCategorySchema(SQLModel):
     """Schema for a sub-category with its options"""
     sub_category: str
     options: List[str]
+    # True = a price adjustment dimension (Sleeves, Size Type...) applied on top of
+    # the base ideal_price, not a separate priced combination - see price_modifiers.
+    is_modifier: bool = False
+    # True = hidden by default in the item-entry form (Quotation / Customer Invoice),
+    # revealed only via the "+" more-options toggle - for dimensions that don't apply
+    # to every order (e.g. Rib, Zip).
+    is_optional: bool = False
 
 
 class CustomerCategory(SQLModel, table=True):
@@ -72,6 +79,8 @@ class SubCategoryGroup(SQLModel):
     """For grouped response"""
     sub_category: str
     options: List[str]
+    is_modifier: bool = False
+    is_optional: bool = False
 
 
 class CustomerCategoryGrouped(SQLModel):

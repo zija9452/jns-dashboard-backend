@@ -13,7 +13,7 @@ from ..models.product import Product, ProductCreate, ProductUpdate, ProductRead
 from ..models.user import User  # Import User at the top to avoid NameError
 from ..services.product_service import ProductService
 from ..services.cloudinary_service import CloudinaryService
-from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, admin_employee_required_from_session, admin_employee_warehouse_required_from_session
+from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, admin_employee_required_from_session, admin_employee_warehouse_required_from_session, admin_employee_warehouse_production_required_from_session
 from sqlmodel import select
 
 logger = logging.getLogger(__name__)
@@ -63,10 +63,10 @@ async def create_product(
     Auto-sets is_warehouse_product = true if role is warehouse
     """
     # Check role access
-    if current_user.role.name not in ["admin", "employee", "warehouse"]:
+    if current_user.role.name not in ["admin", "employee", "warehouse", "production"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin, employee, or warehouse access required"
+            detail="Admin, employee, warehouse, or production access required"
         )
 
     # Auto-set is_warehouse_product for warehouse role
@@ -110,10 +110,10 @@ async def create_products_bulk_temp(
     Requires admin, employee, or warehouse role
     """
     # Check role access
-    if current_user.role.name not in ["admin", "employee", "warehouse"]:
+    if current_user.role.name not in ["admin", "employee", "warehouse", "production"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin, employee, or warehouse access required"
+            detail="Admin, employee, warehouse, or production access required"
         )
 
     if not products_create:
@@ -201,7 +201,7 @@ async def view_products(
     Returns: Paginated data + total count for proper frontend pagination
     """
     # Check role access
-    if current_user.role.name not in ["admin", "employee", "cashier", "warehouse"]:
+    if current_user.role.name not in ["admin", "employee", "cashier", "warehouse", "production"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Authenticated access required"
@@ -384,10 +384,10 @@ async def generate_barcode(
     Access: admin, employee, warehouse
     """
     # Check role access
-    if current_user.role.name not in ["admin", "employee", "warehouse"]:
+    if current_user.role.name not in ["admin", "employee", "warehouse", "production"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin, employee, or warehouse access required"
+            detail="Admin, employee, warehouse, or production access required"
         )
 
     barcode = await ProductService.generate_unique_barcode(db)
@@ -517,7 +517,7 @@ async def search_product_by_barcode(
 @router.post("/deleteproduct/{id}")
 async def delete_product_frontend(
     id: str,
-    current_user: User = Depends(admin_employee_warehouse_required_from_session()),
+    current_user: User = Depends(admin_employee_warehouse_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
