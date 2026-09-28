@@ -8,7 +8,7 @@ services:
     volumes:
       - ./src:/app/src  # Bind mount for hot-reload
       - ./.env:/app/.env
-      - C:/Users/HINA/AppData/Roaming/gcloud/application_default_credentials.json:/root/.config/gcloud/application_default_credentials.json:ro  # Local Firestore access (prod uses the Cloud Run service account instead)
+      - C:/Users/HINA/AppData/Roaming/gcloud/application_default_credentials.json:/root/.config/gcloud/application_default_credentials.json:ro
     environment:
       - TZ=Asia/Karachi  # Set timezone to Pakistan (UTC+5)
       - GOOGLE_CLOUD_PROJECT=europeansports-490205

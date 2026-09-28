@@ -80,27 +80,41 @@ async def _get_rush_setting(db: AsyncSession) -> Optional[RushPricingSetting]:
     return result.scalar_one_or_none()
 
 
-async def _compute_rush(db: AsyncSession, required_by_date: Optional[date], total_pieces: int):
+async def _compute_rush(
+    db: AsyncSession,
+    required_by_date: Optional[date],
+    total_pieces: int,
+    rate_override: Optional[Decimal] = None,
+    threshold_override: Optional[int] = None,
+):
     """
-    Rush is derived, never chosen. Returns (is_rush, rate_snapshot, threshold_snapshot, rush_charge).
-    No required_by_date => not rush. Missing rush setting => not rush (never silently charge
-    while unable to resolve a real rate).
+    Rush is derived from the deadline, never chosen. Returns (is_rush, rate_snapshot,
+    threshold_snapshot, rush_charge). rate_override is the per-piece rush rate the
+    cashier entered (editable, pre-filled with the default); threshold_override is the
+    rush window the page used. Either one missing falls back to the DB rush setting.
+    No required_by_date, or no rate/threshold resolvable at all => not rush.
     """
     if not required_by_date:
         return False, None, None, Decimal("0.00")
 
-    setting = await _get_rush_setting(db)
-    if not setting:
+    setting = None
+    if rate_override is None or threshold_override is None:
+        setting = await _get_rush_setting(db)
+    rate = rate_override if rate_override is not None else (setting.price_per_piece if setting else None)
+    threshold = threshold_override if threshold_override is not None else (setting.threshold_days if setting else None)
+    if rate is None or threshold is None:
         return False, None, None, Decimal("0.00")
+    if rate < 0:
+        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail="Rush rate cannot be negative")
 
     days_until = (required_by_date - date.today()).days
-    is_rush = days_until <= setting.threshold_days
+    is_rush = days_until <= threshold
 
     if not is_rush:
-        return False, setting.price_per_piece, setting.threshold_days, Decimal("0.00")
+        return False, rate, threshold, Decimal("0.00")
 
-    rush_charge = setting.price_per_piece * total_pieces
-    return True, setting.price_per_piece, setting.threshold_days, rush_charge
+    rush_charge = Decimal(str(rate)) * total_pieces
+    return True, rate, threshold, rush_charge
 
 
 async def _generate_quotation_no(db: AsyncSession) -> str:
@@ -160,7 +174,8 @@ async def create_quotation(
     discount = quotation_data.discounts or Decimal("0.00")
 
     is_rush, rate_snapshot, threshold_snapshot, rush_charge = await _compute_rush(
-        db, quotation_data.required_by_date, total_pieces
+        db, quotation_data.required_by_date, total_pieces,
+        quotation_data.rush_rate_per_piece, quotation_data.rush_threshold_days
     )
 
     customer_id = quotation_data.customer_id
@@ -204,6 +219,8 @@ async def create_quotation(
         "quotation_no": quotation.quotation_no,
         "is_rush": quotation.is_rush,
         "rush_charge": float(quotation.rush_charge),
+        "rush_rate_per_piece": float(rate_snapshot) if rate_snapshot is not None else None,
+        "total_pieces": total_pieces,
         "total_amount": float(quotation.total_amount),
     }
 
@@ -329,8 +346,12 @@ async def update_quotation(
     discount = update_data.discounts if update_data.discounts is not None else (quotation.discounts or Decimal("0.00"))
     total_pieces = sum(i["quantity"] for i in items_list)
 
+    # Keep the rate/threshold this quotation was saved with unless new ones are sent,
+    # so editing never silently switches to a different default rush rate.
+    rate_override = update_data.rush_rate_per_piece if update_data.rush_rate_per_piece is not None else quotation.rush_rate_snapshot
+    threshold_override = update_data.rush_threshold_days if update_data.rush_threshold_days is not None else quotation.rush_threshold_snapshot
     is_rush, rate_snapshot, threshold_snapshot, rush_charge = await _compute_rush(
-        db, quotation.required_by_date, total_pieces
+        db, quotation.required_by_date, total_pieces, rate_override, threshold_override
     )
 
     quotation.discounts = discount
@@ -531,6 +552,224 @@ async def convert_quotation_to_order(
         await db.execute(select(func.pg_advisory_unlock(123456)))
 
 
+
+def _quotation_logo_data_uri() -> str:
+    """European Sports logo (backend/Images) as a data URI, or '' if missing."""
+    import os
+    logo_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "Images", "european-logo-blk.svg"
+    )
+    try:
+        with open(logo_path, "rb") as f:
+            return "data:image/svg+xml;base64," + base64.b64encode(f.read()).decode("ascii")
+    except OSError:
+        return ""
+
+
+def _build_quotation_pdf_html(quotation: Quotation) -> str:
+    """A4 quotation document: branded header, bordered item table, totals box, terms."""
+    from html import escape
+
+    items_list = json.loads(quotation.items)
+    totals = json.loads(quotation.totals)
+    total_pieces = sum(int(i.get("quantity", 0)) for i in items_list)
+
+    def money(v) -> str:
+        return f"{float(v or 0):,.0f}"
+
+    def fmt_date(d) -> str:
+        return d.strftime("%d %b %Y") if d else "-"
+
+    rows_html = ""
+    for idx, item in enumerate(items_list, 1):
+        # category_fields holds the selected sub-category options (Neck Style,
+        # Sleeves, Fabric, Size Type...) - shown as small chips under the item name so
+        # the exact customization is visible on the printed quotation.
+        try:
+            fields = json.loads(item.get("category_fields", "{}") or "{}")
+        except (json.JSONDecodeError, TypeError):
+            fields = {}
+        chips = "".join(
+            f'<span class="chip"><b>{escape(str(k))}:</b> {escape(str(v))}</span>'
+            for k, v in fields.items() if v not in (None, "")
+        )
+        desc = escape(str(item.get("custom_description") or ""))
+        rows_html += f"""
+        <tr>
+            <td class="c">{idx}</td>
+            <td>
+                <div class="item-name">{escape(str(item.get('product_name', '')))}</div>
+                {f'<div class="item-desc">{desc}</div>' if desc else ''}
+                {f'<div class="chips">{chips}</div>' if chips else ''}
+            </td>
+            <td class="c">{int(item.get('quantity', 0))}</td>
+            <td class="r">{money(item.get('unit_price'))}</td>
+            <td class="r strong">{money(item.get('total_price'))}</td>
+        </tr>"""
+
+    subtotal = totals.get("subtotal", sum(float(i.get("total_price", 0)) for i in items_list))
+    total_rows = f'<tr><td>Subtotal ({total_pieces} pcs)</td><td class="r">{money(subtotal)}</td></tr>'
+    if quotation.discounts and float(quotation.discounts) > 0:
+        total_rows += f'<tr><td>Discount</td><td class="r">- {money(quotation.discounts)}</td></tr>'
+    if quotation.is_rush and float(quotation.rush_charge) > 0:
+        rate = quotation.rush_rate_snapshot
+        rush_detail = (
+            f'<div class="sub">Rs. {money(rate)} per piece &times; {total_pieces} pcs</div>' if rate is not None else ""
+        )
+        total_rows += f'<tr class="rush"><td>Rush Charge{rush_detail}</td><td class="r">+ {money(quotation.rush_charge)}</td></tr>'
+
+    status = getattr(quotation.status, "value", quotation.status)
+    rush_badge = '<span class="badge badge-rush">RUSH ORDER</span>' if quotation.is_rush else ""
+    logo = _quotation_logo_data_uri()
+    logo_html = f'<img class="logo" src="{logo}">' if logo else ""
+    team = f'<div class="muted">Team: <b>{escape(quotation.team_name)}</b></div>' if quotation.team_name else ""
+    notes_html = (
+        f'<div class="notes"><div class="label">Notes</div>{escape(quotation.notes)}</div>' if quotation.notes else ""
+    )
+    deadline_row = (
+        f'<tr class="deadline"><td>Deadline</td><td>{fmt_date(quotation.required_by_date)}</td></tr>'
+        if quotation.required_by_date else ""
+    )
+    valid_row = (
+        f'<tr><td>Valid Until</td><td>{fmt_date(quotation.valid_until)}</td></tr>' if quotation.valid_until else ""
+    )
+
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+    @page {{
+        size: A4;
+        margin: 14mm 12mm 18mm 12mm;
+        @bottom-left {{ content: "European Sports Light House  |  {escape(quotation.quotation_no)}"; font-size: 8px; color: #6B7280; }}
+        @bottom-right {{ content: "Page " counter(page) " of " counter(pages); font-size: 8px; color: #6B7280; }}
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{ font-family: "Helvetica Neue", Arial, Helvetica, sans-serif; font-size: 10.5px; color: #111827; margin: 0; }}
+    .sheet {{ border: 1.5px solid #111827; }}
+    .accent {{ height: 6px; background: #FFD01F; border-bottom: 1.5px solid #111827; }}
+
+    .header {{ display: table; width: 100%; padding: 14px 16px; border-bottom: 1.5px solid #111827; }}
+    .header > div {{ display: table-cell; vertical-align: middle; }}
+    .brand {{ width: 60%; }}
+    .logo {{ height: 52px; float: left; margin-right: 12px; }}
+    .company {{ font-size: 18px; font-weight: 800; letter-spacing: 0.3px; padding-top: 8px; }}
+    .tagline {{ color: #6B7280; font-size: 9.5px; margin-top: 2px; }}
+    .doc {{ text-align: right; }}
+    .doc-title {{ font-size: 24px; font-weight: 800; letter-spacing: 3px; }}
+    .doc-sub {{ font-size: 9px; color: #6B7280; text-transform: uppercase; letter-spacing: 1px; margin-top: 2px; }}
+    .badge {{ display: inline-block; padding: 3px 8px; border-radius: 3px; font-size: 9px; font-weight: 700; letter-spacing: 0.8px; margin-top: 6px; }}
+    .badge-rush {{ background: #FFEDD5; color: #C2410C; border: 1px solid #EA580C; }}
+    .badge-status {{ background: #F3F4F6; color: #374151; border: 1px solid #9CA3AF; margin-left: 4px; }}
+
+    .info {{ display: table; width: 100%; border-bottom: 1.5px solid #111827; }}
+    .info > div {{ display: table-cell; width: 50%; padding: 10px 16px; vertical-align: top; }}
+    .info > div + div {{ border-left: 1px solid #D1D5DB; }}
+    .label {{ font-size: 8.5px; font-weight: 700; color: #6B7280; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px; }}
+    .cust {{ font-size: 13px; font-weight: 700; margin-bottom: 2px; }}
+    .muted {{ color: #4B5563; }}
+    .meta {{ width: 100%; border-collapse: collapse; }}
+    .meta td {{ padding: 2px 0; }}
+    .meta td:first-child {{ color: #6B7280; width: 45%; }}
+    .meta td:last-child {{ font-weight: 600; text-align: right; }}
+    .meta .deadline td:last-child {{ color: #C2410C; }}
+
+    .items {{ width: 100%; border-collapse: collapse; }}
+    .items thead {{ display: table-header-group; }}
+    .items th {{ background: #111827; color: #fff; font-size: 9px; text-transform: uppercase; letter-spacing: 0.8px;
+                 padding: 8px 8px; border: 1px solid #111827; text-align: left; }}
+    .items td {{ padding: 8px; border: 1px solid #D1D5DB; vertical-align: top; }}
+    .items tbody tr:nth-child(even) td {{ background: #F9FAFB; }}
+    .items tr {{ page-break-inside: avoid; }}
+    .items th.c, .items td.c {{ text-align: center; }}
+    .items th.r, .items td.r {{ text-align: right; }}
+    .strong {{ font-weight: 700; }}
+    .item-name {{ font-weight: 700; font-size: 11px; }}
+    .item-desc {{ color: #4B5563; margin-top: 2px; }}
+    .chips {{ margin-top: 4px; }}
+    .chip {{ display: inline-block; border: 1px solid #E5E7EB; background: #fff; border-radius: 3px;
+             padding: 1px 5px; margin: 2px 3px 0 0; font-size: 8.5px; color: #374151; }}
+    .chip b {{ color: #6B7280; font-weight: 600; }}
+
+    .bottom {{ display: table; width: 100%; border-top: 1.5px solid #111827; page-break-inside: avoid; }}
+    .bottom > div {{ display: table-cell; vertical-align: top; padding: 12px 16px; }}
+    .side {{ width: 55%; }}
+    .notes {{ color: #374151; }}
+    .totals {{ width: 100%; border-collapse: collapse; border: 1px solid #111827; }}
+    .totals td {{ padding: 6px 10px; border-bottom: 1px solid #E5E7EB; }}
+    .totals td.r {{ text-align: right; font-weight: 600; white-space: nowrap; }}
+    .totals .sub {{ font-size: 8.5px; color: #C2410C; font-weight: 400; margin-top: 1px; }}
+    .totals .rush td {{ color: #C2410C; }}
+    .totals .grand td {{ background: #111827; color: #fff; font-size: 13px; font-weight: 800; border-bottom: none; }}
+    .totals .grand td.r {{ color: #FFD01F; }}
+
+    .thanks {{ text-align: center; font-size: 9.5px; color: #374151; padding: 8px; border-top: 1.5px solid #111827; background: #FFFBEB; }}
+</style>
+</head>
+<body>
+<div class="sheet">
+    <div class="accent"></div>
+    <div class="header">
+        <div class="brand">
+            {logo_html}
+            <div class="company">European Sports Light House</div>
+            <div class="tagline">Custom Sportswear &amp; Team Kits</div>
+        </div>
+        <div class="doc">
+            <div class="doc-title">QUOTATION</div>
+            <div class="doc-sub">Not a Tax Invoice</div>
+            {rush_badge}<span class="badge badge-status">{escape(str(status))}</span>
+        </div>
+    </div>
+
+    <div class="info">
+        <div>
+            <div class="label">Quotation For</div>
+            <div class="cust">{escape(quotation.customer_name or '-')}</div>
+            {team}
+        </div>
+        <div>
+            <div class="label">Quotation Details</div>
+            <table class="meta">
+                <tr><td>Quotation No</td><td>{escape(quotation.quotation_no)} (Rev. {quotation.revision})</td></tr>
+                <tr><td>Date</td><td>{fmt_date(quotation.created_at)}</td></tr>
+                {deadline_row}
+                {valid_row}
+            </table>
+        </div>
+    </div>
+
+    <table class="items">
+        <thead>
+            <tr>
+                <th class="c" style="width:6%;">#</th>
+                <th style="width:52%;">Item &amp; Specifications</th>
+                <th class="c" style="width:10%;">Qty</th>
+                <th class="r" style="width:14%;">Rate (Rs.)</th>
+                <th class="r" style="width:18%;">Amount (Rs.)</th>
+            </tr>
+        </thead>
+        <tbody>{rows_html}
+        </tbody>
+    </table>
+
+    <div class="bottom">
+        <div class="side">{notes_html}</div>
+        <div>
+            <table class="totals">
+                {total_rows}
+                <tr class="grand"><td>Grand Total</td><td class="r">Rs. {money(totals.get('total', quotation.total_amount))}</td></tr>
+            </table>
+        </div>
+    </div>
+
+    <div class="thanks">Thank you for choosing European Sports Light House.</div>
+</div>
+</body>
+</html>"""
+
+
 @router.get("/{quotation_id}/pdf")
 async def get_quotation_pdf(
     quotation_id: UUID,
@@ -540,111 +779,7 @@ async def get_quotation_pdf(
     from weasyprint import HTML
 
     quotation = await _get_quotation_or_404(quotation_id, db)
-    items_list = json.loads(quotation.items)
-    totals = json.loads(quotation.totals)
-
-    rows_html = ""
-    for item in items_list:
-        # category_fields holds the selected sub-category options (Neck Style,
-        # Sleeves, Fabric, Size Type...) - show them under the item name so the
-        # exact customization is visible on the printed quotation, not just stored.
-        fields_line = ""
-        try:
-            fields = json.loads(item.get("category_fields", "{}"))
-        except (json.JSONDecodeError, TypeError):
-            fields = {}
-        if fields:
-            fields_line = "<br><span style=\"font-size:10px;color:#6B7280;\">" + " &middot; ".join(
-                f"{k}: {v}" for k, v in fields.items()
-            ) + "</span>"
-
-        rows_html += f"""
-        <tr>
-            <td class="border">{item['product_name']}{fields_line}</td>
-            <td class="border text-center">{item['quantity']}</td>
-            <td class="border text-right">{item['unit_price']:.0f}</td>
-            <td class="border text-right">{item['total_price']:.0f}</td>
-        </tr>
-        """
-
-    rush_row = ""
-    if quotation.is_rush and float(quotation.rush_charge) > 0:
-        rush_row = f"""
-        <tr><td colspan="3" class="text-right"><strong>Rush Order Charge:</strong></td><td class="text-right">{float(quotation.rush_charge):.0f}</td></tr>
-        """
-
-    discount_row = ""
-    if quotation.discounts and float(quotation.discounts) > 0:
-        discount_row = f"""
-        <tr><td colspan="3" class="text-right"><strong>Discount:</strong></td><td class="text-right">-{float(quotation.discounts):.0f}</td></tr>
-        """
-
-    required_by_line = ""
-    if quotation.required_by_date:
-        required_by_line = f"<p><strong>Deadline:</strong> {quotation.required_by_date.strftime('%d-%m-%Y')}</p>"
-
-    valid_until_line = ""
-    if quotation.valid_until:
-        valid_until_line = f"<p><strong>Valid Until:</strong> {quotation.valid_until.strftime('%d-%m-%Y')}</p>"
-
-    rush_badge = '<span style="color:#B91C1C;font-weight:bold;"> [RUSH ORDER]</span>' if quotation.is_rush else ""
-
-    html_content = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="UTF-8">
-        <style>
-            @page {{ size: A4; margin: 20px; }}
-            body {{ font-family: Arial, Helvetica, sans-serif; font-size: 12px; color: #111; }}
-            h1 {{ text-align: center; margin-bottom: 0; }}
-            .subtitle {{ text-align: center; color: #555; margin-top: 4px; margin-bottom: 20px; }}
-            table {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
-            th {{ background: #1F2937; color: #fff; padding: 8px; text-align: left; }}
-            td {{ padding: 6px 8px; }}
-            .border {{ border: 1px solid #999; }}
-            .text-right {{ text-align: right; }}
-            .text-center {{ text-align: center; }}
-            .info {{ margin: 10px 0 20px 0; }}
-            .info p {{ margin: 3px 0; }}
-        </style>
-    </head>
-    <body>
-        <h1>European Sports Light House</h1>
-        <p class="subtitle">QUOTATION — Not a Tax Invoice{rush_badge}</p>
-
-        <div class="info">
-            <p><strong>Quotation No:</strong> {quotation.quotation_no} (Rev. {quotation.revision})</p>
-            <p><strong>Customer:</strong> {quotation.customer_name or '-'}{' | Team: ' + quotation.team_name if quotation.team_name else ''}</p>
-            <p><strong>Date:</strong> {quotation.created_at.strftime('%d-%m-%Y')}</p>
-            {required_by_line}
-            {valid_until_line}
-            <p><strong>Status:</strong> {quotation.status}</p>
-        </div>
-
-        <table>
-            <thead>
-                <tr>
-                    <th>Item</th>
-                    <th>Qty</th>
-                    <th>Rate</th>
-                    <th>Amount</th>
-                </tr>
-            </thead>
-            <tbody>
-                {rows_html}
-            </tbody>
-            <tfoot>
-                {discount_row}
-                {rush_row}
-                <tr><td colspan="3" class="text-right"><strong>Total:</strong></td><td class="text-right"><strong>{totals.get('total', 0):.0f}</strong></td></tr>
-            </tfoot>
-        </table>
-
-        {f'<p style="margin-top:20px;"><strong>Notes:</strong> {quotation.notes}</p>' if quotation.notes else ''}
-    </body>
-    </html>
-    """
+    html_content = _build_quotation_pdf_html(quotation)
 
     pdf_bytes = HTML(string=html_content).write_pdf()
     pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")

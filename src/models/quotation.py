@@ -88,6 +88,8 @@ class QuotationCreate(SQLModel):
     valid_until: Optional[date] = None
     discounts: Optional[Decimal] = 0.00
     notes: Optional[str] = None
+    rush_rate_per_piece: Optional[Decimal] = None  # cashier-edited rush rate; None => default setting
+    rush_threshold_days: Optional[int] = None      # rush window used by the page; None => default setting
 
 
 class QuotationUpdate(SQLModel):
@@ -96,6 +98,8 @@ class QuotationUpdate(SQLModel):
     valid_until: Optional[date] = None
     discounts: Optional[Decimal] = None
     notes: Optional[str] = None
+    rush_rate_per_piece: Optional[Decimal] = None
+    rush_threshold_days: Optional[int] = None
 
 
 class QuotationStatusUpdate(SQLModel):

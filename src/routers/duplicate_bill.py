@@ -335,7 +335,8 @@ async def get_duplicate_invoice(
             subtotal=float(invoice_totals.get('subtotal', invoice.total_amount)),
             is_rush=invoice.is_rush,
             rush_charge=float(invoice.rush_charge or 0),
-            required_by_date=invoice.required_by_date
+            required_by_date=invoice.required_by_date,
+            rush_rate=invoice.rush_rate_snapshot
         )
 
     else:

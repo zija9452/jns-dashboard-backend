@@ -38,30 +38,39 @@ async def _get_customer_invoice_rush_setting(db: AsyncSession):
     return result.scalar_one_or_none()
 
 
-async def _compute_customer_invoice_rush(db: AsyncSession, required_by_date, total_pieces: int):
+async def _compute_customer_invoice_rush(db: AsyncSession, required_by_date, total_pieces: int,
+                                         rate_override=None, threshold_override=None):
     """
-    Rush is derived from required_by_date vs rush_pricing_settings, never a manual
-    toggle - mirrors quotation.py's _compute_rush. Returns (is_rush, rate_snapshot,
-    threshold_snapshot, rush_charge). No required_by_date or no rush setting => not
-    rush (never silently charge while unable to resolve a real rate).
+    Rush is derived from the deadline, never a manual toggle - mirrors quotation.py's
+    _compute_rush. Returns (is_rush, rate_snapshot, threshold_snapshot, rush_charge).
+    rate_override is the per-piece rush rate the cashier entered (editable, pre-filled
+    with the default); threshold_override is the rush window the page used. Either one
+    missing falls back to rush_pricing_settings. No required_by_date, or no
+    rate/threshold resolvable at all => not rush.
     """
     from decimal import Decimal
 
     if not required_by_date:
         return False, None, None, Decimal("0.00")
 
-    setting = await _get_customer_invoice_rush_setting(db)
-    if not setting:
+    setting = None
+    if rate_override is None or threshold_override is None:
+        setting = await _get_customer_invoice_rush_setting(db)
+    rate = Decimal(str(rate_override)) if rate_override is not None else (setting.price_per_piece if setting else None)
+    threshold = int(threshold_override) if threshold_override is not None else (setting.threshold_days if setting else None)
+    if rate is None or threshold is None:
         return False, None, None, Decimal("0.00")
+    if rate < 0:
+        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail="Rush rate cannot be negative")
 
     days_until = (required_by_date - date.today()).days
-    is_rush = days_until <= setting.threshold_days
+    is_rush = days_until <= threshold
 
     if not is_rush:
-        return False, setting.price_per_piece, setting.threshold_days, Decimal("0.00")
+        return False, rate, threshold, Decimal("0.00")
 
-    rush_charge = setting.price_per_piece * total_pieces
-    return True, setting.price_per_piece, setting.threshold_days, rush_charge
+    rush_charge = rate * total_pieces
+    return True, rate, threshold, rush_charge
 
 
 @router.post("/GetCustomerDetails")
@@ -342,7 +351,8 @@ async def save_customer_orders(
     # order, the same way quotation.py's _compute_rush does.
     total_pieces = sum(i["quantity"] for i in items_list)
     is_rush, rush_rate_snapshot, rush_threshold_snapshot, rush_charge = await _compute_customer_invoice_rush(
-        db, required_by_date_value, total_pieces
+        db, required_by_date_value, total_pieces,
+        request_data.get('rush_rate_per_piece'), request_data.get('rush_threshold_days')
     )
 
     # Calculate net amount (total after all discounts). Discount is tracked
@@ -583,7 +593,8 @@ async def get_invoice_receipt(
         subtotal=float(totals.get('subtotal', invoice.total_amount)),
         is_rush=invoice.is_rush,
         rush_charge=float(invoice.rush_charge or 0),
-        required_by_date=invoice.required_by_date
+        required_by_date=invoice.required_by_date,
+        rush_rate=invoice.rush_rate_snapshot
     )
 
     # generate_simple_receipt_pdf already returns base64-encoded string, use directly
@@ -594,7 +605,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
                                   total_discount, amount_paid, balance_due, payment_method,
                                   payment_status, created_at, bill_type: str = "SALE RECEIPT",
                                   subtotal=None, is_rush: bool = False, rush_charge: float = 0.0,
-                                  required_by_date=None):
+                                  required_by_date=None, rush_rate=None):
     """Generate thermal receipt style PDF using weasyprint (same as customers.py)"""
     
     # Simplify payment method name (e.g., "EasyPaisa Sir Yasir" -> "EasyPaisa")
@@ -654,6 +665,9 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
         page_height += 18
     if rush_charge > 0:
         page_height += 18
+    # "Rush (300/pc x 10 pcs)" instead of a bare total, so the customer sees it's per piece.
+    total_pieces = sum(int(i.get('quantity', 0)) for i in items)
+    rush_label = f"Rush ({float(rush_rate):.0f}/pc &times; {total_pieces} pcs)" if rush_rate is not None else "Rush Charge"
     
     # Create simple HTML for PDF (same pattern as customers.py)
     items_rows = ""
@@ -892,7 +906,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             <p class="total-row"><span class="total-label">Total Bill:</span><span class="total-value">{subtotal:.0f}</span></p>
             <p class="total-row"><span class="total-label">Item Discount:</span><span class="total-value">0</span></p>
             <p class="total-row"><span class="total-label">Total Discount(Rs):</span><span class="total-value">{total_discount:.0f}</span></p>
-            {f'<p class="total-row"><span class="total-label">Rush Charge:</span><span class="total-value">+{rush_charge:.0f}</span></p>' if rush_charge > 0 else ''}
+            {f'<p class="total-row"><span class="total-label">{rush_label}:</span><span class="total-value">+{rush_charge:.0f}</span></p>' if rush_charge > 0 else ''}
             <p class="total-row"><span class="total-label">Grand Total:</span><span class="total-value">{total_amount:.0f}</span></p>
             <p class="total-row"><span class="total-label">Amount Paid:</span><span class="total-value">{amount_paid:.0f}</span></p>
             <p class="total-row"><span class="total-label">Balance:</span><span class="total-value">-{balance_due:.0f}</span></p>

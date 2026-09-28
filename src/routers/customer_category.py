@@ -50,7 +50,9 @@ async def create_customer_category(
     sub_categories_data = [
         {
             "sub_category": sc.sub_category,
-            "options": sc.options
+            "options": sc.options,
+            "is_modifier": sc.is_modifier,
+            "is_optional": sc.is_optional
         }
         for sc in category.sub_categories
     ]
@@ -274,7 +276,9 @@ async def update_customer_category(
             update_data['sub_categories'] = [
                 {
                     "sub_category": sc["sub_category"],
-                    "options": sc["options"]
+                    "options": sc["options"],
+                    "is_modifier": sc.get("is_modifier", False),
+                    "is_optional": sc.get("is_optional", False)
                 }
                 for sc in sub_cats
             ]
@@ -283,7 +287,9 @@ async def update_customer_category(
             update_data['sub_categories'] = [
                 {
                     "sub_category": sc.sub_category,
-                    "options": sc.options
+                    "options": sc.options,
+                    "is_modifier": sc.is_modifier,
+                    "is_optional": sc.is_optional
                 }
                 for sc in sub_cats
             ]
