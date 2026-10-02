@@ -15,6 +15,7 @@ from sqlalchemy import select, func, and_
 import logging
 
 from ..database.database import get_db
+from ..config.branches import doc_prefix, this_branch
 from ..models.invoice import Invoice, InvoiceRead, InvoiceCreate, InvoiceUpdate, InvoiceStatus
 from ..models.product import Product
 from ..models.customer import Customer
@@ -197,10 +198,13 @@ async def create_walkin_invoice(
 
     try:
         # Find the highest invoice number globally and increment the sequence
-        prefix_pattern = "SIN-%"  # Walk-In Invoice prefix
-        statement = select(func.max(Invoice.invoice_no)).where(
+        prefix_pattern = doc_prefix("SIN") + "%"  # Walk-In Invoice prefix
+        statement = select(Invoice.invoice_no).where(
             Invoice.invoice_no.like(prefix_pattern)
-        )
+        ).order_by(
+            # Numeric max: longer number first, so e.g. SIN-10000 beats SIN-9999
+            func.length(Invoice.invoice_no).desc(), Invoice.invoice_no.desc()
+        ).limit(1)
         result = await db.execute(statement)
         max_invoice_no = result.scalar_one_or_none()
 
@@ -222,7 +226,7 @@ async def create_walkin_invoice(
         else:
             seq_number = "0001"  # Start with 001 if no invoices exist
 
-        invoice_no = f"SIN-{seq_number}"
+        invoice_no = f"{doc_prefix('SIN')}{seq_number}"
 
         # Double-check for uniqueness in case of race conditions and increment if needed
         counter = 0
@@ -235,7 +239,7 @@ async def create_walkin_invoice(
                 # Invoice number exists, increment and try again
                 next_seq_int = int(seq_number) + 1
                 seq_number = f"{next_seq_int:04d}"
-                invoice_no = f"SIN-{seq_number}"
+                invoice_no = f"{doc_prefix('SIN')}{seq_number}"
                 counter += 1
             else:
                 break  # Found a unique number
@@ -1317,6 +1321,13 @@ def generate_walkin_receipt_pdf(invoice_no, customer_name, team_name, items, tot
     except Exception as e:
         logo_html = '🏆'
 
+    # Shop contact/address from the branch config (empty -> line omitted)
+    shop = this_branch()
+    contact_html = "".join(
+        f'<p class="contact">{line}</p>'
+        for line in ([f"Contact: {shop.contact}"] if shop.contact else []) + ([shop.address] if shop.address else [])
+    )
+
     html_content = f"""
     <!DOCTYPE html>
     <html>
@@ -1469,8 +1480,7 @@ def generate_walkin_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             <div class="logo">
                 {logo_html}
             </div>
-            <p class="contact">Contact: 0315-2263745</p>
-            <p class="contact">Shop#8, Mazar Wali Gali, Light House, Khi</p>
+            {contact_html}
         </div>
         <div class="info">
             <p><strong>Date:</strong> {current_date}</p>

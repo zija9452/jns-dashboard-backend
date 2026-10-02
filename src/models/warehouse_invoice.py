@@ -23,6 +23,9 @@ class WarehouseInvoice(SQLModel, table=True):
     payment_method: Optional[str] = "cash"
     payment_date: Optional[datetime] = Field(default_factory=datetime.now)
     notes: Optional[str] = None
+    # Stock transfer to another branch DB (customer.destination_branch): None / "pending" / "done"
+    transfer_status: Optional[str] = Field(default=None, max_length=20)
+    transfer_error: Optional[str] = None
     created_by: uuid.UUID = Field(foreign_key="users.id")
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)

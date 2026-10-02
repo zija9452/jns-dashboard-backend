@@ -23,12 +23,20 @@ def _get_client() -> firestore.AsyncClient:
     return _client
 
 
+def branch_signal_id(signal_id: str) -> str:
+    """Light House keeps the original doc ids (existing listeners keep working);
+    other branches get their own doc, e.g. "shop_order_updates__karimabad"."""
+    from ..config.branches import current_branch, DEFAULT_BRANCH
+    branch = current_branch.get()
+    return signal_id if branch == DEFAULT_BRANCH else f"{signal_id}__{branch}"
+
+
 async def publish_signal(signal_id: str) -> None:
     """Best-effort ping. Never raises - the badge just falls back to its
     existing poll if this fails, but the caller's actual DB write must not
     be rolled back or 500 over a Firestore hiccup."""
     try:
-        await _get_client().collection("signals").document(signal_id).set(
+        await _get_client().collection("signals").document(branch_signal_id(signal_id)).set(
             {"ts": firestore.SERVER_TIMESTAMP}
         )
     except Exception:

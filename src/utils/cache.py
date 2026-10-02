@@ -64,6 +64,12 @@ class CacheManager:
             await self.redis.close()
             logger.info("Redis cache disconnected")
     
+    @staticmethod
+    def _branch_key(key: str) -> str:
+        """Namespace every key by branch so branches never read each other's cache"""
+        from ..config.branches import current_branch
+        return f"{current_branch.get()}:{key}"
+
     def _generate_key(self, prefix: str, *args) -> str:
         """Generate cache key from arguments"""
         key_data = ":".join(str(arg) for arg in args)
@@ -75,6 +81,7 @@ class CacheManager:
         if not self.enabled or not self.redis:
             return None
         
+        key = self._branch_key(key)
         try:
             value = await self.redis.get(key)
             if value:
@@ -96,6 +103,7 @@ class CacheManager:
         if not self.enabled or not self.redis:
             return
         
+        key = self._branch_key(key)
         try:
             ttl = ttl or self.default_ttl
             await self.redis.setex(
@@ -112,6 +120,7 @@ class CacheManager:
         if not self.enabled or not self.redis:
             return
         
+        key = self._branch_key(key)
         try:
             await self.redis.delete(key)
             logger.debug(f"Cache DELETE: {key}")
@@ -123,6 +132,7 @@ class CacheManager:
         if not self.enabled or not self.redis:
             return
         
+        pattern = self._branch_key(pattern)
         try:
             keys = []
             async for key in self.redis.scan_iter(match=pattern):

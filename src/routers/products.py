@@ -93,6 +93,16 @@ async def create_product(
             detail="Product with this SKU already exists"
         )
 
+    # Barcode is unique (and typed by hand in branches other than Light House)
+    if product_create.barcode:
+        result = await db.execute(select(Product).where(Product.barcode == product_create.barcode))
+        barcode_owner = result.scalar_one_or_none()
+        if barcode_owner:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Barcode {product_create.barcode} is already used by '{barcode_owner.name}'"
+            )
+
     # Clear cache after creating product
     await clear_products_cache()
 
@@ -726,6 +736,17 @@ async def update_product(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Product with this name already exists. Please use a different name."
+            )
+
+    # Barcode is unique (and typed by hand in branches other than Light House)
+    if product_update.barcode and product_update.barcode != product.barcode:
+        from sqlmodel import select
+        result = await db.execute(select(Product).where(Product.barcode == product_update.barcode))
+        barcode_owner = result.scalar_one_or_none()
+        if barcode_owner and barcode_owner.id != product_uuid:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Barcode {product_update.barcode} is already used by '{barcode_owner.name}'"
             )
 
     # Clear cache after updating product

@@ -57,10 +57,14 @@ async def create_customer_category(
         for sc in category.sub_categories
     ]
 
+    if category.mockup_charge is not None and category.mockup_charge < 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mockup charge cannot be negative")
+
     db_category = CustomerCategory(
         main_category=category.main_category,
         sub_categories=sub_categories_data,
-        branch=category.branch
+        branch=category.branch,
+        mockup_charge=category.mockup_charge
     )
 
     db.add(db_category)
@@ -216,7 +220,9 @@ async def get_grouped_customer_categories(
                 for sc in cat.sub_categories
             ],
             "ideal_prices": prices_by_category.get(cat.id, {}),
-            "modifiers": modifiers_by_category.get(cat.id, {})
+            "modifiers": modifiers_by_category.get(cat.id, {}),
+            # None = no mockup charge for this category
+            "mockup_charge": float(cat.mockup_charge) if cat.mockup_charge is not None else None
         }
         for cat in categories
     ]
@@ -265,7 +271,9 @@ async def update_customer_category(
         )
 
     update_data = category_update.model_dump(exclude_unset=True)
-    
+    if update_data.get('mockup_charge') is not None and update_data['mockup_charge'] < 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mockup charge cannot be negative")
+
     # Convert sub_categories to list of dicts if present
     # Keep the order: sub_category first, then options
     if 'sub_categories' in update_data and update_data['sub_categories']:

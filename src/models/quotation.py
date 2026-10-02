@@ -1,6 +1,6 @@
 from sqlmodel import SQLModel, Field
 from sqlalchemy import Column, Numeric, Text
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from decimal import Decimal
 from datetime import datetime, date
 import uuid
@@ -26,7 +26,7 @@ class Quotation(SQLModel, table=True):
     salesman_id: Optional[uuid.UUID] = Field(default=None, foreign_key="salesmen.id", index=True)
 
     items: str = Field()   # JSON string, same shape as CustomerInvoice.items
-    totals: str = Field()  # JSON string: subtotal, discount, rush_charge, tax, total
+    totals: str = Field()  # JSON string: subtotal, discount, rush_charge, mockup_charge, mockup_charges, tax, total
 
     total_amount: Decimal = Field(sa_column=Column(Numeric(10, 2), index=True))
     taxes: Decimal = Field(default=0.00, sa_column=Column(Numeric(10, 2)))
@@ -90,6 +90,8 @@ class QuotationCreate(SQLModel):
     notes: Optional[str] = None
     rush_rate_per_piece: Optional[Decimal] = None  # cashier-edited rush rate; None => default setting
     rush_threshold_days: Optional[int] = None      # rush window used by the page; None => default setting
+    # [{"category": "T-shirt", "amount": 500}] - one per category with 1-4 pcs; see utils/mockup_charges.py
+    mockup_charges: Optional[List[Dict[str, Any]]] = None
 
 
 class QuotationUpdate(SQLModel):
@@ -100,6 +102,7 @@ class QuotationUpdate(SQLModel):
     notes: Optional[str] = None
     rush_rate_per_piece: Optional[Decimal] = None
     rush_threshold_days: Optional[int] = None
+    mockup_charges: Optional[List[Dict[str, Any]]] = None  # None => keep the saved ones
 
 
 class QuotationStatusUpdate(SQLModel):

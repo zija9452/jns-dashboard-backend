@@ -4,6 +4,7 @@ from typing import Optional
 from decimal import Decimal
 from datetime import datetime
 import uuid
+from ..config.branches import current_branch_name
 
 
 class RushPricingSetting(SQLModel, table=True):
@@ -18,7 +19,7 @@ class RushPricingSetting(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     price_per_piece: Decimal = Field(default=300.00, sa_column=Column(Numeric(10, 2), nullable=False))
     threshold_days: int = Field(default=4)  # required-by date within this many days of today => rush
-    branch: str = Field(max_length=100, default="European Sports Light House", unique=True)
+    branch: str = Field(max_length=100, default_factory=current_branch_name, unique=True)
     updated_at: datetime = Field(default_factory=lambda: datetime.now())
 
 

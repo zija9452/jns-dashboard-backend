@@ -14,6 +14,9 @@ class WarehouseCustomer(SQLModel, table=True):
     cnic: Optional[str] = Field(default=None, max_length=20)
     branch: Optional[str] = Field(default=None, max_length=200)
     cus_balance: Optional[Decimal] = Field(default=0.00, max_digits=10, decimal_places=2)
+    # Branch code (config/branches.py) whose DB receives this customer's warehouse
+    # invoice stock, e.g. "karimabad". None = Light House shop (same product row).
+    destination_branch: Optional[str] = Field(default=None, max_length=50)
     created_at: datetime = Field(default_factory=lambda: datetime.now(), index=True)
     updated_at: datetime = Field(default_factory=lambda: datetime.now(), nullable=False, index=True)
 

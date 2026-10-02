@@ -91,14 +91,14 @@ async def _upsert_tournament(db: AsyncSession, *, name: str, sport: TournamentSp
     await db.execute(stmt)
 
 
-async def sync_cricket(db: AsyncSession) -> int:
+async def fetch_cricket() -> list[dict]:
     """Pull upcoming cricket series (PSL, IPL, ICC events, Pakistan tours, etc.)."""
     api_key = settings.cricapi_key
     if not api_key:
         logger.info("CRICAPI_KEY not set, skipping cricket tournament sync")
-        return 0
+        return []
 
-    upserted = 0
+    rows = []
     cutoff = date.today() - timedelta(days=3)
     async with httpx.AsyncClient(timeout=20) as client:
         offset = 0
@@ -118,33 +118,30 @@ async def sync_cricket(db: AsyncSession) -> int:
                 series_id = series.get("id")
                 if not series_id:
                     continue
-                await _upsert_tournament(
-                    db,
+                rows.append(dict(
                     name=(series.get("name") or "Cricket Series")[:150],
                     sport=TournamentSport.CRICKET,
                     start_date=start,
                     end_date=_parse_date(series.get("endDate"), reference=start),
                     source=TournamentSource.CRICAPI,
                     external_id=str(series_id),
-                )
-                upserted += 1
+                ))
 
             if len(series_list) < 25:
                 break
             offset += 25
 
-    await db.commit()
-    return upserted
+    return rows
 
 
-async def sync_football(db: AsyncSession) -> int:
+async def fetch_football() -> list[dict]:
     """Pull the current/next season window for major football tournaments and leagues."""
     api_key = settings.api_football_key
     if not api_key:
         logger.info("API_FOOTBALL_KEY not set, skipping football tournament sync")
-        return 0
+        return []
 
-    upserted = 0
+    rows = []
     headers = {"x-apisports-key": api_key}
     today_iso = date.today().isoformat()
     async with httpx.AsyncClient(timeout=20, headers=headers) as client:
@@ -171,19 +168,16 @@ async def sync_football(db: AsyncSession) -> int:
             if not start:
                 continue
 
-            await _upsert_tournament(
-                db,
+            rows.append(dict(
                 name=f"{name} {season.get('year', '')}".strip(),
                 sport=TournamentSport.FOOTBALL,
                 start_date=start,
                 end_date=_parse_date(season.get("end")),
                 source=TournamentSource.API_FOOTBALL,
                 external_id=f"{league_id}-{season.get('year')}",
-            )
-            upserted += 1
+            ))
 
-    await db.commit()
-    return upserted
+    return rows
 
 
 async def delete_expired_tournaments(db: AsyncSession) -> int:
@@ -219,45 +213,45 @@ async def _record_sync_status(db: AsyncSession, *, source: TournamentSource, suc
     await db.commit()
 
 
+async def _sync_all_branches(source: TournamentSource, fetch, cleanup_expired: bool) -> int:
+    """Fetch a source once (one API quota hit) and save it into every branch's
+    database - tournaments are the same for all shops. A failing branch DB does
+    not stop the others. Returns the number of rows fetched."""
+    from ..database.database import session_factories
+
+    label = source.value if hasattr(source, "value") else str(source)
+    try:
+        rows = await fetch()
+        fetch_error = None
+    except Exception as exc:
+        logger.error(f"{label} tournament fetch failed: {exc}")
+        rows, fetch_error = [], str(exc)
+
+    for branch_code, factory in session_factories.items():
+        try:
+            async with factory() as db:
+                if fetch_error is None:
+                    for row in rows:
+                        await _upsert_tournament(db, **row)
+                    await db.commit()
+                    logger.info(f"{label} tournament sync upserted {len(rows)} rows [{branch_code}]")
+                await _record_sync_status(db, source=source, success=fetch_error is None,
+                                           items_synced=len(rows), error_message=fetch_error)
+                if cleanup_expired:
+                    deleted = await delete_expired_tournaments(db)
+                    if deleted:
+                        logger.info(f"Deleted {deleted} expired tournaments [{branch_code}]")
+        except Exception as exc:
+            logger.error(f"{label} tournament save failed [{branch_code}]: {exc}")
+
+    return len(rows)
+
+
 async def run_cricket_sync_job() -> int:
     """Scheduler entry point for the cricket source (runs twice a day, 9am/9pm)."""
-    from ..database.database import AsyncSessionLocal
-
-    async with AsyncSessionLocal() as db:
-        try:
-            count = await sync_cricket(db)
-            logger.info(f"Cricket tournament sync upserted {count} rows")
-            await _record_sync_status(db, source=TournamentSource.CRICAPI, success=True,
-                                       items_synced=count, error_message=None)
-        except Exception as exc:
-            logger.error(f"Cricket tournament sync failed: {exc}")
-            await _record_sync_status(db, source=TournamentSource.CRICAPI, success=False,
-                                       items_synced=0, error_message=str(exc))
-            count = 0
-
-        try:
-            deleted = await delete_expired_tournaments(db)
-            if deleted:
-                logger.info(f"Deleted {deleted} expired tournaments")
-        except Exception as exc:
-            logger.error(f"Expired tournament cleanup failed: {exc}")
-
-        return count
+    return await _sync_all_branches(TournamentSource.CRICAPI, fetch_cricket, cleanup_expired=True)
 
 
 async def run_football_sync_job() -> int:
     """Scheduler entry point for the football source (runs twice a day, 9am/9pm)."""
-    from ..database.database import AsyncSessionLocal
-
-    async with AsyncSessionLocal() as db:
-        try:
-            count = await sync_football(db)
-            logger.info(f"Football tournament sync upserted {count} rows")
-            await _record_sync_status(db, source=TournamentSource.API_FOOTBALL, success=True,
-                                       items_synced=count, error_message=None)
-            return count
-        except Exception as exc:
-            logger.error(f"Football tournament sync failed: {exc}")
-            await _record_sync_status(db, source=TournamentSource.API_FOOTBALL, success=False,
-                                       items_synced=0, error_message=str(exc))
-            return 0
+    return await _sync_all_branches(TournamentSource.API_FOOTBALL, fetch_football, cleanup_expired=False)

@@ -2,8 +2,10 @@ from sqlmodel import SQLModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 import uuid
-from sqlalchemy import Column
+from decimal import Decimal
+from sqlalchemy import Column, Numeric
 from sqlalchemy.dialects.postgresql import JSONB
+from ..config.branches import current_branch_name
 
 
 class SubCategorySchema(SQLModel):
@@ -51,20 +53,25 @@ class CustomerCategory(SQLModel, table=True):
         default=[],
         sa_column=Column(JSONB, nullable=False, default=list)
     )
-    branch: str = Field(max_length=100, default="European Sports Light House")
+    branch: str = Field(max_length=100, default_factory=current_branch_name)
+    # This category's own designing / mockup charge (added once when the category has
+    # only 1-4 pcs in an order), set on the Ideal Pricing page. None or 0 = no mockup charge.
+    mockup_charge: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(10, 2), nullable=True))
     created_at: datetime = Field(default_factory=lambda: datetime.now())
 
 
 class CustomerCategoryCreate(SQLModel):
     main_category: str
     sub_categories: List[SubCategorySchema]
-    branch: Optional[str] = "European Sports Light House"
+    branch: Optional[str] = Field(default_factory=current_branch_name)
+    mockup_charge: Optional[Decimal] = None
 
 
 class CustomerCategoryUpdate(SQLModel):
     main_category: Optional[str] = None
     sub_categories: Optional[List[SubCategorySchema]] = None
     branch: Optional[str] = None
+    mockup_charge: Optional[Decimal] = None  # send null for no mockup charge
 
 
 class CustomerCategoryRead(SQLModel):
@@ -72,6 +79,7 @@ class CustomerCategoryRead(SQLModel):
     main_category: str
     sub_categories: List[Dict[str, Any]]
     branch: str
+    mockup_charge: Optional[Decimal] = None
     created_at: datetime
 
 

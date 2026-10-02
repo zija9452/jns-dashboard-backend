@@ -45,24 +45,36 @@ async def lifespan(app: FastAPI):
     # run any source whose last recorded sync is stale (or missing) once,
     # so a missed cycle doesn't mean waiting until the next 9/21 slot.
     import asyncio
+    import logging
     from datetime import datetime, timedelta
     from sqlalchemy import select as _select
-    from src.database.database import AsyncSessionLocal
+    from src.database.database import session_factories
     from src.models.sync_status import SyncStatus
     from src.models.tournament import TournamentSource
 
+    logger = logging.getLogger(__name__)
+
     async def _catch_up_stale_syncs():
+        # A source is stale if it is stale in ANY branch DB (e.g. a newly added
+        # branch has never been synced); the job then refreshes every branch.
         stale_cutoff = datetime.now() - timedelta(hours=13)
-        async with AsyncSessionLocal() as db:
-            result = await db.execute(_select(SyncStatus))
-            rows = {row.source: row for row in result.scalars().all()}
+        stale_sources = set()
+        for branch_code, factory in session_factories.items():
+            try:
+                async with factory() as db:
+                    result = await db.execute(_select(SyncStatus))
+                    rows = {row.source: row for row in result.scalars().all()}
+            except Exception as exc:
+                logger.error(f"Tournament catch-up check failed [{branch_code}]: {exc}")
+                continue
+            for source in (TournamentSource.CRICAPI, TournamentSource.API_FOOTBALL):
+                row = rows.get(source)
+                if row is None or row.last_run_at < stale_cutoff:
+                    stale_sources.add(source)
 
-        cricket_row = rows.get(TournamentSource.CRICAPI)
-        if cricket_row is None or cricket_row.last_run_at < stale_cutoff:
+        if TournamentSource.CRICAPI in stale_sources:
             asyncio.create_task(run_cricket_sync_job())
-
-        football_row = rows.get(TournamentSource.API_FOOTBALL)
-        if football_row is None or football_row.last_run_at < stale_cutoff:
+        if TournamentSource.API_FOOTBALL in stale_sources:
             asyncio.create_task(run_football_sync_job())
 
     asyncio.create_task(_catch_up_stale_syncs())
@@ -125,21 +137,27 @@ def health_check():
 
 @app.get("/health/db")
 async def db_health():
-    """Check database connectivity"""
+    """Check database connectivity of every branch database"""
     from sqlmodel import select
+    from fastapi.responses import JSONResponse
     from src.models.user import User
     from src.models.customer_invoice import CustomerInvoice
+    from src.database.database import session_factories
 
-    try:
-        # Attempt to connect to the database and perform a simple query using async session
-        from src.database.database import AsyncSessionLocal
-        async with AsyncSessionLocal() as session:
-            # Check that we can query both user and customer invoice tables
-            await session.execute(select(User).limit(1))
-            await session.execute(select(CustomerInvoice).limit(1))
-        return {"status": "healthy", "service": "database"}
-    except Exception as e:
-        return {"status": "unhealthy", "service": "database", "error": str(e)}, 503
+    branches = {}
+    for branch_code, factory in session_factories.items():
+        try:
+            async with factory() as session:
+                # Check that we can query both user and customer invoice tables
+                await session.execute(select(User).limit(1))
+                await session.execute(select(CustomerInvoice).limit(1))
+            branches[branch_code] = {"status": "healthy"}
+        except Exception as e:
+            branches[branch_code] = {"status": "unhealthy", "error": str(e)}
+
+    healthy = all(b["status"] == "healthy" for b in branches.values())
+    body = {"status": "healthy" if healthy else "unhealthy", "service": "database", "branches": branches}
+    return body if healthy else JSONResponse(status_code=503, content=body)
 
 @app.get("/health/ready")
 def readiness_check():

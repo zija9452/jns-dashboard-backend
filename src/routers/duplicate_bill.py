@@ -8,6 +8,7 @@ import base64
 from uuid import UUID
 
 from ..database.database import get_db
+from ..config.branches import doc_prefix
 from ..models.invoice import Invoice
 from ..models.customer_invoice import CustomerInvoice
 from ..models.warehouse_invoice import WarehouseInvoice
@@ -50,7 +51,7 @@ async def search_duplicate_bills(
             # Search by invoice number
             walkin_statement = select(Invoice).where(
                 and_(
-                    Invoice.invoice_no.like("SIN-%"),
+                    Invoice.invoice_no.like(doc_prefix("SIN") + "%"),
                     or_(
                         Invoice.invoice_no.ilike(f"%{search_query}%"),
                         Invoice.customer_name.ilike(f"%{search_query}%")
@@ -61,7 +62,7 @@ async def search_duplicate_bills(
             # Last 24 hours
             walkin_statement = select(Invoice).where(
                 and_(
-                    Invoice.invoice_no.like("SIN-%"),
+                    Invoice.invoice_no.like(doc_prefix("SIN") + "%"),
                     Invoice.payment_date >= twenty_four_hours_ago
                 )
             )
@@ -313,6 +314,7 @@ async def get_duplicate_invoice(
         items_data = json.loads(invoice.items) if invoice.items else []
 
         from .customer_invoice import generate_simple_receipt_pdf
+        from ..utils.mockup_charges import mockup_charges_from_totals
 
         # invoice.total_amount already has rush baked in - pull the plain item
         # subtotal back out of totals JSON so the duplicate bill can show them as
@@ -336,7 +338,8 @@ async def get_duplicate_invoice(
             is_rush=invoice.is_rush,
             rush_charge=float(invoice.rush_charge or 0),
             required_by_date=invoice.required_by_date,
-            rush_rate=invoice.rush_rate_snapshot
+            rush_rate=invoice.rush_rate_snapshot,
+            mockup_charges=mockup_charges_from_totals(invoice_totals)
         )
 
     else:

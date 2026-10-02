@@ -20,6 +20,7 @@ from ..utils.session import create_session, invalidate_session
 from ..services.biometric_service import BiometricService
 from ..auth.session_auth import get_current_user_from_session
 from ..utils.rate_limiter import auth_rate_limiter, get_client_ip
+from ..config.branches import BRANCHES, DEFAULT_BRANCH, BRANCH_COOKIE, current_branch
 
 # Configuration from settings
 SECRET_KEY = settings.access_token_secret_key
@@ -54,6 +55,7 @@ class LoginRequest(BaseModel):
     username: str
     password: str
     role: str = None  # Optional role parameter for filtering or validation
+    branch: Optional[str] = None  # Branch code from the login dropdown (default: Light House)
 
 class TokenResponse(BaseModel):
     access_token: str
@@ -180,11 +182,62 @@ async def traditional_login(
     }
 
 
+@router.get("/branches")
+async def list_branches():
+    """Public list of available branches for the login dropdown (no DB access)."""
+    from ..database.database import session_factories
+    from ..config.branches import BRANCHES
+    return [
+        {"code": b.code, "name": b.name}
+        for code, b in BRANCHES.items()
+        if code in session_factories
+    ]
+
+
+def _set_branch_cookie(response: Response, branch_code: str):
+    """Same lifetime/flags as the session_token cookie it travels with."""
+    response.set_cookie(
+        key=BRANCH_COOKIE,
+        value=branch_code,
+        httponly=True,
+        secure=os.getenv("ENVIRONMENT", "development") == "production",
+        samesite="lax",
+        max_age=36000,  # 10 hours, same as session_token
+        path="/"
+    )
+
+
 @router.post("/login")
 async def session_login(
     response: Response,
     login_request: LoginRequest,
-    db: AsyncSession = Depends(get_db),
+    request: Request = None
+):
+    """
+    Session-based login. The branch chosen on the login page decides which
+    database the credentials are checked against and the session is stored in.
+    """
+    from ..database.database import session_factories
+
+    branch_code = login_request.branch or DEFAULT_BRANCH
+    if branch_code not in BRANCHES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown branch")
+    if branch_code not in session_factories:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Branch is not available")
+
+    current_branch.set(branch_code)
+    async with session_factories[branch_code]() as db:
+        result = await _session_login(response, login_request, db, request)
+
+    _set_branch_cookie(response, branch_code)
+    result["branch"] = {"code": branch_code, "name": BRANCHES[branch_code].name}
+    return result
+
+
+async def _session_login(
+    response: Response,
+    login_request: LoginRequest,
+    db: AsyncSession,
     request: Request = None
 ):
     """
@@ -276,7 +329,7 @@ async def session_login(
         httponly=True,
         secure=is_production,  # True only in production
         samesite="lax",
-        max_age=10800,  # 3 hours (10800 seconds)
+        max_age=36000,  # 10 hours (36000 seconds)
         path="/"
     )
 
@@ -440,6 +493,17 @@ async def logout(
         expires=0
     )
 
+    # Clear branch cookie
+    response.set_cookie(
+        key=BRANCH_COOKIE,
+        value="",
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        expires=0,
+        path="/"
+    )
+
     # Also clear the old JWT cookie for backward compatibility
     response.set_cookie(
         key="access_token",
@@ -480,8 +544,76 @@ async def get_current_user_info(
     Get current authenticated user information
     Returns user details including role
     """
+    branch_code = current_branch.get()
     return {
         "id": str(current_user.id),
         "username": current_user.username,
         "role": current_user.role.name,
+        "branch": {"code": branch_code, "name": BRANCHES[branch_code].name},
     }
+
+
+class SwitchBranchRequest(BaseModel):
+    branch: str
+
+
+@router.post("/switch-branch")
+async def switch_branch(
+    switch_request: SwitchBranchRequest,
+    request: Request,
+    response: Response,
+    current_user: User = Depends(get_current_user_from_session),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Admin only: move the current login to another branch. Each branch has its
+    own users table, so the target branch must have an active admin with the
+    same username; a new session is created there and the cookies are swapped.
+    """
+    from ..database.database import session_factories
+
+    if current_user.role.name != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admin can switch branch")
+
+    target = switch_request.branch
+    if target not in BRANCHES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown branch")
+    if target not in session_factories:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Branch is not available")
+
+    async with session_factories[target]() as target_db:
+        result = await target_db.execute(
+            select(User).options(selectinload(User.role)).where(User.username == current_user.username)
+        )
+        target_user = result.scalar_one_or_none()
+        if not target_user or not target_user.is_active or target_user.role.name != "admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Is branch me aapka admin account nahi hai"
+            )
+        new_session = await create_session(
+            user_id=str(target_user.id),
+            db=target_db,
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+            company_id=str(target_user.company_id) if target_user.company_id else None,
+            biometric_verified=False
+        )
+
+    # End the session in the branch being left
+    old_token = request.cookies.get("session_token")
+    if old_token:
+        await invalidate_session(old_token, db)
+
+    response.set_cookie(
+        key="session_token",
+        value=new_session.session_token,
+        httponly=True,
+        secure=os.getenv("ENVIRONMENT", "development") == "production",
+        samesite="lax",
+        max_age=36000,  # 10 hours (36000 seconds)
+        path="/"
+    )
+    _set_branch_cookie(response, target)
+
+    return {"branch": {"code": target, "name": BRANCHES[target].name}}

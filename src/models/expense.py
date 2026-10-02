@@ -4,6 +4,7 @@ from typing import Optional, Union
 from decimal import Decimal
 from datetime import datetime, date
 import uuid
+from ..config.branches import current_branch_name
 
 class Expense(SQLModel, table=True):
     __tablename__ = "expenses"
@@ -12,7 +13,7 @@ class Expense(SQLModel, table=True):
     expense: str = Field(max_length=100)
     amount: Decimal = Field(sa_column=Column(Numeric(10, 2), nullable=False))
     expense_date: date = Field(default_factory=date.today, index=True)  # Index for date range queries
-    branch: str = Field(max_length=100, default="European Sports Light House", index=True)  # Index for branch filtering
+    branch: str = Field(max_length=100, default_factory=current_branch_name, index=True)  # Index for branch filtering
     created_by: uuid.UUID = Field(foreign_key="users.id", index=True)  # Index for user filtering
     created_at: datetime = Field(default_factory=lambda: datetime.now(), index=True)  # Index for sorting
     is_admin_only: bool = Field(default=False, index=True)  # Admin-marked expenses are hidden from cashiers everywhere

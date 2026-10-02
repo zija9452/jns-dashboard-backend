@@ -8,6 +8,7 @@ import json
 from calendar import monthrange
 
 from src.database import get_db
+from src.config.branches import doc_prefix
 from src.models.user import User
 from src.models.invoice import Invoice
 from src.models.customer_invoice import CustomerInvoice
@@ -103,7 +104,7 @@ async def get_dashboard_stats(
         func.sum(Invoice.amount_paid)
     ).where(
         and_(
-            Invoice.invoice_no.like("SIN-%"),
+            Invoice.invoice_no.like(doc_prefix("SIN") + "%"),
             func.date(Invoice.payment_date) >= first_day,
             func.date(Invoice.payment_date) <= data_end_date  # Use data_end_date instead of last_day
         )
@@ -118,12 +119,12 @@ async def get_dashboard_stats(
         SELECT COALESCE(SUM((payment.value->>'amount')::numeric), 0) as total_collection
         FROM customer_invoices,
         json_array_elements(customer_invoices.payments_history::json) AS payment(value)
-        WHERE customer_invoices.invoice_no LIKE 'CIN-%'
+        WHERE customer_invoices.invoice_no LIKE :cin_prefix
         AND (payment.value->>'date')::date BETWEEN :start_date AND :end_date
     """)
     customer_payment_result = await db.execute(
         customer_payment_query,
-        {"start_date": first_day, "end_date": data_end_date}
+        {"start_date": first_day, "end_date": data_end_date, "cin_prefix": doc_prefix("CIN") + "%"}
     )
     customer_total_collection = float(customer_payment_result.scalar_one_or_none() or 0)
 
@@ -154,12 +155,12 @@ async def get_dashboard_stats(
         ), 0) as total_cost
         FROM invoices,
         json_array_elements(invoices.items::json) AS item(value)
-        WHERE invoices.invoice_no LIKE 'SIN-%'
+        WHERE invoices.invoice_no LIKE :sin_prefix
         AND invoices.payment_date::date BETWEEN :start_date AND :end_date
     """)
     walkin_cost_result = await db.execute(
         walkin_cost_query,
-        {"start_date": first_day, "end_date": data_end_date}
+        {"start_date": first_day, "end_date": data_end_date, "sin_prefix": doc_prefix("SIN") + "%"}
     )
     total_purchase = float(walkin_cost_result.scalar_one_or_none() or 0)
     
@@ -198,7 +199,7 @@ async def get_dashboard_stats(
         func.sum(Invoice.amount_paid).label('total')
     ).where(
         and_(
-            Invoice.invoice_no.like("SIN-%"),
+            Invoice.invoice_no.like(doc_prefix("SIN") + "%"),
             func.date(Invoice.payment_date) >= first_day,
             func.date(Invoice.payment_date) <= data_end_date
         )
@@ -291,7 +292,7 @@ async def get_walkin_invoices(
     # Use payment_date for accurate date filtering (matches what user selects)
     statement = select(Invoice).where(
         and_(
-            Invoice.invoice_no.like("SIN-%"),
+            Invoice.invoice_no.like(doc_prefix("SIN") + "%"),
             func.date(Invoice.payment_date) >= from_date_obj,
             func.date(Invoice.payment_date) <= to_date_obj
         )
@@ -432,7 +433,7 @@ async def get_customized_invoices(
     # Query ALL customer invoices (CIN- prefix)
     # We'll filter by payment date in Python, not SQL
     statement = select(CustomerInvoice).where(
-        CustomerInvoice.invoice_no.like("CIN-%")
+        CustomerInvoice.invoice_no.like(doc_prefix("CIN") + "%")
     )
 
     result = await db.execute(statement)
@@ -557,7 +558,7 @@ async def get_customized_sales_summary(
 
     # Query ALL customer invoices
     statement = select(CustomerInvoice).where(
-        CustomerInvoice.invoice_no.like("CIN-%")
+        CustomerInvoice.invoice_no.like(doc_prefix("CIN") + "%")
     )
 
     result = await db.execute(statement)
@@ -663,7 +664,7 @@ async def get_sales_summary(
     
     walkin_statement = select(Invoice).where(
         and_(
-            Invoice.invoice_no.like("SIN-%"),
+            Invoice.invoice_no.like(doc_prefix("SIN") + "%"),
             func.date(Invoice.payment_date) >= from_date_obj,
             func.date(Invoice.payment_date) <= to_date_obj
         )
@@ -689,7 +690,7 @@ async def get_sales_summary(
 
     # Get customer invoice payments in date range
     customer_statement = select(CustomerInvoice).where(
-        CustomerInvoice.invoice_no.like("CIN-%")
+        CustomerInvoice.invoice_no.like(doc_prefix("CIN") + "%")
     )
     customer_result = await db.execute(customer_statement)
     all_customer_invoices = customer_result.scalars().all()
@@ -778,7 +779,7 @@ async def get_sales_summary(
             and_(
                 Refund.created_at >= from_date_datetime,
                 Refund.created_at <= to_date_datetime,
-                Invoice.invoice_no.like('SIN-%')  # Only walk-in invoices
+                Invoice.invoice_no.like(doc_prefix("SIN") + "%")  # Only walk-in invoices
             )
         )
         refunds_result = await db.execute(refunds_statement)
@@ -848,7 +849,7 @@ async def get_walkin_invoices_pdf(
     # Use payment_date for accurate date filtering (matches what user selects)
     statement = select(Invoice).where(
         and_(
-            Invoice.invoice_no.like("SIN-%"),
+            Invoice.invoice_no.like(doc_prefix("SIN") + "%"),
             func.date(Invoice.payment_date) >= from_date_obj,
             func.date(Invoice.payment_date) <= to_date_obj
         )
@@ -1087,7 +1088,7 @@ async def get_walkin_invoices_excel(
     # Use payment_date for accurate date filtering (matches what user selects)
     statement = select(Invoice).where(
         and_(
-            Invoice.invoice_no.like("SIN-%"),
+            Invoice.invoice_no.like(doc_prefix("SIN") + "%"),
             func.date(Invoice.payment_date) >= from_date_obj,
             func.date(Invoice.payment_date) <= to_date_obj
         )
@@ -1243,7 +1244,7 @@ async def get_customized_invoices_pdf(
     
     # Query customer invoices
     statement = select(CustomerInvoice).where(
-        CustomerInvoice.invoice_no.like("CIN-%")
+        CustomerInvoice.invoice_no.like(doc_prefix("CIN") + "%")
     )
     result = await db.execute(statement)
     all_invoices = result.scalars().all()
@@ -1428,7 +1429,7 @@ async def get_customized_invoices_excel(
     
     # Query customer invoices
     statement = select(CustomerInvoice).where(
-        CustomerInvoice.invoice_no.like("CIN-%")
+        CustomerInvoice.invoice_no.like(doc_prefix("CIN") + "%")
     )
     result = await db.execute(statement)
     all_invoices = result.scalars().all()
@@ -1566,6 +1567,11 @@ async def get_customized_invoices_excel(
 
 # ==================== EXPENSE REPORT ENDPOINTS ====================
 
+def _tab_amount(value) -> str:
+    """Amount as the Expenses tab shows it (JS number): 900, 1250.5"""
+    return f"{float(value):.2f}".rstrip("0").rstrip(".")
+
+
 @router.get("/expenses/pdf")
 async def get_expenses_pdf(
     from_date: str = Query(...),
@@ -1586,13 +1592,13 @@ async def get_expenses_pdf(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format")
     
-    # Query expenses for date range
+    # Query expenses for date range (same order as the Expenses tab)
     statement = select(Expense).where(
         and_(
             Expense.expense_date >= from_date_obj,
             Expense.expense_date <= to_date_obj
         )
-    )
+    ).order_by(Expense.expense_date.asc(), Expense.created_at.asc())
     result = await db.execute(statement)
     expenses = result.scalars().all()
     
@@ -1600,14 +1606,15 @@ async def get_expenses_pdf(
     expense_rows = ""
     total_amount = 0.0
     
-    for exp in expenses:
+    # Same columns/format as the Expenses tab: ID, Expense, Amount, Date (DD/MM/YYYY), Branch
+    for index, exp in enumerate(expenses, 1):
         expense_rows += f"""
         <tr>
-            <td class="border">{exp.expense_date.strftime('%Y-%m-%d')}</td>
-            <td class="border">{exp.expense_type}</td>
+            <td class="border">{index}</td>
             <td class="border">{exp.expense}</td>
-            <td class="border text-right">{exp.amount:.0f}</td>
-            <td class="border">{exp.branch or 'N/A'}</td>
+            <td class="border">{_tab_amount(exp.amount)}</td>
+            <td class="border">{exp.expense_date.strftime('%d/%m/%Y')}</td>
+            <td class="border">{exp.branch or ''}</td>
         </tr>
         """
         total_amount += float(exp.amount)
@@ -1677,19 +1684,19 @@ async def get_expenses_pdf(
         <table>
             <thead>
                 <tr>
-                    <th style="width: 15%;">Date</th>
-                    <th style="width: 20%;">Expense Type</th>
-                    <th style="width: 35%;">Description</th>
+                    <th style="width: 8%;">ID</th>
+                    <th style="width: 42%;">Expense</th>
                     <th style="width: 15%;">Amount</th>
-                    <th style="width: 15%;">Branch</th>
+                    <th style="width: 15%;">Date</th>
+                    <th style="width: 20%;">Branch</th>
                 </tr>
             </thead>
             <tbody>
                 {expense_rows}
                 <tr class="total-row">
-                    <td class="border" colspan="3" style="text-align: left; font-weight: bold;">TOTAL</td>
-                    <td class="border text-right" style="font-weight: bold;">{total_amount:.0f}</td>
-                    <td class="border"></td>
+                    <td class="border" colspan="2" style="text-align: left; font-weight: bold;">TOTAL</td>
+                    <td class="border" style="font-weight: bold;">{_tab_amount(total_amount)}</td>
+                    <td class="border" colspan="2"></td>
                 </tr>
             </tbody>
         </table>
@@ -1741,13 +1748,13 @@ async def get_expenses_excel(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format")
     
-    # Query expenses for date range
+    # Query expenses for date range (same order as the Expenses tab)
     statement = select(Expense).where(
         and_(
             Expense.expense_date >= from_date_obj,
             Expense.expense_date <= to_date_obj
         )
-    )
+    ).order_by(Expense.expense_date.asc(), Expense.created_at.asc())
     result = await db.execute(statement)
     expenses = result.scalars().all()
     
@@ -1771,11 +1778,12 @@ async def get_expenses_excel(
     )
     
     # Write header
+    # Same columns/format as the Expenses tab: ID, Expense, Amount, Date (DD/MM/YYYY), Branch
     headers = [
-        'Date',
-        'Expense Type',
-        'Description',
+        'ID',
+        'Expense',
         'Amount',
+        'Date',
         'Branch'
     ]
     
@@ -1787,7 +1795,7 @@ async def get_expenses_excel(
         cell.border = thin_border
     
     # Set column widths
-    column_widths = [15, 20, 40, 15, 25]
+    column_widths = [8, 40, 15, 15, 25]
     for col, width in enumerate(column_widths, 1):
         ws.column_dimensions[chr(64 + col)].width = width
     
@@ -1795,16 +1803,16 @@ async def get_expenses_excel(
     row_num = 2
     
     # Write data rows
-    for exp in expenses:
-        ws.cell(row=row_num, column=1, value=exp.expense_date.strftime('%Y-%m-%d')).border = thin_border
-        ws.cell(row=row_num, column=2, value=exp.expense_type).border = thin_border
-        ws.cell(row=row_num, column=3, value=exp.expense).border = thin_border
-        ws.cell(row=row_num, column=4, value=round(float(exp.amount), 2)).border = thin_border
-        ws.cell(row=row_num, column=5, value=exp.branch or 'N/A').border = thin_border
+    for index, exp in enumerate(expenses, 1):
+        ws.cell(row=row_num, column=1, value=index).border = thin_border
+        ws.cell(row=row_num, column=2, value=exp.expense).border = thin_border
+        ws.cell(row=row_num, column=3, value=float(exp.amount)).border = thin_border
+        ws.cell(row=row_num, column=4, value=exp.expense_date.strftime('%d/%m/%Y')).border = thin_border
+        ws.cell(row=row_num, column=5, value=exp.branch or '').border = thin_border
         
         # Apply alignments
         for col in range(1, 6):
-            if col in [4]:  # Amount column
+            if col in [3]:  # Amount column
                 ws.cell(row=row_num, column=col).alignment = right_alignment
             else:
                 ws.cell(row=row_num, column=col).alignment = cell_alignment
@@ -1815,17 +1823,16 @@ async def get_expenses_excel(
     # Write total row
     total_row = row_num
     ws.cell(row=total_row, column=1, value='TOTAL').font = Font(bold=True)
-    ws.cell(row=total_row, column=4, value=round(total_amount, 2)).font = Font(bold=True)
+    ws.cell(row=total_row, column=3, value=round(total_amount, 2)).font = Font(bold=True)
     
     # Merge cells for TOTAL label
-    ws.merge_cells(start_row=total_row, start_column=1, end_row=total_row, end_column=3)
-    ws.merge_cells(start_row=total_row, start_column=5, end_row=total_row, end_column=5)
+    ws.merge_cells(start_row=total_row, start_column=1, end_row=total_row, end_column=2)
     
     # Apply border to total row
     for col in range(1, 6):
         cell = ws.cell(row=total_row, column=col)
         cell.border = thin_border
-        if col > 4:
+        if col > 3:
             cell.value = ''
     
     # Add summary section
@@ -2246,7 +2253,7 @@ async def get_refunds_pdf(
         and_(
             Refund.created_at >= from_date_datetime,
             Refund.created_at <= to_date_datetime,
-            Invoice.invoice_no.like('SIN-%')  # Only walk-in invoices
+            Invoice.invoice_no.like(doc_prefix("SIN") + "%")  # Only walk-in invoices
         )
     ).order_by(Refund.created_at.desc())
     
@@ -2441,7 +2448,7 @@ async def get_refunds_excel(
         and_(
             Refund.created_at >= from_date_datetime,
             Refund.created_at <= to_date_datetime,
-            Invoice.invoice_no.like('SIN-%')  # Only walk-in invoices
+            Invoice.invoice_no.like(doc_prefix("SIN") + "%")  # Only walk-in invoices
         )
     ).order_by(Refund.created_at.desc())
     

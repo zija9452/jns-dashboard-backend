@@ -22,6 +22,9 @@ from ..models.salesman import Salesman
 from ..models.user import User
 from ..models.stock_entry import StockEntry, StockEntryType
 from ..auth.session_auth import admin_cashier_employee_required_from_session, admin_employee_required_from_session
+from ..config.branches import DEFAULT_BRANCH
+from ..database.database import session_factories
+from ..services.branch_transfer import transfer_invoice_stock
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +77,17 @@ async def create_warehouse_invoice(
         except ValueError:
             logger.error(f"Invalid UUID format for customer_id: {customer_id}")
 
+    # Customer mapped to another branch (e.g. Karim Abad): stock goes to that
+    # branch's database instead of the Light House shop (MULTI_BRANCH_PLAN Phase 7)
+    destination_branch = customer_obj.destination_branch if customer_obj else None
+    if destination_branch == DEFAULT_BRANCH:
+        destination_branch = None
+    if destination_branch and destination_branch not in session_factories:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Branch '{destination_branch}' is not configured; cannot transfer stock"
+        )
+
     # Fetch default vendor "J&S Sports"
     vendor_result = await db.execute(select(Vendor).where(Vendor.name == "J&S Sports"))
     js_vendor = vendor_result.scalar_one_or_none()
@@ -107,9 +121,17 @@ async def create_warehouse_invoice(
                     detail=f"Insufficient warehouse stock for '{pro_name}'. Available: {product.warehouse_stock or 0}"
                 )
 
+            # Branch transfer matches the product by barcode in the other DB
+            if destination_branch and not product.barcode:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Product '{pro_name}' has no barcode; add a barcode before transferring to another branch"
+                )
+
             # TRANSFER LOGIC: Warehouse -> Shop
             product.warehouse_stock = (product.warehouse_stock or 0) - quantity
-            product.stock_level = (product.stock_level or 0) + quantity
+            if not destination_branch:
+                product.stock_level = (product.stock_level or 0) + quantity
             db.add(product)
 
             # Stock Entries
@@ -122,15 +144,17 @@ async def create_warehouse_invoice(
             )
             db.add(stock_out)
 
-            stock_in = StockEntry(
-                product_id=product.id,
-                qty=quantity,
-                type=StockEntryType.IN,
-                location="Stock In",
-                vendor_id=js_vendor_id,
-                ref=f"W_INV_TRANSFER_{datetime.now().strftime('%Y%m%d')}"
-            )
-            db.add(stock_in)
+            # Other branch gets its Stock In entry in its own DB (branch_transfer)
+            if not destination_branch:
+                stock_in = StockEntry(
+                    product_id=product.id,
+                    qty=quantity,
+                    type=StockEntryType.IN,
+                    location="Stock In",
+                    vendor_id=js_vendor_id,
+                    ref=f"W_INV_TRANSFER_{datetime.now().strftime('%Y%m%d')}"
+                )
+                db.add(stock_in)
 
             item_total_before_discount = quantity * unit_price
             item_obj = {
@@ -174,9 +198,12 @@ async def create_warehouse_invoice(
         await db.execute(select(func.pg_advisory_lock(123461)))
         try:
             prefix_pattern = "WIN-%"
-            statement = select(func.max(WarehouseInvoice.invoice_no)).where(
+            statement = select(WarehouseInvoice.invoice_no).where(
                 WarehouseInvoice.invoice_no.like(prefix_pattern)
-            )
+            ).order_by(
+                # Numeric max: longer number first, so e.g. WIN-10000 beats WIN-9999
+                func.length(WarehouseInvoice.invoice_no).desc(), WarehouseInvoice.invoice_no.desc()
+            ).limit(1)
             result = await db.execute(statement)
             max_invoice_no = result.scalar_one_or_none()
 
@@ -221,12 +248,24 @@ async def create_warehouse_invoice(
                 payment_method=payment_method,
                 payment_date=payment_date,
                 notes=notes,
+                transfer_status="pending" if destination_branch else None,
                 created_by=current_user.id
             )
             
             db.add(invoice_obj)
             await db.commit()
             await db.refresh(invoice_obj)
+
+            # Invoice is committed; now add the stock in the other branch's DB.
+            # A failure leaves the invoice "pending" for Retry, never undone.
+            transfer_status, transfer_error = invoice_obj.transfer_status, None
+            if destination_branch:
+                try:
+                    transfer_status, transfer_error = await transfer_invoice_stock(db, invoice_obj.id, destination_branch)
+                except Exception as e:
+                    logger.exception(f"Transfer of {invoice_no} to {destination_branch} failed")
+                    await db.rollback()
+                    transfer_status, transfer_error = "pending", str(e)
 
             # Generate PDF receipt
             from .walkin_invoice import generate_walkin_receipt_pdf
@@ -245,9 +284,18 @@ async def create_warehouse_invoice(
                 bill_type="WAREHOUSE RECEIPT"
             )
             
-            return {"pdf": pdf_data, "invoice_no": invoice_no, "invoice_id": str(invoice_obj.id)}
+            return {
+                "pdf": pdf_data,
+                "invoice_no": invoice_no,
+                "invoice_id": str(invoice_obj.id),
+                "transfer_status": transfer_status,
+                "transfer_error": transfer_error,
+            }
         finally:
             await db.execute(select(func.pg_advisory_unlock(123461)))
+    except HTTPException:
+        await db.rollback()
+        raise
     except Exception as e:
         logger.error(f"Error creating warehouse invoice: {str(e)}")
         await db.rollback()
@@ -327,6 +375,8 @@ async def get_all_warehouse_invoices(
             "amount_paid": float(inv.amount_paid),
             "balance_due": float(balance_due),
             "payment_status": inv.payment_status,
+            "transfer_status": inv.transfer_status,
+            "transfer_error": inv.transfer_error,
             "date": inv.payment_date.strftime('%Y-%m-%d') if inv.payment_date else inv.created_at.strftime('%Y-%m-%d'),
             "created_at": inv.created_at.isoformat()
         })
@@ -373,6 +423,8 @@ async def get_customer_invoices(
             "amount_paid": float(inv.amount_paid),
             "balance_due": float(balance_due),
             "payment_status": inv.payment_status,
+            "transfer_status": inv.transfer_status,
+            "transfer_error": inv.transfer_error,
             "date": inv.payment_date.strftime('%Y-%m-%d') if inv.payment_date else inv.created_at.strftime('%Y-%m-%d'),
             "created_at": inv.created_at.isoformat()
         })
@@ -479,6 +531,41 @@ async def process_warehouse_payment(
     await db.refresh(invoice)
 
     return {"message": "Payment processed successfully", "new_balance": float(new_balance_due)}
+
+@router.post("/retry-transfer/{invoice_id}")
+async def retry_warehouse_transfer(
+    invoice_id: str,
+    current_user: User = Depends(admin_cashier_employee_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Retry a pending warehouse -> branch stock transfer. Safe to call twice:
+    the branch DB is checked for this invoice number first, so stock is
+    never added twice.
+    """
+    try:
+        invoice_uuid = uuid.UUID(invoice_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid invoice ID format")
+
+    invoice = await db.get(WarehouseInvoice, invoice_uuid)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Warehouse invoice not found")
+    if invoice.transfer_status != "pending":
+        raise HTTPException(status_code=400, detail=f"Invoice {invoice.invoice_no} has no pending transfer")
+
+    customer = await db.get(WarehouseCustomer, invoice.customer_id) if invoice.customer_id else None
+    destination_branch = customer.destination_branch if customer else None
+    if not destination_branch or destination_branch not in session_factories:
+        raise HTTPException(status_code=400, detail="Destination branch for this invoice is not configured")
+
+    transfer_status, transfer_error = await transfer_invoice_stock(db, invoice.id, destination_branch)
+    if transfer_status != "done":
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Transfer of {invoice.invoice_no} failed: {transfer_error}"
+        )
+    return {"message": f"Stock of {invoice.invoice_no} transferred", "transfer_status": transfer_status}
 
 @router.get("/payment-history/{order_id}")
 async def get_warehouse_payment_history(

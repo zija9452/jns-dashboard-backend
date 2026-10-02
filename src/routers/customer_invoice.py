@@ -13,6 +13,7 @@ import json
 import base64
 
 from ..database.database import get_db
+from ..config.branches import doc_prefix, this_branch, current_branch_name
 from ..models.user import User  # Import User at the top to avoid NameError
 from ..models.customer import Customer
 from ..models.salesman import Salesman
@@ -24,16 +25,14 @@ from ..auth.session_auth import get_current_user_from_session, admin_required_fr
 from ..services.customer_service import CustomerService
 from ..services.salesman_service import SalesmanService
 from ..models.customer import CustomerCreate
+from ..utils.mockup_charges import parse_mockup_charges, mockup_charges_from_totals
 
 router = APIRouter()
-
-_RUSH_DEFAULT_BRANCH = "European Sports Light House"
-
 
 async def _get_customer_invoice_rush_setting(db: AsyncSession):
     from sqlalchemy import select
     result = await db.execute(
-        select(RushPricingSetting).where(RushPricingSetting.branch == _RUSH_DEFAULT_BRANCH)
+        select(RushPricingSetting).where(RushPricingSetting.branch == current_branch_name())
     )
     return result.scalar_one_or_none()
 
@@ -355,11 +354,14 @@ async def save_customer_orders(
         request_data.get('rush_rate_per_piece'), request_data.get('rush_threshold_days')
     )
 
+    # Designing / mockup charge: once per category with 1-4 pcs (see utils/mockup_charges.py).
+    mockup_charges, mockup_total = parse_mockup_charges(request_data.get('mockup_charges'), items_list)
+
     # Calculate net amount (total after all discounts). Discount is tracked
     # (total_discount) but not subtracted here - a pre-existing quirk, not something
-    # this change fixes. Rush *is* added since it's a real amount owed, the same way
-    # quotation.py's _build_totals adds it.
-    net_amount = total_amount + rush_charge
+    # this change fixes. Rush and mockup *are* added since they're real amounts owed,
+    # the same way quotation.py's _build_totals adds them.
+    net_amount = total_amount + rush_charge + mockup_total
 
     # Generate unique sequential invoice number with database-level locking for concurrency safety
     from datetime import datetime
@@ -370,10 +372,13 @@ async def save_customer_orders(
 
     try:
         # Find the highest invoice number globally and increment the sequence
-        prefix_pattern = "CIN-%"
-        statement = select(func.max(CustomerInvoice.invoice_no)).where(
+        prefix_pattern = doc_prefix("CIN") + "%"
+        statement = select(CustomerInvoice.invoice_no).where(
             CustomerInvoice.invoice_no.like(prefix_pattern)
-        )
+        ).order_by(
+            # Numeric max: longer number first, so e.g. CIN-10000 beats CIN-9999
+            func.length(CustomerInvoice.invoice_no).desc(), CustomerInvoice.invoice_no.desc()
+        ).limit(1)
         result = await db.execute(statement)
         max_invoice_no = result.scalar_one_or_none()
 
@@ -396,7 +401,7 @@ async def save_customer_orders(
         else:
             seq_number = "0001"  # Start with 001 if no invoices exist
 
-        invoice_no = f"CIN-{seq_number}"
+        invoice_no = f"{doc_prefix('CIN')}{seq_number}"
 
         # Double-check for uniqueness in case of race conditions and increment if needed
         counter = 0
@@ -409,7 +414,7 @@ async def save_customer_orders(
                 # Invoice number exists, increment and try again
                 next_seq_int = int(seq_number) + 1
                 seq_number = f"{next_seq_int:03d}"
-                invoice_no = f"CIN-{seq_number}"
+                invoice_no = f"{doc_prefix('CIN')}{seq_number}"
                 counter += 1
             else:
                 break  # Found a unique number
@@ -471,12 +476,14 @@ async def save_customer_orders(
                 "tax": 0.0,
                 "discount": total_discount,
                 "rush_charge": float(rush_charge),
-                "total": float(net_amount),  # subtotal + rush (discount not subtracted - pre-existing quirk)
+                "mockup_charge": float(mockup_total),
+                "mockup_charges": mockup_charges,
+                "total": float(net_amount),  # subtotal + rush + mockup (discount not subtracted - pre-existing quirk)
                 "amount_paid": float(calculated_amount_paid),  # Amount actually paid (after discount)
                 "balance_due": float(initial_balance_due),  # Calculate remaining balance
                 "payment_status": payment_status  # Set status based on payment
             }),
-            "total_amount": Decimal(str(net_amount)),  # subtotal + rush
+            "total_amount": Decimal(str(net_amount)),  # subtotal + rush + mockup
             "amount_paid": calculated_amount_paid,  # Amount actually paid (after discount)
             "balance_due": initial_balance_due,  # Calculate remaining balance
             "payment_status": payment_status,  # Set status based on payment
@@ -594,7 +601,8 @@ async def get_invoice_receipt(
         is_rush=invoice.is_rush,
         rush_charge=float(invoice.rush_charge or 0),
         required_by_date=invoice.required_by_date,
-        rush_rate=invoice.rush_rate_snapshot
+        rush_rate=invoice.rush_rate_snapshot,
+        mockup_charges=mockup_charges_from_totals(totals)
     )
 
     # generate_simple_receipt_pdf already returns base64-encoded string, use directly
@@ -605,7 +613,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
                                   total_discount, amount_paid, balance_due, payment_method,
                                   payment_status, created_at, bill_type: str = "SALE RECEIPT",
                                   subtotal=None, is_rush: bool = False, rush_charge: float = 0.0,
-                                  required_by_date=None, rush_rate=None):
+                                  required_by_date=None, rush_rate=None, mockup_charges=None):
     """Generate thermal receipt style PDF using weasyprint (same as customers.py)"""
     
     # Simplify payment method name (e.g., "EasyPaisa Sir Yasir" -> "EasyPaisa")
@@ -668,6 +676,15 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
     # "Rush (300/pc x 10 pcs)" instead of a bare total, so the customer sees it's per piece.
     total_pieces = sum(int(i.get('quantity', 0)) for i in items)
     rush_label = f"Rush ({float(rush_rate):.0f}/pc &times; {total_pieces} pcs)" if rush_rate is not None else "Rush Charge"
+    # One "Mockup (T-shirt)" row per category charged - grows the page like the rush row.
+    from html import escape as _escape
+    mockup_rows = ""
+    for mc in (mockup_charges or []):
+        page_height += 18
+        mockup_rows += (
+            f'<p class="total-row"><span class="total-label">Mockup ({_escape(str(mc.get("category", "")))}):</span>'
+            f'<span class="total-value">+{float(mc.get("amount", 0)):.0f}</span></p>'
+        )
     
     # Create simple HTML for PDF (same pattern as customers.py)
     items_rows = ""
@@ -709,6 +726,13 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
                     logo_html = f'<div style="text-align:center;margin:5px 0;">{svg_content}</div>'
     except Exception as e:
         logo_html = '🏆'
+
+    # Shop contact/address from the branch config (empty -> line omitted)
+    shop = this_branch()
+    contact_html = "".join(
+        f'<p class="contact">{line}</p>'
+        for line in ([f"Contact: {shop.contact}"] if shop.contact else []) + ([shop.address] if shop.address else [])
+    )
 
     html_content = f"""
     <!DOCTYPE html>
@@ -877,8 +901,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             <div class="logo">
                 {logo_html}
             </div>
-            <p class="contact">Contact: 0315-2263745</p>
-            <p class="contact">Shop#8, Mazar Wali Gali, Light House, Khi</p>
+            {contact_html}
         </div>
         <div class="info">
             <p><strong>Date:</strong> {current_date}</p>
@@ -907,6 +930,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             <p class="total-row"><span class="total-label">Item Discount:</span><span class="total-value">0</span></p>
             <p class="total-row"><span class="total-label">Total Discount(Rs):</span><span class="total-value">{total_discount:.0f}</span></p>
             {f'<p class="total-row"><span class="total-label">{rush_label}:</span><span class="total-value">+{rush_charge:.0f}</span></p>' if rush_charge > 0 else ''}
+            {mockup_rows}
             <p class="total-row"><span class="total-label">Grand Total:</span><span class="total-value">{total_amount:.0f}</span></p>
             <p class="total-row"><span class="total-label">Amount Paid:</span><span class="total-value">{amount_paid:.0f}</span></p>
             <p class="total-row"><span class="total-label">Balance:</span><span class="total-value">-{balance_due:.0f}</span></p>
@@ -1146,6 +1170,9 @@ async def get_order(
         "subtotal": totals_data.get('subtotal', 0.0),
         "tax": totals_data.get('tax', 0.0),
         "discount": totals_data.get('discount', 0.0),
+        # Shown on the order view so subtotal + rush + mockup adds up to the total.
+        "rush_charge": float(invoice_record.rush_charge or 0),
+        "mockup_charges": mockup_charges_from_totals(totals_data),
         "total": float(invoice_record.total_amount) if invoice_record.total_amount else 0.0,
         "amount_paid": float(invoice_record.amount_paid) if invoice_record.amount_paid else 0.0,
         "balance_due": float(invoice_record.balance_due) if invoice_record.balance_due else 0.0,

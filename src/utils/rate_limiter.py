@@ -5,6 +5,8 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 import hashlib
 import redis
+from redis.backoff import ExponentialBackoff
+from redis.retry import Retry
 import os
 from functools import wraps
 
@@ -17,7 +19,16 @@ class RateLimiter:
         # Try to connect to Redis for distributed rate limiting
         redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
         try:
-            self.redis_client = redis.from_url(redis_url, decode_responses=True)
+            # Upstash closes idle connections; health checks + retry reconnect
+            # instead of failing the first request on a dead socket.
+            self.redis_client = redis.from_url(
+                redis_url,
+                decode_responses=True,
+                health_check_interval=30,
+                socket_keepalive=True,
+                retry=Retry(ExponentialBackoff(), 2),
+                retry_on_error=[redis.exceptions.ConnectionError, redis.exceptions.TimeoutError],
+            )
             self.use_redis = True
         except:
             self.requests = defaultdict(list)  # IP -> list of request timestamps

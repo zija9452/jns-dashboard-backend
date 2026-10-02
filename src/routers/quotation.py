@@ -10,6 +10,7 @@ import json
 import base64
 
 from ..database.database import get_db
+from ..config.branches import doc_prefix, current_branch_name
 from ..models.user import User
 from ..models.customer import Customer
 from ..models.quotation import (
@@ -19,10 +20,10 @@ from ..models.quotation import (
 from ..models.customer_invoice import CustomerInvoice, CustomerInvoiceStatus
 from ..models.rush_pricing import RushPricingSetting
 from ..auth.session_auth import admin_required_from_session
+from ..utils.mockup_charges import parse_mockup_charges, mockup_charges_from_totals
 
 router = APIRouter(prefix="/quotation", tags=["Quotation"])
 
-DEFAULT_BRANCH = "European Sports Light House"
 
 
 def _parse_items(items_json: str) -> list:
@@ -75,7 +76,7 @@ def _parse_items(items_json: str) -> list:
 
 async def _get_rush_setting(db: AsyncSession) -> Optional[RushPricingSetting]:
     result = await db.execute(
-        select(RushPricingSetting).where(RushPricingSetting.branch == DEFAULT_BRANCH)
+        select(RushPricingSetting).where(RushPricingSetting.branch == current_branch_name())
     )
     return result.scalar_one_or_none()
 
@@ -121,7 +122,12 @@ async def _generate_quotation_no(db: AsyncSession) -> str:
     lock_statement = select(func.pg_advisory_lock(654321))
     await db.execute(lock_statement)
     try:
-        statement = select(func.max(Quotation.quotation_no)).where(Quotation.quotation_no.like("QUO-%"))
+        statement = select(Quotation.quotation_no).where(
+            Quotation.quotation_no.like(doc_prefix("QUO") + "%")
+        ).order_by(
+            # Numeric max: longer number first, so e.g. QUO-10000 beats QUO-9999
+            func.length(Quotation.quotation_no).desc(), Quotation.quotation_no.desc()
+        ).limit(1)
         result = await db.execute(statement)
         max_no = result.scalar_one_or_none()
 
@@ -132,14 +138,14 @@ async def _generate_quotation_no(db: AsyncSession) -> str:
         else:
             seq_number = "0001"
 
-        quotation_no = f"QUO-{seq_number}"
+        quotation_no = f"{doc_prefix('QUO')}{seq_number}"
 
         counter = 0
         while counter < 100:
             check = await db.execute(select(Quotation).where(Quotation.quotation_no == quotation_no))
             if check.scalar_one_or_none():
                 seq_number = f"{int(seq_number) + 1:04d}"
-                quotation_no = f"QUO-{seq_number}"
+                quotation_no = f"{doc_prefix('QUO')}{seq_number}"
                 counter += 1
             else:
                 break
@@ -152,12 +158,15 @@ async def _generate_quotation_no(db: AsyncSession) -> str:
         await db.execute(select(func.pg_advisory_unlock(654321)))
 
 
-def _build_totals(subtotal: Decimal, discount: Decimal, rush_charge: Decimal) -> dict:
-    total = subtotal - discount + rush_charge
+def _build_totals(subtotal: Decimal, discount: Decimal, rush_charge: Decimal,
+                  mockup_charges: list, mockup_total: Decimal) -> dict:
+    total = subtotal - discount + rush_charge + mockup_total
     return {
         "subtotal": float(subtotal),
         "discount": float(discount),
         "rush_charge": float(rush_charge),
+        "mockup_charge": float(mockup_total),
+        "mockup_charges": mockup_charges,
         "tax": 0.0,
         "total": float(total),
     }
@@ -172,6 +181,7 @@ async def create_quotation(
     items_list, subtotal = _parse_items(quotation_data.items)
     total_pieces = sum(i["quantity"] for i in items_list)
     discount = quotation_data.discounts or Decimal("0.00")
+    mockup_charges, mockup_total = parse_mockup_charges(quotation_data.mockup_charges, items_list)
 
     is_rush, rate_snapshot, threshold_snapshot, rush_charge = await _compute_rush(
         db, quotation_data.required_by_date, total_pieces,
@@ -185,7 +195,7 @@ async def create_quotation(
             raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Customer not found")
 
     quotation_no = await _generate_quotation_no(db)
-    total_amount = subtotal - discount + rush_charge
+    total_amount = subtotal - discount + rush_charge + mockup_total
 
     quotation = Quotation(
         quotation_no=quotation_no,
@@ -194,7 +204,7 @@ async def create_quotation(
         team_name=quotation_data.team_name,
         salesman_id=quotation_data.salesman_id,
         items=json.dumps(items_list),
-        totals=json.dumps(_build_totals(subtotal, discount, rush_charge)),
+        totals=json.dumps(_build_totals(subtotal, discount, rush_charge, mockup_charges, mockup_total)),
         total_amount=total_amount,
         taxes=Decimal("0.00"),
         discounts=discount,
@@ -221,6 +231,8 @@ async def create_quotation(
         "rush_charge": float(quotation.rush_charge),
         "rush_rate_per_piece": float(rate_snapshot) if rate_snapshot is not None else None,
         "total_pieces": total_pieces,
+        "mockup_charge": float(mockup_total),
+        "mockup_charges": mockup_charges,
         "total_amount": float(quotation.total_amount),
     }
 
@@ -336,6 +348,12 @@ async def update_quotation(
         items_list = json.loads(quotation.items)
         subtotal = sum(Decimal(str(i["total_price"])) for i in items_list)
 
+    # Keep the saved mockup charges unless new ones are sent - re-checked against the
+    # (possibly changed) items, so a category that now has 5+ pcs can't keep its charge.
+    saved_totals = json.loads(quotation.totals) if quotation.totals else {}
+    mockup_raw = update_data.mockup_charges if update_data.mockup_charges is not None else mockup_charges_from_totals(saved_totals)
+    mockup_charges, mockup_total = parse_mockup_charges(mockup_raw, items_list)
+
     if update_data.required_by_date is not None:
         quotation.required_by_date = update_data.required_by_date
     if update_data.valid_until is not None:
@@ -359,8 +377,8 @@ async def update_quotation(
     quotation.rush_rate_snapshot = rate_snapshot
     quotation.rush_threshold_snapshot = threshold_snapshot
     quotation.rush_charge = rush_charge
-    quotation.totals = json.dumps(_build_totals(subtotal, discount, rush_charge))
-    quotation.total_amount = subtotal - discount + rush_charge
+    quotation.totals = json.dumps(_build_totals(subtotal, discount, rush_charge, mockup_charges, mockup_total))
+    quotation.total_amount = subtotal - discount + rush_charge + mockup_total
     quotation.revision += 1
     quotation.updated_at = datetime.now()
 
@@ -452,7 +470,12 @@ async def convert_quotation_to_order(
     lock_statement = select(func.pg_advisory_lock(123456))
     await db.execute(lock_statement)
     try:
-        statement = select(func.max(CustomerInvoice.invoice_no)).where(CustomerInvoice.invoice_no.like("CIN-%"))
+        statement = select(CustomerInvoice.invoice_no).where(
+            CustomerInvoice.invoice_no.like(doc_prefix("CIN") + "%")
+        ).order_by(
+            # Numeric max: longer number first, so e.g. CIN-10000 beats CIN-9999
+            func.length(CustomerInvoice.invoice_no).desc(), CustomerInvoice.invoice_no.desc()
+        ).limit(1)
         result = await db.execute(statement)
         max_invoice_no = result.scalar_one_or_none()
 
@@ -463,13 +486,13 @@ async def convert_quotation_to_order(
         else:
             seq_number = "0001"
 
-        invoice_no = f"CIN-{seq_number}"
+        invoice_no = f"{doc_prefix('CIN')}{seq_number}"
         counter = 0
         while counter < 100:
             check = await db.execute(select(CustomerInvoice).where(CustomerInvoice.invoice_no == invoice_no))
             if check.scalar_one_or_none():
                 seq_number = f"{int(seq_number) + 1:04d}"
-                invoice_no = f"CIN-{seq_number}"
+                invoice_no = f"{doc_prefix('CIN')}{seq_number}"
                 counter += 1
             else:
                 break
@@ -508,6 +531,8 @@ async def convert_quotation_to_order(
                 "tax": 0.0,
                 "discount": totals.get("discount", 0.0),
                 "rush_charge": totals.get("rush_charge", 0.0),
+                "mockup_charge": totals.get("mockup_charge", 0.0),
+                "mockup_charges": mockup_charges_from_totals(totals),
                 "total": float(quotation.total_amount),
                 "amount_paid": 0.0,
                 "balance_due": float(quotation.total_amount),
@@ -617,11 +642,18 @@ def _build_quotation_pdf_html(quotation: Quotation) -> str:
             f'<div class="sub">Rs. {money(rate)} per piece &times; {total_pieces} pcs</div>' if rate is not None else ""
         )
         total_rows += f'<tr class="rush"><td>Rush Charge{rush_detail}</td><td class="r">+ {money(quotation.rush_charge)}</td></tr>'
+    for mc in mockup_charges_from_totals(totals):
+        total_rows += (
+            f'<tr><td>Designing / Mockup - {escape(str(mc.get("category", "")))}'
+            f'<div class="sub" style="color:#6B7280;">{int(mc.get("pieces", 0))} pcs (under 5) &middot; once for this item</div></td>'
+            f'<td class="r">+ {money(mc.get("amount"))}</td></tr>'
+        )
 
     status = getattr(quotation.status, "value", quotation.status)
     rush_badge = '<span class="badge badge-rush">RUSH ORDER</span>' if quotation.is_rush else ""
     logo = _quotation_logo_data_uri()
     logo_html = f'<img class="logo" src="{logo}">' if logo else ""
+    shop_name = escape(current_branch_name())
     team = f'<div class="muted">Team: <b>{escape(quotation.team_name)}</b></div>' if quotation.team_name else ""
     notes_html = (
         f'<div class="notes"><div class="label">Notes</div>{escape(quotation.notes)}</div>' if quotation.notes else ""
@@ -642,7 +674,7 @@ def _build_quotation_pdf_html(quotation: Quotation) -> str:
     @page {{
         size: A4;
         margin: 14mm 12mm 18mm 12mm;
-        @bottom-left {{ content: "European Sports Light House  |  {escape(quotation.quotation_no)}"; font-size: 8px; color: #6B7280; }}
+        @bottom-left {{ content: "{shop_name}  |  {escape(quotation.quotation_no)}"; font-size: 8px; color: #6B7280; }}
         @bottom-right {{ content: "Page " counter(page) " of " counter(pages); font-size: 8px; color: #6B7280; }}
     }}
     * {{ box-sizing: border-box; }}
@@ -713,7 +745,7 @@ def _build_quotation_pdf_html(quotation: Quotation) -> str:
     <div class="header">
         <div class="brand">
             {logo_html}
-            <div class="company">European Sports Light House</div>
+            <div class="company">{shop_name}</div>
             <div class="tagline">Custom Sportswear &amp; Team Kits</div>
         </div>
         <div class="doc">
@@ -764,7 +796,7 @@ def _build_quotation_pdf_html(quotation: Quotation) -> str:
         </div>
     </div>
 
-    <div class="thanks">Thank you for choosing European Sports Light House.</div>
+    <div class="thanks">Thank you for choosing {shop_name}.</div>
 </div>
 </body>
 </html>"""

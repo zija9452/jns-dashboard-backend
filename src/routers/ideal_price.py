@@ -11,8 +11,10 @@ from ..models.ideal_price import (
     IdealPrice,
     IdealPriceCreate,
     IdealPriceUpdate,
-    IdealPriceRead
+    IdealPriceRead,
+    IdealPriceBulkSave
 )
+from ..models.price_modifier import PriceModifier, AdjustmentType
 from ..models.user import User
 from ..auth.session_auth import employee_required_from_session
 
@@ -67,6 +69,106 @@ async def create_ideal_price(
     await db.refresh(db_price)
 
     return db_price
+
+
+@router.post("/bulk")
+async def save_ideal_prices_bulk(
+    data: IdealPriceBulkSave,
+    current_user: User = Depends(employee_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Create or update many prices - and price modifiers - of one category in a single
+    request and a single transaction: all saved, or none (an invalid entry rejects the
+    whole request). Same upsert rules as POST /ideal-pricing/ (one row per category,
+    combination, min_qty) and POST /price-modifiers/ (one per category, sub_category,
+    option).
+    """
+    if not data.entries and not data.modifiers:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No prices to save")
+
+    wanted_modifiers: dict = {}
+    for m in data.modifiers:
+        if not m.sub_category or not m.option_value:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Each modifier needs a sub-category and an option")
+        if m.adjustment_type == AdjustmentType.MULTIPLY and m.value <= 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Multiply value must be more than 0 ({m.sub_category}: {m.option_value})")
+        wanted_modifiers[(m.sub_category, m.option_value)] = m
+
+    # Validate everything first; a combination+tier sent twice keeps the last value.
+    wanted: dict = {}
+    for entry in data.entries:
+        if not entry.options_combination:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Each price needs an options combination")
+        if entry.min_qty < 1:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid quantity tier for {entry.options_combination}")
+        if entry.price < 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Price cannot be negative ({entry.options_combination})")
+        wanted[(entry.options_combination, entry.min_qty)] = entry.price
+
+    # One query for every existing price row this request touches.
+    existing = {}
+    if wanted:
+        result = await db.execute(
+            select(IdealPrice).where(
+                IdealPrice.category_id == data.category_id,
+                IdealPrice.options_combination.in_({combo for combo, _ in wanted})
+            )
+        )
+        existing = {(p.options_combination, p.min_qty): p for p in result.scalars().all()}
+
+    now = datetime.now()
+
+    # Modifiers: one query for the category's existing ones, then upsert.
+    modifiers_saved = 0
+    if wanted_modifiers:
+        result = await db.execute(select(PriceModifier).where(PriceModifier.category_id == data.category_id))
+        existing_modifiers = {(m.sub_category, m.option_value): m for m in result.scalars().all()}
+        for key, m in wanted_modifiers.items():
+            row = existing_modifiers.get(key)
+            if row:
+                row.adjustment_type = m.adjustment_type
+                row.value = m.value
+                row.updated_at = now
+                db.add(row)
+            else:
+                db.add(PriceModifier(
+                    category_id=data.category_id,
+                    sub_category=m.sub_category,
+                    option_value=m.option_value,
+                    adjustment_type=m.adjustment_type,
+                    value=m.value,
+                ))
+            modifiers_saved += 1
+
+    created = updated = 0
+    for (combo, min_qty), price in wanted.items():
+        row = existing.get((combo, min_qty))
+        if row:
+            row.price = price
+            row.branch = data.branch
+            row.updated_at = now
+            db.add(row)
+            updated += 1
+        else:
+            db.add(IdealPrice(
+                category_id=data.category_id,
+                options_combination=combo,
+                min_qty=min_qty,
+                price=price,
+                branch=data.branch
+            ))
+            created += 1
+
+    await db.commit()
+
+    return {
+        "success": True,
+        "saved": created + updated,
+        "created": created,
+        "updated": updated,
+        "modifiers_saved": modifiers_saved,
+    }
 
 
 @router.get("/")

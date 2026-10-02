@@ -1,9 +1,12 @@
 from sqlmodel import SQLModel, Field
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from decimal import Decimal
 import uuid
 from sqlalchemy import Column, Numeric
+
+from .price_modifier import AdjustmentType
+from ..config.branches import current_branch_name
 
 
 class IdealPrice(SQLModel, table=True):
@@ -14,7 +17,7 @@ class IdealPrice(SQLModel, table=True):
     options_combination: str = Field(max_length=500, index=True)  # e.g., "Round Neck|Half|Polyzone 130gsm"
     min_qty: int = Field(default=1, index=True)  # Quantity tier this price applies from (1 = per-piece, 5 = bulk 5+, etc.)
     price: float = Field(sa_column=Column(Numeric(10, 2), nullable=False))
-    branch: str = Field(max_length=100, default="European Sports Light House")
+    branch: str = Field(max_length=100, default_factory=current_branch_name)
     created_at: datetime = Field(default_factory=lambda: datetime.now())
     updated_at: datetime = Field(default_factory=lambda: datetime.now())
 
@@ -24,7 +27,31 @@ class IdealPriceCreate(SQLModel):
     options_combination: str
     min_qty: Optional[int] = 1
     price: float
-    branch: Optional[str] = "European Sports Light House"
+    branch: Optional[str] = Field(default_factory=current_branch_name)
+
+
+class IdealPriceBulkEntry(SQLModel):
+    options_combination: str
+    min_qty: int = 1
+    price: float
+
+
+class PriceModifierBulkEntry(SQLModel):
+    sub_category: str
+    option_value: str
+    adjustment_type: AdjustmentType = AdjustmentType.FLAT
+    value: Decimal
+
+
+class IdealPriceBulkSave(SQLModel):
+    """
+    Many prices - and the category's price modifiers - of one category in one request
+    ("Save All" / one row's tiers). Saved in one transaction: all or nothing.
+    """
+    category_id: uuid.UUID
+    entries: List[IdealPriceBulkEntry] = []
+    modifiers: List[PriceModifierBulkEntry] = []
+    branch: Optional[str] = Field(default_factory=current_branch_name)
 
 
 class IdealPriceUpdate(SQLModel):

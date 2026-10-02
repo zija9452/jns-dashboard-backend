@@ -73,7 +73,7 @@ async def get_expenses(
     total_count = len(count_result.scalars().all())
 
     # Apply pagination and order by expense_date ascending (oldest first)
-    statement = base_statement.order_by(Expense.expense_date.asc()).offset(skip).limit(limit)
+    statement = base_statement.order_by(Expense.expense_date.asc(), Expense.created_at.asc()).offset(skip).limit(limit)
     result = await db.execute(statement)
     expenses = result.scalars().all()
 
