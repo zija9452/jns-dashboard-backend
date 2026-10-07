@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 import os
 from decimal import Decimal
 
-from src.routers import auth, users, products, customers, vendors, salesman, salesman_attendance, stock, expenses, customer_invoice, refunds, admin, pos, walkin_invoice, walkin_refund, category, brand, expense_type, sales_view, duplicate_bill, customer_category, ideal_price, rush_pricing, quotation, price_modifier, warehouse_stock, warehouse_customers, warehouse_vendors, warehouse_invoice, warehouse_sales_view, shop_order, demand, demand_category, demand_item, tournament
+from src.routers import auth, users, products, customers, vendors, salesman, salesman_attendance, stock, expenses, customer_invoice, refunds, admin, pos, walkin_invoice, walkin_refund, category, brand, expense_type, sales_view, duplicate_bill, customer_category, ideal_price, rush_pricing, dtf_pricing, quotation, price_modifier, warehouse_stock, warehouse_customers, warehouse_vendors, warehouse_invoice, warehouse_sales_view, shop_order, demand, demand_category, demand_item, tournament, cash_deposit
 from src.utils.error_handlers import setup_error_handlers
 from src.middleware.security import SecurityHeadersMiddleware
 from src.utils.metrics import MetricsMiddleware, start_metrics_server
@@ -208,6 +208,7 @@ app.include_router(duplicate_bill.router, prefix="/duplicatebill", tags=["duplic
 app.include_router(customer_category.router, tags=["customer-category"])
 app.include_router(ideal_price.router, tags=["ideal-pricing"])
 app.include_router(rush_pricing.router, tags=["rush-pricing"])
+app.include_router(dtf_pricing.router, tags=["dtf-pricing"])
 app.include_router(quotation.router, tags=["quotation"])
 app.include_router(price_modifier.router, tags=["price-modifiers"])
 app.include_router(warehouse_stock.router, tags=["warehouse-stock"])
@@ -220,6 +221,7 @@ app.include_router(demand.router, prefix="/demand", tags=["demand"])
 app.include_router(demand_category.router, tags=["demand-category"])
 app.include_router(demand_item.router, tags=["demand-item"])
 app.include_router(tournament.router, prefix="/tournament", tags=["tournament"])
+app.include_router(cash_deposit.router, tags=["cash-deposits"])
 
 if __name__ == "__main__":
     import uvicorn

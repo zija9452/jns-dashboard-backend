@@ -1,6 +1,11 @@
 # Pending: DTF category in Quotation (auto layout + price by roll length)
 
-Status: **Pending** - no code changed yet.
+Status: **Done (2026-10-02), as a different design** - DTF is not its own category. It is an
+optional "DTF logos" box on Hoodie / Jacket lines (customer_categories.dtf_enabled), priced per
+0.5 m of a 23" roll, rule on the Ideal Pricing page (dtf_pricing_settings), saved layout shown to
+the designer on the Invoice Details page. Code: frontend lib/dtfLayout.ts, components/DtfLogos.tsx,
+backend utils/dtf_charges.py, routers/dtf_pricing.py, migration add_dtf_logos.py. The rest of this
+file is the original (superseded) proposal.
 
 ## 1. The problem
 

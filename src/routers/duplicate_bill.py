@@ -313,8 +313,9 @@ async def get_duplicate_invoice(
         # Parse items
         items_data = json.loads(invoice.items) if invoice.items else []
 
-        from .customer_invoice import generate_simple_receipt_pdf
+        from .customer_invoice import generate_simple_receipt_pdf, initial_payment_snapshot
         from ..utils.mockup_charges import mockup_charges_from_totals
+        from ..utils.dtf_charges import dtf_charges_from_totals
 
         # invoice.total_amount already has rush baked in - pull the plain item
         # subtotal back out of totals JSON so the duplicate bill can show them as
@@ -328,9 +329,8 @@ async def get_duplicate_invoice(
             items=items_data,
             total_amount=float(invoice.total_amount),
             total_discount=float(invoice.discounts or 0),
-            amount_paid=float(invoice.amount_paid),
-            balance_due=float(invoice.balance_due),
-            payment_method=invoice.payment_method,
+            # Same bill as the original receipt - later payments don't change it.
+            **initial_payment_snapshot(invoice, invoice_totals),
             payment_status=invoice.payment_status,
             created_at=invoice.created_at,
             bill_type="DUPLICATE BILL",
@@ -339,7 +339,8 @@ async def get_duplicate_invoice(
             rush_charge=float(invoice.rush_charge or 0),
             required_by_date=invoice.required_by_date,
             rush_rate=invoice.rush_rate_snapshot,
-            mockup_charges=mockup_charges_from_totals(invoice_totals)
+            mockup_charges=mockup_charges_from_totals(invoice_totals),
+            dtf_charges=dtf_charges_from_totals(invoice_totals)
         )
 
     else:

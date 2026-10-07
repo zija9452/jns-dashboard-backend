@@ -21,6 +21,27 @@ from ..auth.session_auth import employee_required_from_session, employee_order_b
 router = APIRouter(prefix="/customer-category", tags=["Customer Category"])
 
 
+def _sub_category_dict(sc) -> dict:
+    """One sub-category as stored in / returned from the JSONB column (dict or schema in).
+    dye_options keeps only options that still exist in this sub-category."""
+    if not isinstance(sc, dict):
+        sc = sc.model_dump()
+    options = sc.get("options") or []
+    return {
+        "sub_category": sc["sub_category"],
+        "options": options,
+        "is_modifier": sc.get("is_modifier", False),
+        "is_optional": sc.get("is_optional", False),
+        "dye_options": [o for o in (sc.get("dye_options") or []) if o in options],
+    }
+
+
+def _check_dye_rates(single, qty) -> None:
+    for label, value in (("1-4 pcs", single), ("5-15 pcs", qty)):
+        if value is not None and value < 1:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Dye rate for {label} must be 1 or more")
+
+
 @router.post("/", response_model=CustomerCategoryRead)
 async def create_customer_category(
     category: CustomerCategoryCreate,
@@ -47,24 +68,20 @@ async def create_customer_category(
         )
 
     # Convert sub_categories to list of dicts for JSONB storage (with proper key order)
-    sub_categories_data = [
-        {
-            "sub_category": sc.sub_category,
-            "options": sc.options,
-            "is_modifier": sc.is_modifier,
-            "is_optional": sc.is_optional
-        }
-        for sc in category.sub_categories
-    ]
+    sub_categories_data = [_sub_category_dict(sc) for sc in category.sub_categories]
+    _check_dye_rates(category.dye_rate_single, category.dye_rate_qty)
 
     if category.mockup_charge is not None and category.mockup_charge < 0:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mockup charge cannot be negative")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Flat charges cannot be negative")
 
     db_category = CustomerCategory(
         main_category=category.main_category,
         sub_categories=sub_categories_data,
         branch=category.branch,
-        mockup_charge=category.mockup_charge
+        mockup_charge=category.mockup_charge,
+        dtf_enabled=category.dtf_enabled,
+        dye_rate_single=category.dye_rate_single,
+        dye_rate_qty=category.dye_rate_qty
     )
 
     db.add(db_category)
@@ -115,16 +132,11 @@ async def get_customer_categories(
             {
                 "id": str(cat.id),
                 "main_category": cat.main_category,
-                "sub_categories": [
-                    {
-                        "sub_category": sc["sub_category"],
-                        "options": sc["options"],
-                        "is_modifier": sc.get("is_modifier", False),
-                        "is_optional": sc.get("is_optional", False)
-                    }
-                    for sc in cat.sub_categories
-                ],
+                "sub_categories": [_sub_category_dict(sc) for sc in cat.sub_categories],
                 "branch": cat.branch or "",
+                "dtf_enabled": bool(cat.dtf_enabled),
+                "dye_rate_single": float(cat.dye_rate_single),
+                "dye_rate_qty": float(cat.dye_rate_qty),
                 "created_at": cat.created_at.isoformat() if cat.created_at else None
             }
             for cat in categories
@@ -210,19 +222,16 @@ async def get_grouped_customer_categories(
         {
             "id": str(cat.id),
             "main_category": cat.main_category,
-            "sub_categories": [
-                {
-                    "sub_category": sc["sub_category"],
-                    "options": sc["options"],
-                    "is_modifier": sc.get("is_modifier", False),
-                    "is_optional": sc.get("is_optional", False)
-                }
-                for sc in cat.sub_categories
-            ],
+            "sub_categories": [_sub_category_dict(sc) for sc in cat.sub_categories],
             "ideal_prices": prices_by_category.get(cat.id, {}),
             "modifiers": modifiers_by_category.get(cat.id, {}),
             # None = no mockup charge for this category
-            "mockup_charge": float(cat.mockup_charge) if cat.mockup_charge is not None else None
+            "mockup_charge": float(cat.mockup_charge) if cat.mockup_charge is not None else None,
+            # True = the DTF logos box shows for this category (Hoodie, Jacket)
+            "dtf_enabled": bool(cat.dtf_enabled),
+            # Dye lines' rate multiplier: 1-4 pcs / 5-15 pcs of dye (16+ = normal)
+            "dye_rate_single": float(cat.dye_rate_single),
+            "dye_rate_qty": float(cat.dye_rate_qty)
         }
         for cat in categories
     ]
@@ -272,35 +281,18 @@ async def update_customer_category(
 
     update_data = category_update.model_dump(exclude_unset=True)
     if update_data.get('mockup_charge') is not None and update_data['mockup_charge'] < 0:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mockup charge cannot be negative")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Flat charges cannot be negative")
+    if update_data.get('dtf_enabled', False) is None:
+        update_data.pop('dtf_enabled')  # column is NOT NULL - null means "leave as is"
+    for key in ('dye_rate_single', 'dye_rate_qty'):
+        if key in update_data and update_data[key] is None:
+            update_data.pop(key)  # NOT NULL - null means "leave as is"
+    _check_dye_rates(update_data.get('dye_rate_single'), update_data.get('dye_rate_qty'))
 
     # Convert sub_categories to list of dicts if present
     # Keep the order: sub_category first, then options
     if 'sub_categories' in update_data and update_data['sub_categories']:
-        sub_cats = update_data['sub_categories']
-        # Check if items are dicts (from JSON) or Pydantic models
-        if isinstance(sub_cats[0], dict):
-            # Already dicts from JSON, just ensure proper order
-            update_data['sub_categories'] = [
-                {
-                    "sub_category": sc["sub_category"],
-                    "options": sc["options"],
-                    "is_modifier": sc.get("is_modifier", False),
-                    "is_optional": sc.get("is_optional", False)
-                }
-                for sc in sub_cats
-            ]
-        else:
-            # Pydantic models
-            update_data['sub_categories'] = [
-                {
-                    "sub_category": sc.sub_category,
-                    "options": sc.options,
-                    "is_modifier": sc.is_modifier,
-                    "is_optional": sc.is_optional
-                }
-                for sc in sub_cats
-            ]
+        update_data['sub_categories'] = [_sub_category_dict(sc) for sc in update_data['sub_categories']]
 
     for field, value in update_data.items():
         setattr(category, field, value)

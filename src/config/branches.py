@@ -16,7 +16,12 @@ class Branch:
     code: str  # Value stored in the `branch` cookie
     name: str  # Display name (login dropdown, top bar)
     db_env: str  # Env var holding this branch's DATABASE_URL
-    invoice_prefix: str  # Prepended to SIN-/CIN-/QUO- numbers ("" keeps Light House numbering unchanged)
+    # Document number prefixes (a "-" and the 4-digit number follow). Each must not be
+    # the start of another one + "-", since reports filter by LIKE '<prefix>-%'.
+    walkin_prefix: str     # walk-in sale (SIN)
+    customer_prefix: str   # customer invoice / order (CIN)
+    quotation_prefix: str  # quotation (QUO)
+    deposit_prefix: str    # cash deposit to bank (DEP)
     barcode_prefix: str  # First 3 digits of generated barcodes; differs per branch so two shops never print the same barcode
     contact: str = ""  # Receipt header phone; empty -> line not printed
     address: str = ""  # Receipt header address; empty -> line not printed
@@ -31,7 +36,10 @@ BRANCHES: Dict[str, Branch] = {
         code="lighthouse",
         name="European Sports Light House",
         db_env="DATABASE_URL",
-        invoice_prefix="",
+        walkin_prefix="SIN",
+        customer_prefix="CIN",
+        quotation_prefix="QUO",
+        deposit_prefix="DEP",
         barcode_prefix="690",
         contact="0315-2263745",
         address="Shop#8, Mazar Wali Gali, Light House, Khi",
@@ -40,7 +48,11 @@ BRANCHES: Dict[str, Branch] = {
         code="karimabad",
         name="European Sports Karim Abad",
         db_env="DATABASE_URL_KARIMABAD",
-        invoice_prefix="K",
+        # 2026-10-02: EK-0001 walk-in, EKC-0001 customer order (were KSIN- / KCIN-, no KA invoices yet)
+        walkin_prefix="EK",
+        customer_prefix="EKC",
+        quotation_prefix="KQUO",
+        deposit_prefix="KDEP",
         barcode_prefix="691",
         # TEMP (2026-10-02): Light House contact/address until the manager confirms Karim Abad's
         contact="0315-2263745",
@@ -70,9 +82,17 @@ def current_branch_name() -> str:
 
 
 def doc_prefix(doc_type: str) -> str:
-    """Number prefix for the current branch: doc_prefix("SIN") -> "SIN-" in
-    Light House, "KSIN-" in Karim Abad. doc_type: SIN, CIN, QUO."""
-    return f"{this_branch().invoice_prefix}{doc_type}-"
+    """Number prefix for the current branch. doc_type: SIN (walk-in), CIN (customer
+    invoice), QUO (quotation), DEP (cash deposit). Light House: SIN- / CIN- / QUO- / DEP-;
+    Karim Abad: EK- / EKC- / KQUO- / KDEP-."""
+    branch = this_branch()
+    prefixes = {
+        "SIN": branch.walkin_prefix,
+        "CIN": branch.customer_prefix,
+        "QUO": branch.quotation_prefix,
+        "DEP": branch.deposit_prefix,
+    }
+    return f"{prefixes[doc_type]}-"
 
 
 def get_branch(code: Optional[str]) -> Optional[Branch]:

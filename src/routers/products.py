@@ -772,12 +772,26 @@ async def delete_product(
             detail="Invalid product ID format"
         )
 
+    # Remember the image so it can be removed from Cloudinary after the delete
+    existing = await ProductService.get_product(db, product_uuid)
+    image_url = existing.attributes if existing and existing.attributes else ""
+
     success = await ProductService.delete_product(db, product_uuid, str(current_user.id))
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Product not found"
         )
+
+    # Delete the image from Cloudinary, unless another product still uses the same URL
+    if "res.cloudinary.com" in image_url:
+        still_used = (await db.execute(
+            select(Product.id).where(Product.attributes == image_url).limit(1)
+        )).first()
+        public_id = CloudinaryService.get_public_id_from_url(image_url)
+        if public_id and not still_used:
+            if not await CloudinaryService.delete_image(public_id):
+                logger.warning(f"Product {product_id} deleted but its image was not removed from Cloudinary: {public_id}")
 
     # Clear cache after deleting product
     await clear_products_cache()

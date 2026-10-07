@@ -3,7 +3,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 import uuid
 from decimal import Decimal
-from sqlalchemy import Column, Numeric
+from sqlalchemy import Column, Numeric, Boolean, text
 from sqlalchemy.dialects.postgresql import JSONB
 from ..config.branches import current_branch_name
 
@@ -19,6 +19,9 @@ class SubCategorySchema(SQLModel):
     # revealed only via the "+" more-options toggle - for dimensions that don't apply
     # to every order (e.g. Rib, Zip).
     is_optional: bool = False
+    # Options of this sub-category ticked "Dye" (e.g. ["Dye Fabric"]). A line with a dye
+    # option gets no flat charge; its rate is raised by the category's dye rates instead.
+    dye_options: List[str] = []
 
 
 class CustomerCategory(SQLModel, table=True):
@@ -57,6 +60,14 @@ class CustomerCategory(SQLModel, table=True):
     # This category's own designing / mockup charge (added once when the category has
     # only 1-4 pcs in an order), set on the Ideal Pricing page. None or 0 = no mockup charge.
     mockup_charge: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(10, 2), nullable=True))
+    # True = Quotation / Customer Invoice show the optional DTF logos box (width x height
+    # per logo, priced by roll length - see dtf_pricing_settings) for this category.
+    # Ticked on the Customer Category page; Hoodie and Jacket for now.
+    dtf_enabled: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, server_default=text("false")))
+    # Dye lines' rate multiplier, by the category's dye pieces: 1-4 pcs and 5-15 pcs
+    # (16+ = normal rate). Set on the Ideal Pricing page.
+    dye_rate_single: Decimal = Field(default=Decimal("2"), sa_column=Column(Numeric(5, 2), nullable=False, server_default=text("2")))
+    dye_rate_qty: Decimal = Field(default=Decimal("1.5"), sa_column=Column(Numeric(5, 2), nullable=False, server_default=text("1.5")))
     created_at: datetime = Field(default_factory=lambda: datetime.now())
 
 
@@ -65,6 +76,9 @@ class CustomerCategoryCreate(SQLModel):
     sub_categories: List[SubCategorySchema]
     branch: Optional[str] = Field(default_factory=current_branch_name)
     mockup_charge: Optional[Decimal] = None
+    dtf_enabled: bool = False
+    dye_rate_single: Decimal = Decimal("2")
+    dye_rate_qty: Decimal = Decimal("1.5")
 
 
 class CustomerCategoryUpdate(SQLModel):
@@ -72,6 +86,9 @@ class CustomerCategoryUpdate(SQLModel):
     sub_categories: Optional[List[SubCategorySchema]] = None
     branch: Optional[str] = None
     mockup_charge: Optional[Decimal] = None  # send null for no mockup charge
+    dtf_enabled: Optional[bool] = None
+    dye_rate_single: Optional[Decimal] = None  # null = leave as is
+    dye_rate_qty: Optional[Decimal] = None
 
 
 class CustomerCategoryRead(SQLModel):
@@ -80,6 +97,9 @@ class CustomerCategoryRead(SQLModel):
     sub_categories: List[Dict[str, Any]]
     branch: str
     mockup_charge: Optional[Decimal] = None
+    dtf_enabled: bool = False
+    dye_rate_single: Decimal = Decimal("2")
+    dye_rate_qty: Decimal = Decimal("1.5")
     created_at: datetime
 
 
@@ -89,6 +109,7 @@ class SubCategoryGroup(SQLModel):
     options: List[str]
     is_modifier: bool = False
     is_optional: bool = False
+    dye_options: List[str] = []
 
 
 class CustomerCategoryGrouped(SQLModel):

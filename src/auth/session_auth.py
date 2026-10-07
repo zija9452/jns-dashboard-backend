@@ -182,6 +182,30 @@ def admin_cashier_employee_sales_required_from_session():
     return role_checker
 
 
+def admin_cashier_sales_required_from_session():
+    """Require admin, cashier, or sales role from session (Cash Deposits list/view)"""
+    async def role_checker(current_user: User = Depends(get_current_user_from_session)):
+        if current_user.role.name not in ["admin", "cashier", "sales"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin, cashier, or sales access required"
+            )
+        return current_user
+    return role_checker
+
+
+def admin_sales_required_from_session():
+    """Require admin or sales role from session (Cash Deposits approve/reject/export)"""
+    async def role_checker(current_user: User = Depends(get_current_user_from_session)):
+        if current_user.role.name not in ["admin", "sales"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin or sales access required"
+            )
+        return current_user
+    return role_checker
+
+
 def employee_production_required_from_session():
     """Require admin, cashier, employee, or production role from session
 

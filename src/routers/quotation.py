@@ -20,13 +20,15 @@ from ..models.quotation import (
 from ..models.customer_invoice import CustomerInvoice, CustomerInvoiceStatus
 from ..models.rush_pricing import RushPricingSetting
 from ..auth.session_auth import admin_required_from_session
-from ..utils.mockup_charges import parse_mockup_charges, mockup_charges_from_totals
+from ..utils.mockup_charges import parse_mockup_charges, mockup_charges_from_totals, load_dye_options
+from ..utils.dtf_charges import load_dtf_context, parse_item_dtf, dtf_charges_from_items, dtf_charges_from_totals
 
 router = APIRouter(prefix="/quotation", tags=["Quotation"])
 
 
 
-def _parse_items(items_json: str) -> list:
+def _parse_items(items_json: str, dtf_categories: Optional[set] = None, dtf_setting=None) -> list:
+    """dtf_categories / dtf_setting: see utils/dtf_charges.parse_item_dtf."""
     try:
         items = json.loads(items_json)
     except (json.JSONDecodeError, TypeError):
@@ -70,6 +72,9 @@ def _parse_items(items_json: str) -> list:
             "imgfile2": str(item.get("imgfile2", "")),
             "imgfile3": str(item.get("imgfile3", "")),
         })
+        dtf = parse_item_dtf(item.get("dtf"), quantity, normalized[-1]["cat_name"], dtf_categories, dtf_setting)
+        if dtf:
+            normalized[-1]["dtf"] = dtf
 
     return normalized, subtotal
 
@@ -142,8 +147,8 @@ async def _generate_quotation_no(db: AsyncSession) -> str:
 
         counter = 0
         while counter < 100:
-            check = await db.execute(select(Quotation).where(Quotation.quotation_no == quotation_no))
-            if check.scalar_one_or_none():
+            check = await db.execute(select(Quotation.id).where(Quotation.quotation_no == quotation_no).limit(1))
+            if check.first():
                 seq_number = f"{int(seq_number) + 1:04d}"
                 quotation_no = f"{doc_prefix('QUO')}{seq_number}"
                 counter += 1
@@ -159,29 +164,37 @@ async def _generate_quotation_no(db: AsyncSession) -> str:
 
 
 def _build_totals(subtotal: Decimal, discount: Decimal, rush_charge: Decimal,
-                  mockup_charges: list, mockup_total: Decimal) -> dict:
-    total = subtotal - discount + rush_charge + mockup_total
+                  mockup_charges: list, mockup_total: Decimal,
+                  dtf_charges: list, dtf_total: Decimal) -> dict:
+    total = subtotal - discount + rush_charge + mockup_total + dtf_total
     return {
         "subtotal": float(subtotal),
         "discount": float(discount),
         "rush_charge": float(rush_charge),
         "mockup_charge": float(mockup_total),
         "mockup_charges": mockup_charges,
+        "dtf_charge": float(dtf_total),
+        "dtf_charges": dtf_charges,
         "tax": 0.0,
         "total": float(total),
     }
 
 
-@router.post("/create")
-async def create_quotation(
-    quotation_data: QuotationCreate,
-    current_user: User = Depends(admin_required_from_session()),
-    db: AsyncSession = Depends(get_db)
-):
-    items_list, subtotal = _parse_items(quotation_data.items)
+async def _build_quotation(
+    quotation_data: QuotationCreate, db: AsyncSession, current_user: User,
+    quotation_no: Optional[str] = None, revision: int = 1,
+) -> tuple[Quotation, dict]:
+    """
+    A new DRAFT quotation row from the page's data - shared by Create and Revise.
+    quotation_no None = next QUO- number; a revision passes the old number and revision + 1.
+    Returns (unsaved quotation, extra fields for the response).
+    """
+    dtf_categories, dtf_setting = await load_dtf_context(db, current_branch_name())
+    items_list, subtotal = _parse_items(quotation_data.items, dtf_categories, dtf_setting)
     total_pieces = sum(i["quantity"] for i in items_list)
     discount = quotation_data.discounts or Decimal("0.00")
-    mockup_charges, mockup_total = parse_mockup_charges(quotation_data.mockup_charges, items_list)
+    mockup_charges, mockup_total = parse_mockup_charges(quotation_data.mockup_charges, items_list, await load_dye_options(db))
+    dtf_charges, dtf_total = dtf_charges_from_items(items_list)
 
     is_rush, rate_snapshot, threshold_snapshot, rush_charge = await _compute_rush(
         db, quotation_data.required_by_date, total_pieces,
@@ -194,17 +207,19 @@ async def create_quotation(
         if not exists.scalar_one_or_none():
             raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Customer not found")
 
-    quotation_no = await _generate_quotation_no(db)
-    total_amount = subtotal - discount + rush_charge + mockup_total
+    if quotation_no is None:
+        quotation_no = await _generate_quotation_no(db)
+    total_amount = subtotal - discount + rush_charge + mockup_total + dtf_total
 
     quotation = Quotation(
         quotation_no=quotation_no,
+        revision=revision,
         customer_id=customer_id,
         customer_name=quotation_data.customer_name,
         team_name=quotation_data.team_name,
         salesman_id=quotation_data.salesman_id,
         items=json.dumps(items_list),
-        totals=json.dumps(_build_totals(subtotal, discount, rush_charge, mockup_charges, mockup_total)),
+        totals=json.dumps(_build_totals(subtotal, discount, rush_charge, mockup_charges, mockup_total, dtf_charges, dtf_total)),
         total_amount=total_amount,
         taxes=Decimal("0.00"),
         discounts=discount,
@@ -218,23 +233,92 @@ async def create_quotation(
         notes=quotation_data.notes,
         created_by=current_user.id,
     )
-
-    db.add(quotation)
-    await db.commit()
-    await db.refresh(quotation)
-
-    return {
-        "success": True,
-        "quotation_id": str(quotation.id),
-        "quotation_no": quotation.quotation_no,
-        "is_rush": quotation.is_rush,
-        "rush_charge": float(quotation.rush_charge),
+    extra = {
         "rush_rate_per_piece": float(rate_snapshot) if rate_snapshot is not None else None,
         "total_pieces": total_pieces,
         "mockup_charge": float(mockup_total),
         "mockup_charges": mockup_charges,
+        "dtf_charge": float(dtf_total),
+    }
+    return quotation, extra
+
+
+def _saved_response(quotation: Quotation, extra: dict) -> dict:
+    return {
+        "success": True,
+        "quotation_id": str(quotation.id),
+        "quotation_no": quotation.quotation_no,
+        "revision": quotation.revision,
+        "is_rush": quotation.is_rush,
+        "rush_charge": float(quotation.rush_charge),
+        **extra,
         "total_amount": float(quotation.total_amount),
     }
+
+
+@router.post("/create")
+async def create_quotation(
+    quotation_data: QuotationCreate,
+    current_user: User = Depends(admin_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    quotation, extra = await _build_quotation(quotation_data, db, current_user)
+    db.add(quotation)
+    await db.commit()
+    await db.refresh(quotation)
+    return _saved_response(quotation, extra)
+
+
+# DRAFT / SENT / REJECTED can be revised; APPROVED and CONVERTED are locked.
+REVISABLE_STATUSES = (QuotationStatus.DRAFT, QuotationStatus.SENT, QuotationStatus.REJECTED)
+
+
+@router.post("/{quotation_id}/revise")
+async def revise_quotation(
+    quotation_id: UUID,
+    quotation_data: QuotationCreate,
+    current_user: User = Depends(admin_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Saves the edited quotation as a new revision (same QUO- number, revision + 1, DRAFT).
+    The old row becomes REVISED (read-only, PDF only) and points to the new one.
+    Locked FOR UPDATE so two people revising at once can't both create a revision.
+    """
+    result = await db.execute(
+        select(Quotation).where(Quotation.id == quotation_id).with_for_update()
+    )
+    old = result.scalar_one_or_none()
+    if not old:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Quotation not found")
+    if old.status == QuotationStatus.REVISED or old.replaced_by_id:
+        newer = await db.get(Quotation, old.replaced_by_id) if old.replaced_by_id else None
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail=f"{old.quotation_no} Rev.{old.revision} was already revised"
+                   + (f" - open Rev.{newer.revision} instead" if newer else "")
+        )
+    if old.status not in REVISABLE_STATUSES:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail=f"An {old.status.value if hasattr(old.status, 'value') else old.status} quotation can't be revised"
+        )
+
+    quotation, extra = await _build_quotation(
+        quotation_data, db, current_user, quotation_no=old.quotation_no, revision=old.revision + 1
+    )
+    db.add(quotation)
+    await db.flush()
+
+    old.status_before_revised = old.status.value if hasattr(old.status, "value") else str(old.status)
+    old.status = QuotationStatus.REVISED
+    old.replaced_by_id = quotation.id
+    old.updated_at = datetime.now()
+    db.add(old)
+
+    await db.commit()
+    await db.refresh(quotation)
+    return _saved_response(quotation, extra)
 
 
 @router.get("/list")
@@ -248,7 +332,9 @@ async def list_quotations(
 ):
     skip = (page - 1) * limit
 
-    base = select(Quotation)
+    # One row per quotation: its latest revision. Older revisions come with it in
+    # "old_revisions" (shown grey under it).
+    base = select(Quotation).where(Quotation.replaced_by_id.is_(None))
     if status:
         base = base.where(Quotation.status == status)
     if customer_id:
@@ -260,6 +346,24 @@ async def list_quotations(
     statement = base.order_by(Quotation.created_at.desc()).offset(skip).limit(limit)
     result = await db.execute(statement)
     quotations = result.scalars().all()
+
+    old_by_no: dict = {}
+    numbers = [q.quotation_no for q in quotations if q.revision > 1]
+    if numbers:
+        old_result = await db.execute(
+            select(Quotation)
+            .where(Quotation.quotation_no.in_(numbers), Quotation.replaced_by_id.is_not(None))
+            .order_by(Quotation.revision.desc())
+        )
+        for old in old_result.scalars().all():
+            old_by_no.setdefault(old.quotation_no, []).append({
+                "id": str(old.id),
+                "revision": old.revision,
+                "total_amount": float(old.total_amount),
+                "status": old.status,
+                "status_before_revised": old.status_before_revised,
+                "created_at": old.created_at.isoformat(),
+            })
 
     return {
         "data": [
@@ -277,6 +381,7 @@ async def list_quotations(
                 "revision": q.revision,
                 "converted_invoice_id": str(q.converted_invoice_id) if q.converted_invoice_id else None,
                 "created_at": q.created_at.isoformat(),
+                "old_revisions": old_by_no.get(q.quotation_no, []),
             }
             for q in quotations
         ],
@@ -316,9 +421,13 @@ async def get_quotation(
         "required_by_date": quotation.required_by_date.isoformat() if quotation.required_by_date else None,
         "is_rush": quotation.is_rush,
         "rush_charge": float(quotation.rush_charge),
+        # The page pre-fills a revision with these (rate / window the quotation was saved with)
+        "rush_rate_snapshot": float(quotation.rush_rate_snapshot) if quotation.rush_rate_snapshot is not None else None,
+        "rush_threshold_snapshot": quotation.rush_threshold_snapshot,
         "valid_until": quotation.valid_until.isoformat() if quotation.valid_until else None,
         "status": quotation.status,
         "revision": quotation.revision,
+        "replaced_by_id": str(quotation.replaced_by_id) if quotation.replaced_by_id else None,
         "notes": quotation.notes,
         "converted_invoice_id": str(quotation.converted_invoice_id) if quotation.converted_invoice_id else None,
         "created_at": quotation.created_at.isoformat(),
@@ -342,7 +451,9 @@ async def update_quotation(
         )
 
     if update_data.items is not None:
-        items_list, subtotal = _parse_items(update_data.items)
+        # Re-sent DTF blocks keep the rates they were made with (no setting check).
+        dtf_categories, _ = await load_dtf_context(db, current_branch_name())
+        items_list, subtotal = _parse_items(update_data.items, dtf_categories)
         quotation.items = json.dumps(items_list)
     else:
         items_list = json.loads(quotation.items)
@@ -352,7 +463,8 @@ async def update_quotation(
     # (possibly changed) items, so a category that now has 5+ pcs can't keep its charge.
     saved_totals = json.loads(quotation.totals) if quotation.totals else {}
     mockup_raw = update_data.mockup_charges if update_data.mockup_charges is not None else mockup_charges_from_totals(saved_totals)
-    mockup_charges, mockup_total = parse_mockup_charges(mockup_raw, items_list)
+    mockup_charges, mockup_total = parse_mockup_charges(mockup_raw, items_list, await load_dye_options(db))
+    dtf_charges, dtf_total = dtf_charges_from_items(items_list)
 
     if update_data.required_by_date is not None:
         quotation.required_by_date = update_data.required_by_date
@@ -377,9 +489,9 @@ async def update_quotation(
     quotation.rush_rate_snapshot = rate_snapshot
     quotation.rush_threshold_snapshot = threshold_snapshot
     quotation.rush_charge = rush_charge
-    quotation.totals = json.dumps(_build_totals(subtotal, discount, rush_charge, mockup_charges, mockup_total))
-    quotation.total_amount = subtotal - discount + rush_charge + mockup_total
-    quotation.revision += 1
+    quotation.totals = json.dumps(_build_totals(subtotal, discount, rush_charge, mockup_charges, mockup_total, dtf_charges, dtf_total))
+    quotation.total_amount = subtotal - discount + rush_charge + mockup_total + dtf_total
+    # In-place edit - a revision is a separate row now (POST /{id}/revise)
     quotation.updated_at = datetime.now()
 
     db.add(quotation)
@@ -400,6 +512,11 @@ async def update_quotation_status(
 
     if quotation.status == QuotationStatus.CONVERTED:
         raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail="Quotation already converted to an order")
+    if quotation.status == QuotationStatus.REVISED:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail=f"{quotation.quotation_no} Rev.{quotation.revision} was replaced by a newer revision - use the latest one"
+        )
 
     allowed_transitions = {
         QuotationStatus.DRAFT: {QuotationStatus.SENT, QuotationStatus.REJECTED},
@@ -433,6 +550,17 @@ async def delete_quotation(
 
     if quotation.status != QuotationStatus.DRAFT:
         raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail="Only DRAFT quotations can be deleted")
+
+    # Deleting a revision re-opens the one it replaced, with the status it had before.
+    previous_result = await db.execute(select(Quotation).where(Quotation.replaced_by_id == quotation.id))
+    previous = previous_result.scalar_one_or_none()
+    if previous:
+        previous.replaced_by_id = None
+        previous.status = QuotationStatus(previous.status_before_revised or QuotationStatus.DRAFT.value)
+        previous.status_before_revised = None
+        previous.updated_at = datetime.now()
+        db.add(previous)
+        await db.flush()
 
     await db.delete(quotation)
     await db.commit()
@@ -514,6 +642,8 @@ async def convert_quotation_to_order(
                 "imgfile": i.get("imgfile", ""),
                 "imgfile2": i.get("imgfile2", ""),
                 "imgfile3": i.get("imgfile3", ""),
+                # DTF logos + the saved roll layout the designer follows
+                **({"dtf": i["dtf"]} if i.get("dtf") else {}),
             }
             for i in items_list
         ]
@@ -533,6 +663,8 @@ async def convert_quotation_to_order(
                 "rush_charge": totals.get("rush_charge", 0.0),
                 "mockup_charge": totals.get("mockup_charge", 0.0),
                 "mockup_charges": mockup_charges_from_totals(totals),
+                "dtf_charge": totals.get("dtf_charge", 0.0),
+                "dtf_charges": dtf_charges_from_totals(totals),
                 "total": float(quotation.total_amount),
                 "amount_paid": 0.0,
                 "balance_due": float(quotation.total_amount),
@@ -551,7 +683,9 @@ async def convert_quotation_to_order(
             rush_threshold_snapshot=quotation.rush_threshold_snapshot,
             rush_charge=quotation.rush_charge,
             status=CustomerInvoiceStatus.PENDING,
-            payment_method="cash",
+            # Nothing has been paid yet, so no real payment mode - "credit" (udhaar) is
+            # what an unpaid order is. The actual mode is recorded with each payment.
+            payment_method="credit",
             notes=f"Converted from quotation {quotation.quotation_no}" + (f" | {quotation.notes}" if quotation.notes else ""),
             created_by=current_user.id,
         )
@@ -618,6 +752,10 @@ def _build_quotation_pdf_html(quotation: Quotation) -> str:
             f'<span class="chip"><b>{escape(str(k))}:</b> {escape(str(v))}</span>'
             for k, v in fields.items() if v not in (None, "")
         )
+        dtf = item.get("dtf")
+        if dtf:
+            logos = ", ".join(f'{l["w"]:g}&times;{l["h"]:g}"' for l in dtf.get("logos", []))
+            chips += f'<span class="chip"><b>DTF:</b> {logos} &middot; {dtf.get("half_meters", 0) / 2:g} m roll</span>'
         desc = escape(str(item.get("custom_description") or ""))
         rows_html += f"""
         <tr>
@@ -644,9 +782,15 @@ def _build_quotation_pdf_html(quotation: Quotation) -> str:
         total_rows += f'<tr class="rush"><td>Rush Charge{rush_detail}</td><td class="r">+ {money(quotation.rush_charge)}</td></tr>'
     for mc in mockup_charges_from_totals(totals):
         total_rows += (
-            f'<tr><td>Designing / Mockup - {escape(str(mc.get("category", "")))}'
+            f'<tr><td>Flat Charges - {escape(str(mc.get("category", "")))}'
             f'<div class="sub" style="color:#6B7280;">{int(mc.get("pieces", 0))} pcs (under 5) &middot; once for this item</div></td>'
             f'<td class="r">+ {money(mc.get("amount"))}</td></tr>'
+        )
+    for dc in dtf_charges_from_totals(totals):
+        total_rows += (
+            f'<tr><td>DTF Printing - {escape(str(dc.get("category", "")))}'
+            f'<div class="sub" style="color:#6B7280;">item {int(dc.get("line", 0))} &middot; {float(dc.get("meters", 0)):g} m roll</div></td>'
+            f'<td class="r">+ {money(dc.get("amount"))}</td></tr>'
         )
 
     status = getattr(quotation.status, "value", quotation.status)

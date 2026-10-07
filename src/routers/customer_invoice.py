@@ -25,7 +25,8 @@ from ..auth.session_auth import get_current_user_from_session, admin_required_fr
 from ..services.customer_service import CustomerService
 from ..services.salesman_service import SalesmanService
 from ..models.customer import CustomerCreate
-from ..utils.mockup_charges import parse_mockup_charges, mockup_charges_from_totals
+from ..utils.mockup_charges import parse_mockup_charges, mockup_charges_from_totals, load_dye_options
+from ..utils.dtf_charges import load_dtf_context, parse_item_dtf, dtf_charges_from_items, dtf_charges_from_totals
 
 router = APIRouter()
 
@@ -275,6 +276,9 @@ async def save_customer_orders(
     total_discount = 0.0  # Total discount amount
     total_amount = Decimal('0')  # Total after discounts
 
+    # DTF logos on Hoodie / Jacket lines - checked against this branch's DTF rule (see utils/dtf_charges.py)
+    dtf_categories, dtf_setting = await load_dtf_context(db, current_branch_name())
+
     # Validate and process each order item
     for item in order_items:
         try:
@@ -337,6 +341,9 @@ async def save_customer_orders(
                 "imgfile2": str(item.get('imgfile2', '')),
                 "imgfile3": str(item.get('imgfile3', '')),
             }
+            dtf = parse_item_dtf(item.get('dtf'), quantity, item_obj["cat_name"], dtf_categories, dtf_setting)
+            if dtf:
+                item_obj["dtf"] = dtf
             items_list.append(item_obj)
             total_amount += Decimal(str(item_subtotal))  # Add original price before discount
             total_discount += discount
@@ -355,13 +362,15 @@ async def save_customer_orders(
     )
 
     # Designing / mockup charge: once per category with 1-4 pcs (see utils/mockup_charges.py).
-    mockup_charges, mockup_total = parse_mockup_charges(request_data.get('mockup_charges'), items_list)
+    mockup_charges, mockup_total = parse_mockup_charges(request_data.get('mockup_charges'), items_list, await load_dye_options(db))
+    # DTF printing: one charge per Hoodie / Jacket line with logos (amount editable per order).
+    dtf_charges, dtf_total = dtf_charges_from_items(items_list)
 
     # Calculate net amount (total after all discounts). Discount is tracked
     # (total_discount) but not subtracted here - a pre-existing quirk, not something
     # this change fixes. Rush and mockup *are* added since they're real amounts owed,
     # the same way quotation.py's _build_totals adds them.
-    net_amount = total_amount + rush_charge + mockup_total
+    net_amount = total_amount + rush_charge + mockup_total + dtf_total
 
     # Generate unique sequential invoice number with database-level locking for concurrency safety
     from datetime import datetime
@@ -478,12 +487,14 @@ async def save_customer_orders(
                 "rush_charge": float(rush_charge),
                 "mockup_charge": float(mockup_total),
                 "mockup_charges": mockup_charges,
-                "total": float(net_amount),  # subtotal + rush + mockup (discount not subtracted - pre-existing quirk)
+                "dtf_charge": float(dtf_total),
+                "dtf_charges": dtf_charges,
+                "total": float(net_amount),  # subtotal + rush + mockup + DTF (discount not subtracted - pre-existing quirk)
                 "amount_paid": float(calculated_amount_paid),  # Amount actually paid (after discount)
                 "balance_due": float(initial_balance_due),  # Calculate remaining balance
                 "payment_status": payment_status  # Set status based on payment
             }),
-            "total_amount": Decimal(str(net_amount)),  # subtotal + rush + mockup
+            "total_amount": Decimal(str(net_amount)),  # subtotal + rush + mockup + DTF
             "amount_paid": calculated_amount_paid,  # Amount actually paid (after discount)
             "balance_due": initial_balance_due,  # Calculate remaining balance
             "payment_status": payment_status,  # Set status based on payment
@@ -589,9 +600,8 @@ async def get_invoice_receipt(
         items=items_list,
         total_amount=float(invoice.total_amount),
         total_discount=float(invoice.discounts or 0),
-        amount_paid=float(invoice.amount_paid),
-        balance_due=float(invoice.balance_due),
-        payment_method=invoice.payment_method,
+        # The receipt is the bill as it was handed over - later payments don't change it.
+        **initial_payment_snapshot(invoice, totals),
         payment_status=invoice.payment_status,
         created_at=invoice.created_at,
         # invoice.total_amount already has rush baked in (subtotal + rush_charge) -
@@ -602,30 +612,61 @@ async def get_invoice_receipt(
         rush_charge=float(invoice.rush_charge or 0),
         required_by_date=invoice.required_by_date,
         rush_rate=invoice.rush_rate_snapshot,
-        mockup_charges=mockup_charges_from_totals(totals)
+        mockup_charges=mockup_charges_from_totals(totals),
+        dtf_charges=dtf_charges_from_totals(totals)
     )
 
     # generate_simple_receipt_pdf already returns base64-encoded string, use directly
     return {"pdf": pdf_content}
 
 
+def _display_payment_method(payment_method) -> str:
+    """Short name for the receipt (e.g. "Easypaisa Yasir" -> "EasyPaisa")."""
+    name = str(payment_method or "Cash")
+    lower = name.lower()
+    if "easypaisa" in lower:
+        return "EasyPaisa"
+    if "faysal" in lower:
+        return "Faysal Bank"
+    if "cash" in lower:
+        return "Cash"
+    if "credit" in lower:
+        return "Credit"
+    if lower == "other":
+        return "Other"
+    return name
+
+
+def initial_payment_snapshot(invoice, totals: dict) -> dict:
+    """Amount paid, balance and payment mode as they were when the invoice was created.
+
+    The receipt and the Duplicate Bill reprint the bill that was handed to the customer,
+    so they use this instead of the live fields, which process-payment keeps changing.
+    totals JSON keeps the creation-time amount_paid / balance_due (process-payment never
+    touches it) and payment_method is only ever set at creation.
+    """
+    return {
+        "amount_paid": float(totals.get("amount_paid", invoice.amount_paid) or 0),
+        "balance_due": float(totals.get("balance_due", invoice.balance_due) or 0),
+        "payment_method": invoice.payment_method,
+    }
+
+
 def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, total_amount,
                                   total_discount, amount_paid, balance_due, payment_method,
                                   payment_status, created_at, bill_type: str = "SALE RECEIPT",
                                   subtotal=None, is_rush: bool = False, rush_charge: float = 0.0,
-                                  required_by_date=None, rush_rate=None, mockup_charges=None):
+                                  required_by_date=None, rush_rate=None, mockup_charges=None,
+                                  dtf_charges=None):
     """Generate thermal receipt style PDF using weasyprint (same as customers.py)"""
-    
-    # Simplify payment method name (e.g., "EasyPaisa Sir Yasir" -> "EasyPaisa")
-    display_payment_method = payment_method or "Cash"
-    if "easypaisa" in display_payment_method.lower():
-        display_payment_method = "EasyPaisa"
-    elif "faysal" in display_payment_method.lower():
-        display_payment_method = "Faysal Bank"
-    elif "cash" in display_payment_method.lower():
-        display_payment_method = "Cash"
-    elif "credit" in display_payment_method.lower():
-        display_payment_method = "Credit"
+
+    # A payment mode belongs to a payment - nothing paid means no mode, just UNPAID.
+    if float(amount_paid or 0) <= 0:
+        payment_html = '<p>Payment Status: UNPAID</p>'
+    else:
+        payment_html = f'<p>Payment Mode: {_display_payment_method(payment_method)}</p>'
+        if float(balance_due or 0) > 0:
+            payment_html += '<p>Payment Status: PARTIALLY PAID</p>'
 
     # created_at is stored as naive local (Asia/Karachi) time already - no UTC shift needed
     created_at_pkt = created_at if created_at.tzinfo is None else created_at.astimezone(PKT)
@@ -682,8 +723,15 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
     for mc in (mockup_charges or []):
         page_height += 18
         mockup_rows += (
-            f'<p class="total-row"><span class="total-label">Mockup ({_escape(str(mc.get("category", "")))}):</span>'
+            f'<p class="total-row"><span class="total-label">Flat Charges ({_escape(str(mc.get("category", "")))}):</span>'
             f'<span class="total-value">+{float(mc.get("amount", 0)):.0f}</span></p>'
+        )
+    # One "DTF (Hoodie, 1 m)" row per line with DTF logos - same layout as the mockup rows.
+    for dc in (dtf_charges or []):
+        page_height += 18
+        mockup_rows += (
+            f'<p class="total-row"><span class="total-label">DTF ({_escape(str(dc.get("category", "")))}, {float(dc.get("meters", 0)):g} m):</span>'
+            f'<span class="total-value">+{float(dc.get("amount", 0)):.0f}</span></p>'
         )
     
     # Create simple HTML for PDF (same pattern as customers.py)
@@ -937,7 +985,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             
         </div>
         <div class="payment">
-            <p>Payment Mode: {display_payment_method}</p>
+            {payment_html}
         </div>
         <div class="footer">
             <p>Thankyou For Shopping. Come Again.</p>
@@ -1170,9 +1218,10 @@ async def get_order(
         "subtotal": totals_data.get('subtotal', 0.0),
         "tax": totals_data.get('tax', 0.0),
         "discount": totals_data.get('discount', 0.0),
-        # Shown on the order view so subtotal + rush + mockup adds up to the total.
+        # Shown on the order view so subtotal + rush + mockup + DTF adds up to the total.
         "rush_charge": float(invoice_record.rush_charge or 0),
         "mockup_charges": mockup_charges_from_totals(totals_data),
+        "dtf_charges": dtf_charges_from_totals(totals_data),
         "total": float(invoice_record.total_amount) if invoice_record.total_amount else 0.0,
         "amount_paid": float(invoice_record.amount_paid) if invoice_record.amount_paid else 0.0,
         "balance_due": float(invoice_record.balance_due) if invoice_record.balance_due else 0.0,

@@ -1,5 +1,5 @@
 from sqlmodel import SQLModel, Field
-from sqlalchemy import Column, Numeric, Text
+from sqlalchemy import Column, Numeric, Text, UniqueConstraint
 from typing import Optional, List, Dict, Any
 from decimal import Decimal
 from datetime import datetime, date
@@ -13,13 +13,16 @@ class QuotationStatus(str, Enum):
     APPROVED = "APPROVED"      # price locked - no further edits, ready to convert
     REJECTED = "REJECTED"
     CONVERTED = "CONVERTED"    # already turned into a real Customer Order
+    REVISED = "REVISED"        # replaced by a newer revision (replaced_by_id) - read-only, PDF only
 
 
 class Quotation(SQLModel, table=True):
     __tablename__ = "quotations"
+    # A revision is a new row with the same quotation_no and revision + 1 (QUO-0012 Rev.2).
+    __table_args__ = (UniqueConstraint("quotation_no", "revision", name="uq_quotations_no_revision"),)
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    quotation_no: str = Field(unique=True, index=True)  # "QUO-0001"
+    quotation_no: str = Field(index=True)  # "QUO-0001" - shared by all revisions of one quotation
     customer_id: Optional[uuid.UUID] = Field(default=None, foreign_key="customers.id", index=True)
     customer_name: Optional[str] = Field(default=None, index=True)
     team_name: Optional[str] = Field(default=None)
@@ -44,6 +47,10 @@ class Quotation(SQLModel, table=True):
     valid_until: Optional[date] = Field(default=None)  # quotation's own expiry (separate from required_by_date)
     status: QuotationStatus = Field(default=QuotationStatus.DRAFT, index=True)
     revision: int = Field(default=1)
+    # Set on the old row when it is revised: the newer revision that replaced it.
+    replaced_by_id: Optional[uuid.UUID] = Field(default=None, foreign_key="quotations.id")
+    # Status the old row had before it became REVISED - put back if the newer revision is deleted.
+    status_before_revised: Optional[str] = Field(default=None, max_length=20)
     notes: Optional[str] = Field(default=None, sa_column=Column(Text))
 
     converted_invoice_id: Optional[uuid.UUID] = Field(default=None, foreign_key="customer_invoices.id")

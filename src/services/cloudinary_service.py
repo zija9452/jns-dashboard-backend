@@ -39,18 +39,13 @@ class CloudinaryService:
             Public URL of uploaded image
         """
         try:
-            # Upload to Cloudinary with aggressive optimization
+            # Upload the original as-is (no incoming transformation). The old
+            # quality "auto:eco" + width 1200 made product images blurry.
             upload_result = cloudinary.uploader.upload(
                 file_bytes,
                 folder=f"european-sports/{folder}",
                 public_id=public_id,
                 resource_type="image",
-                transformation=[
-                    {"quality": "auto:eco"},      # Eco quality - better compression (50-80% reduction)
-                    {"fetch_format": "auto"},     # Auto format (WebP/AVIF for modern browsers)
-                    {"width": 1200},              # Max width 1200px (sufficient for product images)
-                    {"crop": "limit"}             # Limit to max dimensions without cropping
-                ]
             )
 
             # Return secure URL
@@ -59,6 +54,30 @@ class CloudinaryService:
         except Exception as e:
             logger.error(f"Cloudinary upload error: {e}")
             raise Exception(f"Failed to upload image: {str(e)}")
+
+    @staticmethod
+    async def upload_slip_image(file_bytes: bytes, public_id: str) -> dict:
+        """
+        Upload a bank deposit slip image in original quality (no transformation,
+        so small text / amount / stamp stays readable).
+
+        Returns:
+            {"url": secure URL, "public_id": Cloudinary public id (for delete)}
+        """
+        try:
+            upload_result = cloudinary.uploader.upload(
+                file_bytes,
+                folder="european-sports/cash-deposits",
+                public_id=public_id,
+                resource_type="image",
+            )
+            return {
+                "url": upload_result.get("secure_url"),
+                "public_id": upload_result.get("public_id"),
+            }
+        except Exception as e:
+            logger.error(f"Cloudinary slip upload error: {e}")
+            raise Exception(f"Failed to upload slip: {str(e)}")
 
     @staticmethod
     async def delete_image(public_id: str) -> bool:
