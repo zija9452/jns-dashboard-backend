@@ -22,6 +22,7 @@ from ..models.rush_pricing import RushPricingSetting
 from ..auth.session_auth import admin_required_from_session
 from ..utils.mockup_charges import parse_mockup_charges, mockup_charges_from_totals, load_dye_options
 from ..utils.dtf_charges import load_dtf_context, parse_item_dtf, dtf_charges_from_items, dtf_charges_from_totals
+from ..utils.item_teams import apply_item_teams, team_names_label, team_groups, has_teams, flat_charges_of_team, flat_charge_label
 
 router = APIRouter(prefix="/quotation", tags=["Quotation"])
 
@@ -76,6 +77,7 @@ def _parse_items(items_json: str, dtf_categories: Optional[set] = None, dtf_sett
         if dtf:
             normalized[-1]["dtf"] = dtf
 
+    apply_item_teams(items, normalized)
     return normalized, subtotal
 
 
@@ -216,7 +218,8 @@ async def _build_quotation(
         revision=revision,
         customer_id=customer_id,
         customer_name=quotation_data.customer_name,
-        team_name=quotation_data.team_name,
+        # Items with teams: "Team A, Team B", so the list and search show every team.
+        team_name=team_names_label(items_list, quotation_data.team_name),
         salesman_id=quotation_data.salesman_id,
         items=json.dumps(items_list),
         totals=json.dumps(_build_totals(subtotal, discount, rush_charge, mockup_charges, mockup_total, dtf_charges, dtf_total)),
@@ -455,6 +458,7 @@ async def update_quotation(
         dtf_categories, _ = await load_dtf_context(db, current_branch_name())
         items_list, subtotal = _parse_items(update_data.items, dtf_categories)
         quotation.items = json.dumps(items_list)
+        quotation.team_name = team_names_label(items_list, quotation.team_name)
     else:
         items_list = json.loads(quotation.items)
         subtotal = sum(Decimal(str(i["total_price"])) for i in items_list)
@@ -644,6 +648,9 @@ async def convert_quotation_to_order(
                 "imgfile3": i.get("imgfile3", ""),
                 # DTF logos + the saved roll layout the designer follows
                 **({"dtf": i["dtf"]} if i.get("dtf") else {}),
+                # Team of the item and the row it was added "+ Similar" from
+                **({"team": i["team"]} if i.get("team") else {}),
+                **({"similar_of": i["similar_of"]} if i.get("similar_of") else {}),
             }
             for i in items_list
         ]
@@ -739,8 +746,7 @@ def _build_quotation_pdf_html(quotation: Quotation) -> str:
     def fmt_date(d) -> str:
         return d.strftime("%d %b %Y") if d else "-"
 
-    rows_html = ""
-    for idx, item in enumerate(items_list, 1):
+    def item_row(idx, item) -> str:
         # category_fields holds the selected sub-category options (Neck Style,
         # Sleeves, Fabric, Size Type...) - shown as small chips under the item name so
         # the exact customization is visible on the printed quotation.
@@ -757,11 +763,13 @@ def _build_quotation_pdf_html(quotation: Quotation) -> str:
             logos = ", ".join(f'{l["w"]:g}&times;{l["h"]:g}"' for l in dtf.get("logos", []))
             chips += f'<span class="chip"><b>DTF:</b> {logos} &middot; {dtf.get("half_meters", 0) / 2:g} m roll</span>'
         desc = escape(str(item.get("custom_description") or ""))
-        rows_html += f"""
-        <tr>
+        # A "+ Similar" row sits right under its first row, marked with an arrow.
+        similar = item.get("similar_of")
+        return f"""
+        <tr{' class="similar"' if similar else ''}>
             <td class="c">{idx}</td>
             <td>
-                <div class="item-name">{escape(str(item.get('product_name', '')))}</div>
+                <div class="item-name">{'<span class="arrow">&#8627;</span>' if similar else ''}{escape(str(item.get('product_name', '')))}</div>
                 {f'<div class="item-desc">{desc}</div>' if desc else ''}
                 {f'<div class="chips">{chips}</div>' if chips else ''}
             </td>
@@ -770,8 +778,53 @@ def _build_quotation_pdf_html(quotation: Quotation) -> str:
             <td class="r strong">{money(item.get('total_price'))}</td>
         </tr>"""
 
+    saved_mockups = mockup_charges_from_totals(totals)
+    team_order = has_teams(items_list)
+    rows_html = ""
+    team_totals = []  # (team, pieces, total, flat charges) for the totals box
+    if team_order:
+        # One block per team: heading, its items, its flat charges and DTF, its total.
+        for team, rows in team_groups(items_list, quotation.team_name):
+            pieces = sum(int(item.get("quantity", 0)) for _, item in rows)
+            flats = flat_charges_of_team(saved_mockups, team)
+            flat_total = sum(float(mc.get("amount", 0)) for mc in flats)
+            dtf_total = sum(float((item.get("dtf") or {}).get("amount", 0) or 0) for _, item in rows)
+            team_total = sum(float(item.get("total_price", 0)) for _, item in rows) + flat_total + dtf_total
+            team_totals.append((team, pieces, team_total, flat_total))
+            rows_html += f'<tr class="team-head"><td colspan="5">{escape(team)}</td></tr>'
+            rows_html += "".join(item_row(idx, item) for idx, item in rows)
+            for mc in flats:
+                rows_html += (
+                    f'<tr class="extra flat"><td></td><td>MOQ Charges - {escape(str(mc.get("category", "")))}'
+                    f'<div class="item-desc">{int(mc.get("pieces", 0))} pcs (under 5) in this team &middot; once, not per piece</div></td>'
+                    f'<td></td><td></td><td class="r strong">{money(mc.get("amount"))}</td></tr>'
+                )
+            for idx, item in rows:
+                dtf = item.get("dtf") or {}
+                if dtf.get("amount"):
+                    rows_html += (
+                        f'<tr class="extra dtf"><td></td><td>DTF Printing - {escape(str(item.get("product_name", "")))}'
+                        f'<div class="item-desc">item {idx} &middot; {float(dtf.get("half_meters", 0)) / 2:g} m roll</div></td>'
+                        f'<td></td><td></td><td class="r strong">{money(dtf.get("amount"))}</td></tr>'
+                    )
+            rows_html += (
+                f'<tr class="team-total"><td></td><td>{escape(team)} total</td>'
+                f'<td class="c">{pieces}</td><td></td><td class="r">{money(team_total)}</td></tr>'
+            )
+    else:
+        rows_html = "".join(item_row(idx, item) for idx, item in enumerate(items_list, 1))
+
     subtotal = totals.get("subtotal", sum(float(i.get("total_price", 0)) for i in items_list))
-    total_rows = f'<tr><td>Subtotal ({total_pieces} pcs)</td><td class="r">{money(subtotal)}</td></tr>'
+    if team_totals:
+        # Team order: Subtotal is just a heading, each team's total under it.
+        total_rows = f'<tr><td colspan="2" class="strong">Subtotal ({total_pieces} pcs)</td></tr>'
+        for team, pieces, team_total, _flat_total in team_totals:
+            total_rows += (
+                f'<tr class="team"><td style="padding-left:20px;">{escape(team)} ({pieces} pcs)</td>'
+                f'<td class="r">{money(team_total)}</td></tr>'
+            )
+    else:
+        total_rows = f'<tr><td>Subtotal ({total_pieces} pcs)</td><td class="r">{money(subtotal)}</td></tr>'
     if quotation.discounts and float(quotation.discounts) > 0:
         total_rows += f'<tr><td>Discount</td><td class="r">- {money(quotation.discounts)}</td></tr>'
     if quotation.is_rush and float(quotation.rush_charge) > 0:
@@ -780,13 +833,15 @@ def _build_quotation_pdf_html(quotation: Quotation) -> str:
             f'<div class="sub">Rs. {money(rate)} per piece &times; {total_pieces} pcs</div>' if rate is not None else ""
         )
         total_rows += f'<tr class="rush"><td>Rush Charge{rush_detail}</td><td class="r">+ {money(quotation.rush_charge)}</td></tr>'
-    for mc in mockup_charges_from_totals(totals):
+    # A team order shows its flat charges and DTF inside each team's block (and in the
+    # team totals above), so they are not listed again here.
+    for mc in ([] if team_order else saved_mockups):
         total_rows += (
-            f'<tr><td>Flat Charges - {escape(str(mc.get("category", "")))}'
+            f'<tr><td>MOQ Charges - {flat_charge_label(mc)}'
             f'<div class="sub" style="color:#6B7280;">{int(mc.get("pieces", 0))} pcs (under 5) &middot; once for this item</div></td>'
             f'<td class="r">+ {money(mc.get("amount"))}</td></tr>'
         )
-    for dc in dtf_charges_from_totals(totals):
+    for dc in ([] if team_order else dtf_charges_from_totals(totals)):
         total_rows += (
             f'<tr><td>DTF Printing - {escape(str(dc.get("category", "")))}'
             f'<div class="sub" style="color:#6B7280;">item {int(dc.get("line", 0))} &middot; {float(dc.get("meters", 0)):g} m roll</div></td>'
@@ -798,7 +853,8 @@ def _build_quotation_pdf_html(quotation: Quotation) -> str:
     logo = _quotation_logo_data_uri()
     logo_html = f'<img class="logo" src="{logo}">' if logo else ""
     shop_name = escape(current_branch_name())
-    team = f'<div class="muted">Team: <b>{escape(quotation.team_name)}</b></div>' if quotation.team_name else ""
+    team_word = "Teams" if len(team_totals) > 1 else "Team"
+    team = f'<div class="muted">{team_word}: <b>{escape(quotation.team_name)}</b></div>' if quotation.team_name else ""
     notes_html = (
         f'<div class="notes"><div class="label">Notes</div>{escape(quotation.notes)}</div>' if quotation.notes else ""
     )
@@ -867,6 +923,13 @@ def _build_quotation_pdf_html(quotation: Quotation) -> str:
     .chip {{ display: inline-block; border: 1px solid #E5E7EB; background: #fff; border-radius: 3px;
              padding: 1px 5px; margin: 2px 3px 0 0; font-size: 8.5px; color: #374151; }}
     .chip b {{ color: #6B7280; font-weight: 600; }}
+    .arrow {{ color: #6B7280; margin-right: 4px; }}
+    .items tr.similar td:nth-child(2) {{ padding-left: 20px; }}
+    .items tr.team-head td {{ background: #FFD01F !important; font-size: 11.5px; font-weight: 800; letter-spacing: 0.5px;
+                              text-transform: uppercase; border: 1px solid #111827; }}
+    .items tr.extra.dtf td {{ background: #F0FDFA !important; color: #0F766E; }}
+    .items tr.team-total td {{ background: #FFFBEB !important; font-weight: 800; border-bottom: 1.5px solid #111827; }}
+    .totals tr.team td {{ color: #374151; }}
 
     .bottom {{ display: table; width: 100%; border-top: 1.5px solid #111827; page-break-inside: avoid; }}
     .bottom > div {{ display: table-cell; vertical-align: top; padding: 12px 16px; }}

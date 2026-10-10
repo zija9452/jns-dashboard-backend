@@ -25,6 +25,7 @@ from ..models.cash_deposit import (
     CashDepositReject, DEPOSIT_PENDING, DEPOSIT_APPROVED, DEPOSIT_REJECTED,
 )
 from ..services.cloudinary_service import CloudinaryService
+from ..utils.firestore_signals import publish_signals, PAYMENTS_REVIEW_SIGNAL, PAYMENTS_CASHIER_SIGNAL
 from ..auth.session_auth import (
     cashier_required_from_session,
     admin_cashier_sales_required_from_session,
@@ -147,8 +148,9 @@ async def _generate_deposit_no(db: AsyncSession) -> str:
 
 async def _get_deposit_or_404(db: AsyncSession, deposit_id: str, current_user: User) -> CashDeposit:
     deposit = await db.get(CashDeposit, _parse_uuid(deposit_id))
-    # Cashier only sees their own deposits
-    if not deposit or (current_user.role.name == "cashier" and deposit.submitted_by != current_user.id):
+    # Every deposit of the branch is visible to the cashier too (2026-10-09: a deposit
+    # made by admin and rejected must reach the cashier to fix)
+    if not deposit:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deposit not found")
     return deposit
 
@@ -261,8 +263,6 @@ def _search_condition(search: str):
 
 
 def _apply_filters(statement, current_user: User, status_filter: Optional[str], search: Optional[str]):
-    if current_user.role.name == "cashier":
-        statement = statement.where(CashDeposit.submitted_by == current_user.id)
     if status_filter:
         statement = statement.where(CashDeposit.status == status_filter.upper())
     search = (search or "").strip()
@@ -315,14 +315,11 @@ async def pending_count(
     current_user: User = Depends(admin_cashier_sales_required_from_session()),
     db: AsyncSession = Depends(get_db),
 ):
-    """Pending deposits (cashier: own pending; sales/admin: all) + cashier's rejected count.
-    Sales/admin also get the oldest few pending (deposit no + Cash Of) for the dashboard."""
+    """Pending + rejected deposits of the branch. Sales/admin also get the oldest few
+    pending (deposit no + Cash Of) for the dashboard."""
     statement = select(func.count(CashDeposit.id)).where(CashDeposit.status == DEPOSIT_PENDING)
     rejected_statement = select(func.count(CashDeposit.id)).where(CashDeposit.status == DEPOSIT_REJECTED)
     is_cashier = current_user.role.name == "cashier"
-    if is_cashier:
-        statement = statement.where(CashDeposit.submitted_by == current_user.id)
-        rejected_statement = rejected_statement.where(CashDeposit.submitted_by == current_user.id)
     pending = (await db.execute(statement)).scalar_one()
 
     items = []
@@ -411,6 +408,7 @@ async def create_deposit(
 
     await db.refresh(deposit)
     logger.info(f"Cash deposit {deposit.deposit_no} submitted by {current_user.username}")
+    await publish_signals(PAYMENTS_REVIEW_SIGNAL)
     return await _deposit_response(db, deposit)
 
 
@@ -499,6 +497,7 @@ async def update_deposit(
     await _delete_cloudinary([s.public_id for s in removed])
     await db.refresh(deposit)
     logger.info(f"Cash deposit {deposit.deposit_no} edited/resubmitted by {current_user.username}")
+    await publish_signals(PAYMENTS_REVIEW_SIGNAL, PAYMENTS_CASHIER_SIGNAL)  # pending again, no longer rejected
     return await _deposit_response(db, deposit)
 
 
@@ -518,6 +517,10 @@ async def _review(db: AsyncSession, deposit_id: str, current_user: User, new_sta
     await db.commit()
     await db.refresh(deposit)
     logger.info(f"Cash deposit {deposit.deposit_no} {new_status} by {current_user.username}")
+    if new_status == DEPOSIT_REJECTED:
+        await publish_signals(PAYMENTS_REVIEW_SIGNAL, PAYMENTS_CASHIER_SIGNAL)
+    else:
+        await publish_signals(PAYMENTS_REVIEW_SIGNAL)
     return await _deposit_response(db, deposit)
 
 

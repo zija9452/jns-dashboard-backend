@@ -41,7 +41,7 @@ BRANCHES: Dict[str, Branch] = {
         quotation_prefix="QUO",
         deposit_prefix="DEP",
         barcode_prefix="690",
-        contact="0315-2263745",
+        contact="0337-3714593",
         address="Shop#8, Mazar Wali Gali, Light House, Khi",
     ),
     "karimabad": Branch(
@@ -55,8 +55,8 @@ BRANCHES: Dict[str, Branch] = {
         deposit_prefix="KDEP",
         barcode_prefix="691",
         # TEMP (2026-10-02): Light House contact/address until the manager confirms Karim Abad's
-        contact="0315-2263745",
-        address="Shop#8, Mazar Wali Gali, Light House, Khi",
+        contact="0337-3714594",
+        address="Shop#1 and 2, Adam Lehri Market, Karimabad Federal B Area Khi.",
     ),
 }
 

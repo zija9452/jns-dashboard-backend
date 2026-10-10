@@ -42,6 +42,19 @@ def _check_dye_rates(single, qty) -> None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Dye rate for {label} must be 1 or more")
 
 
+KIT_ROLES = ("jersey", "short", "trouser")
+
+
+def _check_kit(role, flat):
+    """Cleaned (kit_role, kit_flat_charge). Only Jersey / Short carry a kit flat."""
+    role = (role or "").strip().lower() or None
+    if role is not None and role not in KIT_ROLES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Kit must be Jersey, Short or Trouser")
+    if flat is not None and flat < 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Kit flat cannot be negative")
+    return role, (flat if role in ("jersey", "short") else None)
+
+
 @router.post("/", response_model=CustomerCategoryRead)
 async def create_customer_category(
     category: CustomerCategoryCreate,
@@ -73,6 +86,7 @@ async def create_customer_category(
 
     if category.mockup_charge is not None and category.mockup_charge < 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Flat charges cannot be negative")
+    kit_role, kit_flat_charge = _check_kit(category.kit_role, category.kit_flat_charge)
 
     db_category = CustomerCategory(
         main_category=category.main_category,
@@ -81,7 +95,9 @@ async def create_customer_category(
         mockup_charge=category.mockup_charge,
         dtf_enabled=category.dtf_enabled,
         dye_rate_single=category.dye_rate_single,
-        dye_rate_qty=category.dye_rate_qty
+        dye_rate_qty=category.dye_rate_qty,
+        kit_role=kit_role,
+        kit_flat_charge=kit_flat_charge
     )
 
     db.add(db_category)
@@ -137,6 +153,8 @@ async def get_customer_categories(
                 "dtf_enabled": bool(cat.dtf_enabled),
                 "dye_rate_single": float(cat.dye_rate_single),
                 "dye_rate_qty": float(cat.dye_rate_qty),
+                "kit_role": cat.kit_role,
+                "kit_flat_charge": float(cat.kit_flat_charge) if cat.kit_flat_charge is not None else None,
                 "created_at": cat.created_at.isoformat() if cat.created_at else None
             }
             for cat in categories
@@ -231,7 +249,10 @@ async def get_grouped_customer_categories(
             "dtf_enabled": bool(cat.dtf_enabled),
             # Dye lines' rate multiplier: 1-4 pcs / 5-15 pcs of dye (16+ = normal)
             "dye_rate_single": float(cat.dye_rate_single),
-            "dye_rate_qty": float(cat.dye_rate_qty)
+            "dye_rate_qty": float(cat.dye_rate_qty),
+            # Kit: "jersey" / "short" / "trouser" / None, and the kit flat (Jersey / Short)
+            "kit_role": cat.kit_role,
+            "kit_flat_charge": float(cat.kit_flat_charge) if cat.kit_flat_charge is not None else None
         }
         for cat in categories
     ]
@@ -288,6 +309,9 @@ async def update_customer_category(
         if key in update_data and update_data[key] is None:
             update_data.pop(key)  # NOT NULL - null means "leave as is"
     _check_dye_rates(update_data.get('dye_rate_single'), update_data.get('dye_rate_qty'))
+    if 'kit_role' in update_data or 'kit_flat_charge' in update_data:
+        update_data['kit_role'], update_data['kit_flat_charge'] = _check_kit(
+            update_data.get('kit_role', category.kit_role), update_data.get('kit_flat_charge', category.kit_flat_charge))
 
     # Convert sub_categories to list of dicts if present
     # Keep the order: sub_category first, then options

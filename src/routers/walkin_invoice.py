@@ -23,6 +23,10 @@ from ..models.salesman import Salesman
 from ..models.user import User
 from ..models.daily_cash import DailyCash, DailyCashCreate, DailyCashUpdate
 from ..models.stock_entry import StockEntry, StockEntryType
+from ..models.payment_proof import PaymentProof, SOURCE_WALKIN
+from .payment_proof import new_payment_entry, proof_for_payment, delete_invoice_proofs
+from .cash_deposit import _delete_cloudinary as delete_proof_cloudinary
+from ..utils.firestore_signals import publish_signals, PAYMENTS_REVIEW_SIGNAL, PAYMENTS_CASHIER_SIGNAL
 from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, cashier_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session
 
 router = APIRouter()
@@ -64,7 +68,15 @@ async def create_walkin_invoice(
         )
         existing_invoice = existing_result.scalar_one_or_none()
         if existing_invoice:
-            return {"invoice_id": str(existing_invoice.id), "invoice_no": existing_invoice.invoice_no}
+            # Proof of an online payment, so a retry can still upload its screenshot
+            existing_proof_id = (await db.execute(
+                select(PaymentProof.id).where(PaymentProof.invoice_id == existing_invoice.id).limit(1)
+            )).scalar_one_or_none()
+            return {
+                "invoice_id": str(existing_invoice.id),
+                "invoice_no": existing_invoice.invoice_no,
+                "proof_id": str(existing_proof_id) if existing_proof_id else None,
+            }
 
     # Validate that order items exist
     if not order_items:
@@ -262,6 +274,13 @@ async def create_walkin_invoice(
             )
             db.add(stock_out_entry)
 
+        # Payment entry with an id, so an online payment's screenshot proof can point at it
+        payment_entry = new_payment_entry(
+            amount_paid, payment_method,
+            payment_date.isoformat() if hasattr(payment_date, 'isoformat') else str(payment_date),
+            "Full payment at invoice creation",
+        )
+
         # Create invoice object
         invoice_obj = Invoice(
             invoice_no=invoice_no,
@@ -281,12 +300,7 @@ async def create_walkin_invoice(
             total_amount=Decimal(str(total_amount)),
             amount_paid=Decimal(str(amount_paid)),
             payment_status="paid",
-            payments_history=json.dumps([{
-                "amount": float(amount_paid),
-                "payment_method": payment_method,
-                "date": payment_date.isoformat() if hasattr(payment_date, 'isoformat') else str(payment_date),
-                "description": "Full payment at invoice creation"
-            }]),
+            payments_history=json.dumps([payment_entry]),
             discounts=Decimal(str(total_discount)),
             payment_method=payment_method,
             payment_date=payment_date,  # Payment date
@@ -297,8 +311,14 @@ async def create_walkin_invoice(
         
         # Add to database
         db.add(invoice_obj)
+        # Online payment (Easypaisa / bank) -> proof, MISSING until a screenshot is uploaded
+        proof = proof_for_payment(invoice_obj, payment_entry, current_user, SOURCE_WALKIN) if float(amount_paid) > 0 else None
+        if proof:
+            db.add(proof)
         await db.commit()
         await db.refresh(invoice_obj)
+        if proof:
+            await publish_signals(PAYMENTS_REVIEW_SIGNAL, PAYMENTS_CASHIER_SIGNAL)  # pay slip not attached yet
 
         # Update daily_cash sales_amount for the payment date (payment method-wise)
         # Use amount_paid (actual amount received) instead of total_amount
@@ -345,7 +365,7 @@ async def create_walkin_invoice(
         # PDF is generated on demand via GET /walkin-invoices/{invoice_id}/receipt,
         # not here — keeps this create request small so the "response lost in
         # transit" window is as short as possible.
-        return {"invoice_id": str(invoice_obj.id), "invoice_no": invoice_no}
+        return {"invoice_id": str(invoice_obj.id), "invoice_no": invoice_no, "proof_id": str(proof.id) if proof else None}
     finally:
         # Release the advisory lock
         unlock_result = await db.execute(select(func.pg_advisory_unlock(123459)))
@@ -507,8 +527,14 @@ async def delete_walkin_invoice(
     except Exception as e:
         logging.error(f"Error restoring inventory for invoice {invoice_id}: {str(e)}")
 
+    # Payment proofs of the bill go too; their screenshots are removed after commit
+    proof_image_ids = await delete_invoice_proofs(db, invoice.id)
+
     await db.delete(invoice)
     await db.commit()
+    if proof_image_ids is not None:
+        await delete_proof_cloudinary(proof_image_ids)
+        await publish_signals(PAYMENTS_REVIEW_SIGNAL, PAYMENTS_CASHIER_SIGNAL)
 
     return {
         "success": True,
@@ -1488,7 +1514,7 @@ def generate_walkin_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             <p><strong>Name:</strong> {customer_name}{team_line}</p>
             <p><strong>Ph:</strong> 00 | <strong>Remarks:</strong> 0</p>
         </div>
-        <div class="duplicate">*** {bill_type} ***</div>
+        <div class="duplicate">{bill_type}</div>
         <table>
             <thead>
                 <tr>

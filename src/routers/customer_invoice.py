@@ -27,6 +27,11 @@ from ..services.salesman_service import SalesmanService
 from ..models.customer import CustomerCreate
 from ..utils.mockup_charges import parse_mockup_charges, mockup_charges_from_totals, load_dye_options
 from ..utils.dtf_charges import load_dtf_context, parse_item_dtf, dtf_charges_from_items, dtf_charges_from_totals
+from ..utils.item_teams import has_teams, team_groups, flat_charges_of_team, flat_charge_label, apply_item_teams, team_names_label
+from ..models.payment_proof import PaymentProof
+from .payment_proof import new_payment_entry, proof_for_payment, delete_invoice_proofs
+from .cash_deposit import _delete_cloudinary as delete_proof_cloudinary
+from ..utils.firestore_signals import publish_signals, PAYMENTS_REVIEW_SIGNAL, PAYMENTS_CASHIER_SIGNAL
 
 router = APIRouter()
 
@@ -203,10 +208,17 @@ async def save_customer_orders(
         )
         existing_invoice = existing_result.scalar_one_or_none()
         if existing_invoice:
+            # Proof of the online initial payment, so a retry can still upload its screenshot
+            proof_result = await db.execute(
+                select(PaymentProof.id).where(PaymentProof.invoice_id == existing_invoice.id)
+                .order_by(PaymentProof.recorded_at).limit(1)
+            )
+            existing_proof_id = proof_result.scalar_one_or_none()
             return {
                 "success": True,
                 "invoice_id": str(existing_invoice.id),
-                "invoice_no": existing_invoice.invoice_no
+                "invoice_no": existing_invoice.invoice_no,
+                "proof_id": str(existing_proof_id) if existing_proof_id else None,
             }
 
     # Validate that order items exist
@@ -353,6 +365,11 @@ async def save_customer_orders(
                 detail=f"Invalid data format in order item: {str(e)}"
             )
 
+    # Team of each line + its "+ Similar" line (see utils/item_teams.py); the order's
+    # team_name lists every team.
+    apply_item_teams(order_items, items_list)
+    team_name = team_names_label(items_list, team_name)
+
     # total_pieces used for rush charge - charged per piece across the whole
     # order, the same way quotation.py's _compute_rush does.
     total_pieces = sum(i["quantity"] for i in items_list)
@@ -461,12 +478,10 @@ async def save_customer_orders(
         initial_payment_history = []
         if initial_paid_amount > 0:
             from datetime import datetime
-            initial_payment_history.append({
-                "amount": float(initial_paid_amount),
-                "payment_method": payment_method,
-                "date": datetime.now().isoformat(),
-                "description": f"Initial payment at order creation: {initial_paid_amount}"
-            })
+            initial_payment_history.append(new_payment_entry(
+                initial_paid_amount, payment_method, datetime.now().isoformat(),
+                f"Initial payment at order creation: {initial_paid_amount}",
+            ))
 
         # Use the initial_paid_amount from request (what user actually paid)
         calculated_amount_paid = initial_paid_decimal
@@ -518,14 +533,23 @@ async def save_customer_orders(
         # Add to database - include all fields that exist in the model including total_amount, amount_paid, balance_due, and payment_status
         db_customer_invoice = CustomerInvoice(**{k: v for k, v in invoice_data.items()})
         db.add(db_customer_invoice)
+        # Online initial payment -> proof (MISSING until a screenshot is uploaded).
+        # Flush first: the proof's FK needs the invoice row.
+        proof = proof_for_payment(db_customer_invoice, initial_payment_history[0], current_user) if initial_payment_history else None
+        if proof:
+            await db.flush()
+            db.add(proof)
         await db.commit()
         await db.refresh(db_customer_invoice)  # Refresh to get the created record
+        if proof:
+            await publish_signals(PAYMENTS_REVIEW_SIGNAL, PAYMENTS_CASHIER_SIGNAL)  # online payment, pay slip not attached yet
 
         # Return invoice_id for fetching receipt (consistent with customer details pattern)
         return {
             "success": True,
             "invoice_id": str(db_customer_invoice.id),
-            "invoice_no": invoice_no
+            "invoice_no": invoice_no,
+            "proof_id": str(proof.id) if proof else None,
         }
     finally:
         # Release the advisory lock
@@ -664,9 +688,8 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
     if float(amount_paid or 0) <= 0:
         payment_html = '<p>Payment Status: UNPAID</p>'
     else:
+        # Partial or full - just the mode; the Balance row already shows what's left.
         payment_html = f'<p>Payment Mode: {_display_payment_method(payment_method)}</p>'
-        if float(balance_due or 0) > 0:
-            payment_html += '<p>Payment Status: PARTIALLY PAID</p>'
 
     # created_at is stored as naive local (Asia/Karachi) time already - no UTC shift needed
     created_at_pkt = created_at if created_at.tzinfo is None else created_at.astimezone(PKT)
@@ -714,20 +737,27 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
         page_height += 18
     if rush_charge > 0:
         page_height += 18
+    # [RUSH ORDER] goes on its own line under the bill title.
+    if is_rush:
+        page_height += 20
     # "Rush (300/pc x 10 pcs)" instead of a bare total, so the customer sees it's per piece.
     total_pieces = sum(int(i.get('quantity', 0)) for i in items)
     rush_label = f"Rush ({float(rush_rate):.0f}/pc &times; {total_pieces} pcs)" if rush_rate is not None else "Rush Charge"
     # One "Mockup (T-shirt)" row per category charged - grows the page like the rush row.
     from html import escape as _escape
+    # Team order: flat charges and DTF go inside each team's block (and its team total),
+    # not in the totals at the end - see items_rows below.
+    team_order = has_teams(items)
     mockup_rows = ""
-    for mc in (mockup_charges or []):
+    for mc in ([] if team_order else (mockup_charges or [])):
         page_height += 18
         mockup_rows += (
-            f'<p class="total-row"><span class="total-label">Flat Charges ({_escape(str(mc.get("category", "")))}):</span>'
+            # Shorter "Flat (Team A - T-shirt)" for a team's charge so it fits the 246px receipt.
+            f'<p class="total-row"><span class="total-label">{"MOQ" if mc.get("team") else "MOQ Charges"} ({flat_charge_label(mc)}):</span>'
             f'<span class="total-value">+{float(mc.get("amount", 0)):.0f}</span></p>'
         )
     # One "DTF (Hoodie, 1 m)" row per line with DTF logos - same layout as the mockup rows.
-    for dc in (dtf_charges or []):
+    for dc in ([] if team_order else (dtf_charges or [])):
         page_height += 18
         mockup_rows += (
             f'<p class="total-row"><span class="total-label">DTF ({_escape(str(dc.get("category", "")))}, {float(dc.get("meters", 0)):g} m):</span>'
@@ -735,14 +765,50 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
         )
     
     # Create simple HTML for PDF (same pattern as customers.py)
-    items_rows = ""
-    for item in items[:10]:
-        name = str(item.get('product_name', ''))[:30]
+    def receipt_item_row(item) -> str:
+        # "+ Similar" rows (same team and category) are marked with an arrow.
+        name = ("&#8627; " if item.get('similar_of') else "") + _escape(str(item.get('product_name', ''))[:30])
         qty = int(item.get('quantity', 0))
         price = float(item.get('unit_price', 0))
         disc = float(item.get('discount', 0))
         total = float(item.get('total_price', 0))
-        items_rows += f'<tr><td style="width: 40%; border-bottom: 1px dashed #000; padding: 2px;"><div style="font-weight: bold; margin-bottom: 3px;">{name}</div></td><td style="width: 15%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{price:.0f}</td><td style="width: 12%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{qty}</td><td style="width: 13%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{disc:.0f}</td><td style="width: 20%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{total:.0f}</td></tr>\n'
+        return f'<tr><td style="width: 40%; border-bottom: 1px dashed #000; padding: 2px;"><div style="font-weight: bold; margin-bottom: 3px;">{name}</div></td><td style="width: 15%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{price:.0f}</td><td style="width: 12%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{qty}</td><td style="width: 13%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{disc:.0f}</td><td style="width: 20%; border-bottom: 1px dashed #000; padding: 2px; text-align: center;">{total:.0f}</td></tr>\n'
+
+    def receipt_extra_row(label: str, amount: float) -> str:
+        # Flat charges / DTF line inside a team's block: label across, amount under Amount.
+        return f'<tr><td colspan="4" style="text-align: left; border-bottom: 1px dashed #000; padding: 2px;">{label}</td><td style="text-align: center; border-bottom: 1px dashed #000; padding: 2px;">{amount:.0f}</td></tr>\n'
+
+    items_rows = ""
+    if team_order:
+        # Team order (from a quotation): team name row, its items, its MOQ charges and
+        # DTF. No per-team total row - the Total Bill at the end is enough.
+        teams_sum = 0.0
+        for team, rows in team_groups(items, team_name):
+            rows = [item for _, item in rows]
+            flats = flat_charges_of_team(mockup_charges, team)
+            flat_total = sum(float(mc.get("amount", 0)) for mc in flats)
+            dtf_total = sum(float((item.get("dtf") or {}).get("amount", 0) or 0) for item in rows)
+            team_total = sum(float(item.get('total_price', 0)) for item in rows) + flat_total + dtf_total
+            teams_sum += team_total
+            page_height += 18
+            items_rows += f'<tr><td colspan="5" style="text-align: left; font-weight: bold; border-bottom: 1px solid #000; padding: 4px 2px 2px;">{_escape(team).upper()}</td></tr>\n'
+            items_rows += "".join(receipt_item_row(item) for item in rows)
+            for mc in flats:
+                page_height += 22
+                items_rows += receipt_extra_row(f'MOQ Charges - {_escape(str(mc.get("category", "")))}', float(mc.get("amount", 0)))
+            for item in rows:
+                dtf = item.get("dtf") or {}
+                if dtf.get("amount"):
+                    page_height += 22
+                    items_rows += receipt_extra_row(
+                        f'DTF - {_escape(str(item.get("product_name", "")))} ({float(dtf.get("half_meters", 0)) / 2:g} m)',
+                        float(dtf.get("amount", 0))
+                    )
+        # "Total Bill" = the team totals added up, so Total Bill + rush = Grand Total.
+        subtotal = teams_sum
+    else:
+        # Every item - page_height above already grows with all of them.
+        items_rows = "".join(receipt_item_row(item) for item in items)
 
     current_date = created_at_pkt.strftime('%d-%m-%Y %I:%M %p')
     team_line = f" | <strong>Team:</strong> {team_name}" if team_name else ""
@@ -958,7 +1024,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             <p><strong>Ph:</strong> 00 | <strong>Remarks:</strong> 0</p>
             {required_by_line}
         </div>
-        <div class="duplicate">*** {bill_type} ***{' [RUSH ORDER]' if is_rush else ''}</div>
+        <div class="duplicate">{bill_type}{'<br>[RUSH ORDER]' if is_rush else ''}</div>
         <table>
             <thead>
                 <tr>
@@ -1562,7 +1628,7 @@ async def delete_custom_order_endpoint(
     Delete a customer invoice by ID (mapped to work with customer invoices)
     Required by JavaScript frontend
     """
-    from sqlalchemy import select
+    from sqlalchemy import select, func
     from uuid import UUID
     from ..models.customer_invoice import CustomerInvoice
 
@@ -1585,9 +1651,15 @@ async def delete_custom_order_endpoint(
             detail="Invoice not found"
         )
 
+    # Payment proofs of the invoice go too; their screenshots are removed after commit
+    proof_image_ids = await delete_invoice_proofs(db, invoice.id)
+
     # Delete the invoice
     await db.delete(invoice)
     await db.commit()
+    if proof_image_ids is not None:
+        await delete_proof_cloudinary(proof_image_ids)
+        await publish_signals(PAYMENTS_REVIEW_SIGNAL, PAYMENTS_CASHIER_SIGNAL)
 
     return {
         "success": True,
@@ -2181,12 +2253,7 @@ async def process_payment(
     if len(description) > 500:  # Limit description length
         description = description[:500]
 
-    new_payment = {
-        "amount": float(amount),
-        "payment_method": str(payment_method),
-        "date": payment_datetime.isoformat(),
-        "description": str(description)
-    }
+    new_payment = new_payment_entry(amount, payment_method, payment_datetime.isoformat(), description)
     payment_history.append(new_payment)
 
     # Update the invoice
@@ -2196,10 +2263,18 @@ async def process_payment(
     invoice.payments_history = json.dumps(payment_history)
     invoice.updated_at = datetime.now()
 
+    # Online payment -> proof (MISSING until a screenshot is uploaded)
+    proof = proof_for_payment(invoice, new_payment, current_user)
+    if proof:
+        db.add(proof)
+
     await db.commit()
     await db.refresh(invoice)
+    if proof:
+        await publish_signals(PAYMENTS_REVIEW_SIGNAL, PAYMENTS_CASHIER_SIGNAL)  # online payment, pay slip not attached yet
 
     return {
+        "proof_id": str(proof.id) if proof else None,
         "order_id": str(invoice.id),
         "invoice_no": invoice.invoice_no,
         "previous_balance": float(previous_balance),

@@ -31,6 +31,18 @@ def branch_signal_id(signal_id: str) -> str:
     return signal_id if branch == DEFAULT_BRANCH else f"{signal_id}__{branch}"
 
 
+# Payments Record badges (per branch): sales/admin listen to REVIEW (something new to
+# approve, or an approval done by someone else), the cashier to CASHIER (a reject, or
+# an online payment missing its screenshot).
+PAYMENTS_REVIEW_SIGNAL = "payments_record_review"
+PAYMENTS_CASHIER_SIGNAL = "payments_record_cashier"
+
+
+async def publish_signals(*signal_ids: str) -> None:
+    for signal_id in signal_ids:
+        await publish_signal(signal_id)
+
+
 async def publish_signal(signal_id: str) -> None:
     """Best-effort ping. Never raises - the badge just falls back to its
     existing poll if this fails, but the caller's actual DB write must not

@@ -557,6 +557,10 @@ class SwitchBranchRequest(BaseModel):
     branch: str
 
 
+# Roles that get the branch dropdown (must match BranchSwitcher.tsx)
+BRANCH_SWITCH_ROLES = {"admin", "sales", "production"}
+
+
 @router.post("/switch-branch")
 async def switch_branch(
     switch_request: SwitchBranchRequest,
@@ -566,14 +570,16 @@ async def switch_branch(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Admin only: move the current login to another branch. Each branch has its
-    own users table, so the target branch must have an active admin with the
-    same username; a new session is created there and the cookies are swapped.
+    Admin, sales and production: move the current login to another branch. Each
+    branch has its own users table, so the target branch must have an active user
+    with the same username and the same role; a new session is created there and
+    the cookies are swapped.
     """
     from ..database.database import session_factories
 
-    if current_user.role.name != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admin can switch branch")
+    role_name = current_user.role.name
+    if role_name not in BRANCH_SWITCH_ROLES:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot switch branch")
 
     target = switch_request.branch
     if target not in BRANCHES:
@@ -586,10 +592,10 @@ async def switch_branch(
             select(User).options(selectinload(User.role)).where(User.username == current_user.username)
         )
         target_user = result.scalar_one_or_none()
-        if not target_user or not target_user.is_active or target_user.role.name != "admin":
+        if not target_user or not target_user.is_active or target_user.role.name != role_name:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Is branch me aapka admin account nahi hai"
+                detail="Is branch me aapka account nahi hai"
             )
         new_session = await create_session(
             user_id=str(target_user.id),

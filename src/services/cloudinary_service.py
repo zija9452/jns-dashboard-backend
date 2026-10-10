@@ -56,10 +56,10 @@ class CloudinaryService:
             raise Exception(f"Failed to upload image: {str(e)}")
 
     @staticmethod
-    async def upload_slip_image(file_bytes: bytes, public_id: str) -> dict:
+    async def upload_slip_image(file_bytes: bytes, public_id: str, folder: str = "cash-deposits") -> dict:
         """
-        Upload a bank deposit slip image in original quality (no transformation,
-        so small text / amount / stamp stays readable).
+        Upload a bank deposit slip / payment screenshot in original quality (no
+        transformation, so small text / amount / stamp stays readable).
 
         Returns:
             {"url": secure URL, "public_id": Cloudinary public id (for delete)}
@@ -67,7 +67,7 @@ class CloudinaryService:
         try:
             upload_result = cloudinary.uploader.upload(
                 file_bytes,
-                folder="european-sports/cash-deposits",
+                folder=f"european-sports/{folder}",
                 public_id=public_id,
                 resource_type="image",
             )

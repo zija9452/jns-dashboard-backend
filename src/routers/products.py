@@ -13,6 +13,7 @@ from ..models.product import Product, ProductCreate, ProductUpdate, ProductRead
 from ..models.user import User  # Import User at the top to avoid NameError
 from ..services.product_service import ProductService
 from ..services.cloudinary_service import CloudinaryService
+from ..services.product_mirror import find_clash, mirror_product, should_mirror
 from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, admin_employee_required_from_session, admin_employee_warehouse_required_from_session, admin_employee_warehouse_production_required_from_session
 from sqlmodel import select
 
@@ -51,7 +52,11 @@ async def clear_products_cache():
     
     logger.info("✓ Product cache invalidated")
 
-@router.post("/", response_model=ProductRead)
+class ProductCreateResult(ProductRead):
+    branch_warnings: List[str] = []  # other branches where the copy failed
+
+
+@router.post("/", response_model=ProductCreateResult)
 async def create_product(
     product_create: ProductCreate,
     current_user: User = Depends(get_current_user_from_session),
@@ -93,20 +98,31 @@ async def create_product(
             detail="Product with this SKU already exists"
         )
 
-    # Barcode is unique (and typed by hand in branches other than Light House)
-    if product_create.barcode:
-        result = await db.execute(select(Product).where(Product.barcode == product_create.barcode))
-        barcode_owner = result.scalar_one_or_none()
-        if barcode_owner:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Barcode {product_create.barcode} is already used by '{barcode_owner.name}'"
-            )
+    # Barcode is generated but editable (to keep an existing label); required and unique
+    product_create.barcode = (product_create.barcode or "").strip()
+    if not product_create.barcode:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Barcode is required")
+    result = await db.execute(select(Product).where(Product.barcode == product_create.barcode))
+    barcode_owner = result.scalar_one_or_none()
+    if barcode_owner:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Barcode {product_create.barcode} is already used by '{barcode_owner.name}'"
+        )
+
+    # Also created in the other branches (stock 0): their name / SKU must be free there too
+    mirror = should_mirror(product_create.is_warehouse_product, product_create.name)
+    if mirror:
+        clash = await find_clash(product_create.name, product_create.sku, product_create.barcode)
+        if clash:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=clash)
 
     # Clear cache after creating product
     await clear_products_cache()
 
-    return await ProductService.create_product(db, product_create, str(current_user.id))
+    product = await ProductService.create_product(db, product_create, str(current_user.id))
+    warnings = await mirror_product(product) if mirror else []
+    return ProductCreateResult(**ProductRead.model_validate(product).model_dump(), branch_warnings=warnings)
 
 # --- TEMPORARY BULK INSERT ENDPOINT (Remove after use) ---
 @router.post("/bulk-insert", response_model=List[ProductRead])
@@ -738,7 +754,11 @@ async def update_product(
                 detail="Product with this name already exists. Please use a different name."
             )
 
-    # Barcode is unique (and typed by hand in branches other than Light House)
+    # Barcode is editable but can't be emptied, and is unique
+    if product_update.barcode is not None:
+        product_update.barcode = product_update.barcode.strip()
+        if not product_update.barcode:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Barcode is required")
     if product_update.barcode and product_update.barcode != product.barcode:
         from sqlmodel import select
         result = await db.execute(select(Product).where(Product.barcode == product_update.barcode))

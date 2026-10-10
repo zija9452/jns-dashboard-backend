@@ -11,3 +11,4 @@ from .invoice import Invoice
 from .refund import Refund
 from .audit_log import AuditLog
 from .cash_deposit import CashDeposit, CashDepositSlip
+from .payment_proof import PaymentProof, PaymentProofImage

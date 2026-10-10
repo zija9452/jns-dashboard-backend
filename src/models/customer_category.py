@@ -3,7 +3,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 import uuid
 from decimal import Decimal
-from sqlalchemy import Column, Numeric, Boolean, text
+from sqlalchemy import Column, Numeric, Boolean, String, text
 from sqlalchemy.dialects.postgresql import JSONB
 from ..config.branches import current_branch_name
 
@@ -68,6 +68,13 @@ class CustomerCategory(SQLModel, table=True):
     # (16+ = normal rate). Set on the Ideal Pricing page.
     dye_rate_single: Decimal = Field(default=Decimal("2"), sa_column=Column(Numeric(5, 2), nullable=False, server_default=text("2")))
     dye_rate_qty: Decimal = Field(default=Decimal("1.5"), sa_column=Column(Numeric(5, 2), nullable=False, server_default=text("1.5")))
+    # Kit (Quotation / Customer Invoice): what this category is in a team's kit -
+    # "jersey", "short", "trouser" or None. For a team that is one of our ready articles
+    # (products page), the first Jersey / Short added pays kit_flat_charge instead of the
+    # flat charge and the other pays 0; a Trouser pays 0 when the team's Jersey is in the
+    # order. Set on the Customer Category page.
+    kit_role: Optional[str] = Field(default=None, sa_column=Column(String(10), nullable=True))
+    kit_flat_charge: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(10, 2), nullable=True))
     created_at: datetime = Field(default_factory=lambda: datetime.now())
 
 
@@ -79,6 +86,8 @@ class CustomerCategoryCreate(SQLModel):
     dtf_enabled: bool = False
     dye_rate_single: Decimal = Decimal("2")
     dye_rate_qty: Decimal = Decimal("1.5")
+    kit_role: Optional[str] = None
+    kit_flat_charge: Optional[Decimal] = None
 
 
 class CustomerCategoryUpdate(SQLModel):
@@ -89,6 +98,8 @@ class CustomerCategoryUpdate(SQLModel):
     dtf_enabled: Optional[bool] = None
     dye_rate_single: Optional[Decimal] = None  # null = leave as is
     dye_rate_qty: Optional[Decimal] = None
+    kit_role: Optional[str] = None  # send null (or "") for not part of a kit
+    kit_flat_charge: Optional[Decimal] = None
 
 
 class CustomerCategoryRead(SQLModel):
@@ -100,6 +111,8 @@ class CustomerCategoryRead(SQLModel):
     dtf_enabled: bool = False
     dye_rate_single: Decimal = Decimal("2")
     dye_rate_qty: Decimal = Decimal("1.5")
+    kit_role: Optional[str] = None
+    kit_flat_charge: Optional[Decimal] = None
     created_at: datetime
 
 
