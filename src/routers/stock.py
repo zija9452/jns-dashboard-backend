@@ -1,5 +1,5 @@
-﻿from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import or_
+﻿from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List, Optional
@@ -7,6 +7,7 @@ from uuid import UUID
 import uuid
 from datetime import datetime, timezone, timedelta
 import base64
+import logging
 import os
 
 # Pakistan Standard Time = UTC+5
@@ -63,9 +64,11 @@ from ..models.product import Product
 from ..models.vendor import Vendor
 from ..models.stock_entry import StockEntry, StockEntryType, StockEntryCreate, StockEntryUpdate, StockEntryRead
 from ..services.stock_service import StockService
+from ..services.shop_transfer import TRANSFER_LOCATIONS, TRANSFER_OUT, transfer_label
 from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, cashier_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session, admin_cashier_employee_production_required_from_session, warehouse_required_from_session
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # Guards against accidental double-submission of the same stock-in (double-click,
 # slow network causing a manual retry, etc.) - if an identical IN entry for the
@@ -371,6 +374,102 @@ async def adjust_stock(
         "message": "Stock adjustment completed successfully",
         "results": results
     }
+
+
+# ============================================================================
+# Shop -> shop stock transfer (STOCK_TRANSFER_PLAN.md)
+# ============================================================================
+
+class StockTransferRequest(BaseModel):
+    items: List[dict]  # [{"product_id": "uuid", "quantity": 5}]
+    to_branch: Optional[str] = None  # Defaults to the other branch
+
+
+@router.get("/transfer/target")
+async def stock_transfer_target(
+    request: Request,
+    to_branch: Optional[str] = None,
+    current_user: User = Depends(admin_cashier_employee_production_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """Branch the stock goes to, and whether its database is reachable
+    (checked when the Transfer Stock page opens)."""
+    from ..config.branches import BRANCHES
+    from ..database.database import session_factories
+    from ..services.shop_transfer import resolve_target, ShopTransferError
+
+    from_code = request.state.branch
+    try:
+        to_code = resolve_target(from_code, to_branch)
+    except ShopTransferError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    connected = True
+    try:
+        async with session_factories[to_code]() as dst_db:
+            await dst_db.execute(select(1))
+    except Exception:
+        connected = False
+
+    return {
+        "from_branch": BRANCHES[from_code].name,
+        "to_branch_code": to_code,
+        "to_branch": BRANCHES[to_code].name,
+        "connected": connected,
+    }
+
+
+@router.post("/transfer/check")
+async def stock_transfer_check(
+    body: StockTransferRequest,
+    request: Request,
+    current_user: User = Depends(admin_cashier_employee_production_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """Check items against the receiving branch (by barcode). Writes nothing.
+    Each item: status ok / warning (can send) / error (blocked)."""
+    from ..database.database import session_factories
+    from ..services.shop_transfer import resolve_target, check_items, ShopTransferError
+
+    try:
+        to_code = resolve_target(request.state.branch, body.to_branch)
+        async with session_factories[to_code]() as dst_db:
+            checks = await check_items(db, dst_db, to_code, body.items)
+    except ShopTransferError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Stock transfer check failed")
+        raise HTTPException(status_code=503, detail="Could not connect to the other branch database")
+    return {"items": checks}
+
+
+@router.post("/transfer/save")
+async def stock_transfer_save(
+    body: StockTransferRequest,
+    request: Request,
+    current_user: User = Depends(admin_cashier_employee_production_required_from_session()),
+    db: AsyncSession = Depends(get_db)
+):
+    """Send shop stock to the other branch: stock_level goes down here
+    ("Transfer Out") and up there ("Transfer In"). All items or none."""
+    from ..services.shop_transfer import resolve_target, save_transfer, ShopTransferError
+
+    from_code = request.state.branch
+    try:
+        to_code = resolve_target(from_code, body.to_branch)
+        return await save_transfer(db, from_code, to_code, body.items, current_user)
+    except ShopTransferError as e:
+        await db.rollback()
+        detail = {"message": str(e), "items": getattr(e, "checks", None)}
+        raise HTTPException(status_code=400, detail=detail)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Stock transfer %s -> %s failed", from_code, body.to_branch)
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Transfer failed. Please contact the admin.")
 
 
 @router.post("/savestockin")
@@ -865,8 +964,11 @@ async def stock_in_report(
         select(StockEntry, Product, User.username)
         .join(Product, StockEntry.product_id == Product.id)
         .outerjoin(User, StockEntry.created_by == User.id)
-        .where(StockEntry.type == StockEntryType.IN)
-        .where(StockEntry.location == "Stock In")
+        # Shop transfers show here too: "Transfer In" (+qty) / "Transfer Out" (-qty)
+        .where(or_(
+            and_(StockEntry.type == StockEntryType.IN, StockEntry.location == "Stock In"),
+            StockEntry.location.in_(TRANSFER_LOCATIONS),
+        ))
         .where(StockEntry.created_at >= from_date)
         .where(StockEntry.created_at <= to_date)
         .order_by(StockEntry.created_at.desc())
@@ -907,12 +1009,15 @@ async def stock_in_report(
             entry_date = entry_pkt.strftime("%d-%m-%Y")
             entry_time = entry_pkt.strftime("%I:%M %p")
             entered_by = username or "-"
+            label = transfer_label(entry)
+            entry_type = f'<span class="tag">TRANSFER</span> {label}' if label else "Stock In"
 
             product_rows_list.append(f"""
             <tr>
                 <td class="border" style="text-align: center;">{i+1}</td>
                 <td class="border">{product.name}</td>
                 <td class="border">{product.barcode or '-'}</td>
+                <td class="border">{entry_type}</td>
                 <td class="border text-right">{entry.qty}</td>
                 <td class="border text-right">{float(entry.unit_price) if entry.unit_price is not None else (float(product.unit_price) if product.unit_price else 0.0):.2f}</td>
                 <td class="border text-right">{float(entry.cost_price) if entry.cost_price else 0.0:.2f}</td>
@@ -926,9 +1031,23 @@ async def stock_in_report(
 
         product_rows = "".join(product_rows_list)
 
-        # Calculate totals (exact, based on the cost_price actually recorded for each stock-in entry)
-        total_qty = sum(entry.qty for entry, product, username in results)
-        total_cost = sum(entry.qty * float(entry.cost_price or 0) for entry, product, username in results)
+        # Calculate totals (exact, based on the cost_price actually recorded for each stock-in entry).
+        # Stock In + Transfer In are added together; Transfer Out is a separate minus line.
+        in_rows = [entry for entry, product, username in results if entry.location != TRANSFER_OUT]
+        out_rows = [entry for entry, product, username in results if entry.location == TRANSFER_OUT]
+        total_qty = sum(entry.qty for entry in in_rows)
+        total_cost = sum(entry.qty * float(entry.cost_price or 0) for entry in in_rows)
+        out_qty = sum(entry.qty for entry in out_rows)
+        out_cost = sum(entry.qty * float(entry.cost_price or 0) for entry in out_rows)
+        transfer_out_footer = f"""
+                    <tr>
+                        <td colspan="4" class="border text-right" style="font-weight: bold;">Transfer Out:</td>
+                        <td class="border text-right" style="font-weight: bold;">{out_qty}</td>
+                        <td class="border"></td>
+                        <td class="border text-right" style="font-weight: bold;">{out_cost:.2f}</td>
+                        <td colspan="5"></td>
+                    </tr>
+        """ if out_rows else ""
         
         html_content = f"""
         <!DOCTYPE html>
@@ -996,6 +1115,14 @@ async def stock_in_report(
                     font-size: 12px;
                     color: #666;
                 }}
+                .tag {{
+                    background-color: #f59e0b;
+                    color: #fff;
+                    font-size: 10px;
+                    font-weight: bold;
+                    padding: 1px 4px;
+                    border-radius: 3px;
+                }}
             </style>
         </head>
         <body>
@@ -1007,6 +1134,7 @@ async def stock_in_report(
                         <th>S.No</th>
                         <th>Product Name</th>
                         <th>Barcode</th>
+                        <th>Type</th>
                         <th>Qty In</th>
                         <th>Price</th>
                         <th>Cost</th>
@@ -1022,12 +1150,13 @@ async def stock_in_report(
                 </tbody>
                 <tfoot>
                     <tr>
-                        <td colspan="3" class="border text-right" style="font-weight: bold;">Total:</td>
+                        <td colspan="4" class="border text-right" style="font-weight: bold;">{"Total In:" if out_rows else "Total:"}</td>
                         <td class="border text-right" style="font-weight: bold;">{total_qty}</td>
                         <td class="border"></td>
                         <td class="border text-right" style="font-weight: bold;">{total_cost:.2f}</td>
                         <td colspan="5"></td>
                     </tr>
+                    {transfer_out_footer}
                 </tfoot>
             </table>
         </body>
@@ -1095,8 +1224,11 @@ async def stock_in_report_excel(
         select(StockEntry, Product, User.username)
         .join(Product, StockEntry.product_id == Product.id)
         .outerjoin(User, StockEntry.created_by == User.id)
-        .where(StockEntry.type == StockEntryType.IN)
-        .where(StockEntry.location == "Stock In")
+        # Shop transfers show here too: "Transfer In" (+qty) / "Transfer Out" (-qty)
+        .where(or_(
+            and_(StockEntry.type == StockEntryType.IN, StockEntry.location == "Stock In"),
+            StockEntry.location.in_(TRANSFER_LOCATIONS),
+        ))
         .where(StockEntry.created_at >= from_date)
         .where(StockEntry.created_at <= to_date)
         .order_by(StockEntry.created_at.desc())
@@ -1109,22 +1241,31 @@ async def stock_in_report_excel(
     ws = wb.active
     ws.title = "Stock In Report"
 
-    headers = ["S.No", "Product Name", "Barcode", "Qty In", "Price", "Cost", "Category", "Branch", "Date", "Time", "User"]
+    headers = ["S.No", "Product Name", "Barcode", "Type", "Qty In", "Price", "Cost", "Category", "Branch", "Date", "Time", "User"]
     ws.append(headers)
 
+    # Stock In + Transfer In are added together; Transfer Out is a separate minus line
     total_qty = 0
     total_cost = 0.0
+    out_qty = 0
+    out_cost = 0.0
     for i, (entry, product, username) in enumerate(results):
         entry_pkt = to_pkt(entry.created_at)
         qty = entry.qty
         cost_price = float(entry.cost_price) if entry.cost_price is not None else 0.0
-        total_qty += qty
-        total_cost += qty * cost_price
+        if entry.location == TRANSFER_OUT:
+            out_qty += qty
+            out_cost += qty * cost_price
+        else:
+            total_qty += qty
+            total_cost += qty * cost_price
+        label = transfer_label(entry)
 
         ws.append([
             i + 1,
             product.name,
             product.barcode or "",
+            f"TRANSFER: {label}" if label else "Stock In",
             qty,
             float(entry.unit_price) if entry.unit_price is not None else (float(product.unit_price) if product.unit_price else 0.0),
             cost_price,
@@ -1135,11 +1276,14 @@ async def stock_in_report_excel(
             username or "-",
         ])
 
-    total_row = ["", "", "", total_qty, "", round(total_cost, 2), "", "", "", "", ""]
-    ws.append(total_row)
-    last_row = ws.max_row
-    for col in range(1, len(headers) + 1):
-        ws.cell(row=last_row, column=col).font = Font(bold=True)
+    footer_rows = [["", "", "", "Total In" if out_qty else "Total", total_qty, "", round(total_cost, 2), "", "", "", "", ""]]
+    if out_qty:
+        footer_rows.append(["", "", "", "Transfer Out", out_qty, "", round(out_cost, 2), "", "", "", "", ""])
+    for footer_row in footer_rows:
+        ws.append(footer_row)
+        last_row = ws.max_row
+        for col in range(1, len(headers) + 1):
+            ws.cell(row=last_row, column=col).font = Font(bold=True)
 
     buffer = io.BytesIO()
     wb.save(buffer)

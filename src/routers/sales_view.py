@@ -2218,6 +2218,269 @@ async def get_stock_adjustments_excel(
     }
 
 
+# ==================== STOCK TRANSFER REPORT ENDPOINTS ====================
+
+async def _stock_transfer_rows(db: AsyncSession, from_date: str, to_date: str) -> List[Dict[str, Any]]:
+    """Shop -> shop transfers of this branch in the date range: Transfer Out (-qty)
+    and Transfer In (+qty), oldest first."""
+    from src.config.branches import BRANCHES, current_branch_name
+    from src.services.shop_transfer import TRANSFER_LOCATIONS, TRANSFER_OUT
+
+    try:
+        from_date_obj = datetime.fromisoformat(from_date).date()
+        to_date_obj = datetime.fromisoformat(to_date).date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format")
+
+    statement = (
+        select(StockEntry, Product, User.username)
+        .outerjoin(Product, StockEntry.product_id == Product.id)
+        .outerjoin(User, StockEntry.created_by == User.id)
+        .where(
+            and_(
+                StockEntry.location.in_(TRANSFER_LOCATIONS),
+                func.date(StockEntry.created_at) >= from_date_obj,
+                func.date(StockEntry.created_at) <= to_date_obj
+            )
+        )
+        .order_by(StockEntry.created_at)
+    )
+    result = await db.execute(statement)
+
+    this_name = current_branch_name()
+    rows = []
+    for entry, product, username in result.all():
+        # ref: TRANSFER_TO_<code>_... (sent) / TRANSFER_FROM_<code>_... (received)
+        parts = (entry.ref or "").split("_")
+        other = BRANCHES[parts[2]].name if len(parts) > 2 and parts[2] in BRANCHES else "?"
+        sent = entry.location == TRANSFER_OUT
+        rows.append({
+            "date": entry.created_at.strftime('%Y-%m-%d'),
+            "time": entry.created_at.strftime('%I:%M %p'),
+            "product": product.name if product else "Unknown",
+            "barcode": (product.barcode if product else None) or "-",
+            "type": "Sent" if sent else "Received",
+            "route": f"{this_name} → {other}" if sent else f"{other} → {this_name}",
+            "qty": entry.qty,
+            "user": username or "-",
+        })
+    return rows
+
+
+@router.get("/stock-transfers/pdf")
+async def get_stock_transfers_pdf(
+    from_date: str = Query(...),
+    to_date: str = Query(...),
+    branch: str = Query("European Sports Light House"),
+    current_user: User = Depends(admin_employee_required_from_session()),  # Admin and Employee only (NOT Cashier)
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate PDF report for shop -> shop stock transfers (date-wise)
+    """
+    import base64
+
+    rows = await _stock_transfer_rows(db, from_date, to_date)
+    total_sent = sum(-r["qty"] for r in rows if r["qty"] < 0)
+    total_received = sum(r["qty"] for r in rows if r["qty"] > 0)
+
+    transfer_rows = ""
+    for r in rows:
+        qty_text = f"+{r['qty']}" if r["qty"] > 0 else str(r["qty"])
+        transfer_rows += f"""
+        <tr>
+            <td class="border">{r['date']}</td>
+            <td class="border">{r['product']}</td>
+            <td class="border">{r['barcode']}</td>
+            <td class="border">{r['type']}</td>
+            <td class="border">{r['route']}</td>
+            <td class="border text-right">{qty_text}</td>
+            <td class="border">{r['time']}</td>
+            <td class="border">{r['user']}</td>
+        </tr>
+        """
+    if not rows:
+        transfer_rows = '<tr><td class="border" colspan="8" style="text-align: center;">No stock transfers in this date range</td></tr>'
+
+    current_date = datetime.now().strftime('%d-%m-%Y %I:%M %p')
+
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <style>
+            @page {{
+                size: A4 landscape;
+                margin: 15mm;
+            }}
+            body {{
+                font-family: Arial, sans-serif;
+                font-size: 10px;
+                margin: 0;
+                padding: 0;
+            }}
+            h1 {{
+                text-align: center;
+                color: #333;
+                margin: 0 0 10px 0;
+                font-size: 24px;
+                font-weight: bold;
+            }}
+            .date-range {{
+                text-align: center;
+                margin: 0 0 15px 0;
+                color: #666;
+                font-size: 12px;
+            }}
+            table {{
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 10px;
+            }}
+            .border {{
+                border: 1px solid #000;
+                padding: 6px;
+            }}
+            th {{
+                background-color: #444;
+                color: white;
+                font-weight: bold;
+                text-align: left;
+                padding: 8px;
+                font-size: 10px;
+            }}
+            .text-right {{
+                text-align: right;
+            }}
+            .summary {{
+                margin-top: 20px;
+                border: 2px solid #333;
+                padding: 10px;
+            }}
+            .summary-row {{
+                display: flex;
+                justify-content: space-between;
+                margin-bottom: 5px;
+            }}
+        </style>
+    </head>
+    <body>
+        <h1>Stock Transfer Report</h1>
+        <p class="date-range">From: {from_date} To: {to_date} | Generated: {current_date}</p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 10%;">Date</th>
+                    <th style="width: 20%;">Product</th>
+                    <th style="width: 12%;">Barcode</th>
+                    <th style="width: 8%;">Type</th>
+                    <th style="width: 25%;">From → To</th>
+                    <th style="width: 7%;">Qty</th>
+                    <th style="width: 8%;">Time</th>
+                    <th style="width: 10%;">User</th>
+                </tr>
+            </thead>
+            <tbody>
+                {transfer_rows}
+            </tbody>
+        </table>
+
+        <div class="summary">
+            <div class="summary-row">
+                <span style="font-weight: bold;">Total Sent (−):</span>
+                <span>{total_sent} units</span>
+            </div>
+            <div class="summary-row">
+                <span style="font-weight: bold;">Total Received (+):</span>
+                <span>{total_received} units</span>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
+    try:
+        from weasyprint import HTML
+        pdf_bytes = HTML(string=html_content).write_pdf()
+        encoded_pdf = base64.b64encode(pdf_bytes).decode()
+    except Exception:
+        pdf_content = f"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>\nendobj\nxref\n0 4\ntrailer\n<< /Size 4 /Root 1 0 R >>\n%%EOF"
+        encoded_pdf = base64.b64encode(pdf_content.encode()).decode()
+
+    return {"pdf": encoded_pdf}
+
+
+@router.get("/stock-transfers/excel")
+async def get_stock_transfers_excel(
+    from_date: str = Query(...),
+    to_date: str = Query(...),
+    branch: str = Query("European Sports Light House"),
+    current_user: User = Depends(admin_employee_required_from_session()),  # Admin and Employee only (NOT Cashier)
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate Excel report for shop -> shop stock transfers (date-wise)
+    """
+    import io
+    import base64
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
+
+    rows = await _stock_transfer_rows(db, from_date, to_date)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Stock Transfers"
+
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    header_fill = PatternFill(start_color="444444", end_color="444444", fill_type="solid")
+    thin_border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
+
+    headers = ['Date', 'Product Name', 'Barcode', 'Type', 'From → To', 'Quantity', 'Time', 'User']
+    for col, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.border = thin_border
+
+    column_widths = [15, 30, 16, 12, 50, 12, 12, 15]
+    for col, width in enumerate(column_widths, 1):
+        ws.column_dimensions[chr(64 + col)].width = width
+
+    row_num = 2
+    for r in rows:
+        values = [r['date'], r['product'], r['barcode'], r['type'], r['route'], r['qty'], r['time'], r['user']]
+        for col, value in enumerate(values, 1):
+            cell = ws.cell(row=row_num, column=col, value=value)
+            cell.border = thin_border
+            if col == 6:
+                cell.alignment = Alignment(horizontal="right")
+        row_num += 1
+
+    summary_row = row_num + 1
+    ws.cell(row=summary_row, column=1, value='Total Sent (−):').font = Font(bold=True)
+    ws.cell(row=summary_row, column=2, value=sum(-r["qty"] for r in rows if r["qty"] < 0))
+    ws.cell(row=summary_row + 1, column=1, value='Total Received (+):').font = Font(bold=True)
+    ws.cell(row=summary_row + 1, column=2, value=sum(r["qty"] for r in rows if r["qty"] > 0))
+
+    excel_buffer = io.BytesIO()
+    wb.save(excel_buffer)
+    excel_buffer.seek(0)
+    encoded_excel = base64.b64encode(excel_buffer.read()).decode()
+
+    return {
+        "excel": encoded_excel,
+        "filename": f"stock_transfers_{from_date}_to_{to_date}.xlsx"
+    }
+
+
 # ==================== REFUND REPORT ENDPOINTS ====================
 
 @router.get("/refunds/pdf")
