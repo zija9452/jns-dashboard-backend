@@ -220,6 +220,10 @@ async def session_login(
     from ..database.database import session_factories
 
     branch_code = login_request.branch or DEFAULT_BRANCH
+    # The only warehouse lives in the Light House DB: a warehouse login always
+    # opens Light House, whatever branch was picked in the dropdown (2026-10-13)
+    if (login_request.role or "").lower() == "warehouse":
+        branch_code = DEFAULT_BRANCH
     if branch_code not in BRANCHES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown branch")
     if branch_code not in session_factories:

@@ -27,7 +27,6 @@ from ..models.cash_deposit import (
 from ..services.cloudinary_service import CloudinaryService
 from ..utils.firestore_signals import publish_signals, PAYMENTS_REVIEW_SIGNAL, PAYMENTS_CASHIER_SIGNAL
 from ..auth.session_auth import (
-    cashier_required_from_session,
     admin_cashier_sales_required_from_session,
     admin_sales_required_from_session,
 )
@@ -360,7 +359,7 @@ async def create_deposit(
     notes: Optional[str] = Form(None),
     slips: str = Form(..., description='JSON list: [{"bank_name", "slip_no", "amount"}], same order as files'),
     files: List[UploadFile] = File(..., description="Slip images (JPG/PNG/WebP)"),
-    current_user: User = Depends(cashier_required_from_session()),
+    current_user: User = Depends(admin_cashier_sales_required_from_session()),  # everyone on the page (2026-10-13)
     db: AsyncSession = Depends(get_db),
 ):
     """Submit a deposit with one or more slips -> PENDING. Admin + cashier."""
@@ -422,7 +421,7 @@ async def update_deposit(
     slip_updates: Optional[str] = Form(None, description='JSON list of existing slips to keep: [{"id", "bank_name", "slip_no", "amount"}]'),
     new_slips: Optional[str] = Form(None, description='JSON list for new files: [{"bank_name", "slip_no", "amount"}]'),
     files: List[UploadFile] = File(default=[]),
-    current_user: User = Depends(cashier_required_from_session()),
+    current_user: User = Depends(admin_cashier_sales_required_from_session()),  # everyone on the page (2026-10-13)
     db: AsyncSession = Depends(get_db),
 ):
     """Edit a PENDING / REJECTED deposit. Existing slips not in slip_updates are removed.
