@@ -133,11 +133,9 @@ async def get_dashboard_stats(
     # ==================== EXPENSES CALCULATION ====================
     expense_filters = [
         Expense.expense_date >= first_day,
-        Expense.expense_date <= data_end_date  # Use data_end_date
+        Expense.expense_date <= data_end_date,  # Use data_end_date
+        Expense.is_monthly == False  # Monthly (rent, salary...) only counts in the Sales View "after monthly" line
     ]
-    # Admin-only expenses stay invisible to cashiers/order bookers everywhere, including totals
-    if user_role in ("cashier", "order_booker"):
-        expense_filters.append(Expense.is_admin_only == False)
 
     expenses_result = await db.execute(
         select(func.sum(Expense.amount)).where(and_(*expense_filters))
@@ -264,6 +262,17 @@ async def get_dashboard_stats(
         response["month"] = month
         response["year"] = year
         response["monthName"] = first_day.strftime('%B %Y')
+
+    # Monthly expenses (rent, salary...): admin only, shown under the Expense card, not in the chart
+    if user_role == "admin":
+        monthly_expense_result = await db.execute(
+            select(func.sum(Expense.amount)).where(
+                Expense.expense_date >= first_day,
+                Expense.expense_date <= data_end_date,
+                Expense.is_monthly == True
+            )
+        )
+        response["monthlyExpense"] = round(float(monthly_expense_result.scalar_one_or_none() or 0), 2)
 
     # Cache the result for 5 minutes
     await cache.set_dashboard_stats(cache_params, response, ttl=300)
@@ -743,16 +752,18 @@ async def get_sales_summary(
     # Get total cash recovery
     total_cash_sales = walkin_cash_sales + customer_cash_collection
 
-    # Get total expenses
+    # Get total expenses: Daily (counter) and Monthly (rent, salary... not paid from the counter)
     expenses_result = await db.execute(
-        select(func.sum(Expense.amount)).where(
+        select(Expense.is_monthly, func.sum(Expense.amount)).where(
             and_(
                 Expense.expense_date >= from_date_obj,
                 Expense.expense_date <= to_date_obj
             )
-        )
+        ).group_by(Expense.is_monthly)
     )
-    total_expenses = float(expenses_result.scalar_one_or_none() or 0)
+    expense_totals = {is_monthly: float(amount or 0) for is_monthly, amount in expenses_result.all()}
+    total_expenses = expense_totals.get(False, 0.0)  # Daily only: net cash + net profit
+    monthly_expenses = expense_totals.get(True, 0.0)
 
     # Calculate net cash
     total_cash_sales = walkin_cash_sales + customer_total_collection
@@ -816,6 +827,8 @@ async def get_sales_summary(
         "totalPurchase": total_purchase,
         "totalRefund": total_refund_amount,
         "netProfit": net_profit_after_refund,
+        "monthlyExpense": monthly_expenses,
+        "profitAfterMonthly": net_profit_after_refund - monthly_expenses,
         # walkin_sales = GROSS (before refund) — UI box uses this for breakdown display
         "walkin_sales": walkin_total_sales,
         "customer_payments": customer_total_collection,
@@ -1605,19 +1618,26 @@ async def get_expenses_pdf(
     # Build expense rows for PDF
     expense_rows = ""
     total_amount = 0.0
+    daily_total = 0.0
+    monthly_total = 0.0
     
-    # Same columns/format as the Expenses tab: ID, Expense, Amount, Date (DD/MM/YYYY), Branch
+    # Same columns/format as the Expenses tab: ID, Expense, Type, Amount, Date (DD/MM/YYYY), Branch
     for index, exp in enumerate(expenses, 1):
         expense_rows += f"""
         <tr>
             <td class="border">{index}</td>
             <td class="border">{exp.expense}</td>
+            <td class="border">{'Monthly' if exp.is_monthly else 'Daily'}</td>
             <td class="border">{_tab_amount(exp.amount)}</td>
             <td class="border">{exp.expense_date.strftime('%d/%m/%Y')}</td>
             <td class="border">{exp.branch or ''}</td>
         </tr>
         """
         total_amount += float(exp.amount)
+        if exp.is_monthly:
+            monthly_total += float(exp.amount)
+        else:
+            daily_total += float(exp.amount)
     
     # Create HTML content for PDF
     current_date = datetime.now().strftime('%d-%m-%Y %I:%M %p')
@@ -1685,7 +1705,8 @@ async def get_expenses_pdf(
             <thead>
                 <tr>
                     <th style="width: 8%;">ID</th>
-                    <th style="width: 42%;">Expense</th>
+                    <th style="width: 32%;">Expense</th>
+                    <th style="width: 10%;">Type</th>
                     <th style="width: 15%;">Amount</th>
                     <th style="width: 15%;">Date</th>
                     <th style="width: 20%;">Branch</th>
@@ -1694,7 +1715,7 @@ async def get_expenses_pdf(
             <tbody>
                 {expense_rows}
                 <tr class="total-row">
-                    <td class="border" colspan="2" style="text-align: left; font-weight: bold;">TOTAL</td>
+                    <td class="border" colspan="3" style="text-align: left; font-weight: bold;">TOTAL</td>
                     <td class="border" style="font-weight: bold;">{_tab_amount(total_amount)}</td>
                     <td class="border" colspan="2"></td>
                 </tr>
@@ -1702,6 +1723,14 @@ async def get_expenses_pdf(
         </table>
         
         <div style="margin-top: 20px; border: 2px solid #333; padding: 10px;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                <span style="font-weight: bold;">Daily Expenses:</span>
+                <span>Rs. {daily_total:.0f}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                <span style="font-weight: bold;">Monthly Expenses:</span>
+                <span>Rs. {monthly_total:.0f}</span>
+            </div>
             <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
                 <span style="font-weight: bold;">Total Expenses:</span>
                 <span>Rs. {total_amount:.0f}</span>
@@ -1778,10 +1807,11 @@ async def get_expenses_excel(
     )
     
     # Write header
-    # Same columns/format as the Expenses tab: ID, Expense, Amount, Date (DD/MM/YYYY), Branch
+    # Same columns/format as the Expenses tab: ID, Expense, Type, Amount, Date (DD/MM/YYYY), Branch
     headers = [
         'ID',
         'Expense',
+        'Type',
         'Amount',
         'Date',
         'Branch'
@@ -1795,50 +1825,62 @@ async def get_expenses_excel(
         cell.border = thin_border
     
     # Set column widths
-    column_widths = [8, 40, 15, 15, 25]
+    column_widths = [8, 40, 12, 15, 15, 25]
     for col, width in enumerate(column_widths, 1):
         ws.column_dimensions[chr(64 + col)].width = width
     
     total_amount = 0.0
+    daily_total = 0.0
+    monthly_total = 0.0
     row_num = 2
     
     # Write data rows
     for index, exp in enumerate(expenses, 1):
         ws.cell(row=row_num, column=1, value=index).border = thin_border
         ws.cell(row=row_num, column=2, value=exp.expense).border = thin_border
-        ws.cell(row=row_num, column=3, value=float(exp.amount)).border = thin_border
-        ws.cell(row=row_num, column=4, value=exp.expense_date.strftime('%d/%m/%Y')).border = thin_border
-        ws.cell(row=row_num, column=5, value=exp.branch or '').border = thin_border
+        ws.cell(row=row_num, column=3, value='Monthly' if exp.is_monthly else 'Daily').border = thin_border
+        ws.cell(row=row_num, column=4, value=float(exp.amount)).border = thin_border
+        ws.cell(row=row_num, column=5, value=exp.expense_date.strftime('%d/%m/%Y')).border = thin_border
+        ws.cell(row=row_num, column=6, value=exp.branch or '').border = thin_border
         
         # Apply alignments
-        for col in range(1, 6):
-            if col in [3]:  # Amount column
+        for col in range(1, 7):
+            if col in [4]:  # Amount column
                 ws.cell(row=row_num, column=col).alignment = right_alignment
             else:
                 ws.cell(row=row_num, column=col).alignment = cell_alignment
         
         total_amount += float(exp.amount)
+        if exp.is_monthly:
+            monthly_total += float(exp.amount)
+        else:
+            daily_total += float(exp.amount)
         row_num += 1
     
     # Write total row
     total_row = row_num
     ws.cell(row=total_row, column=1, value='TOTAL').font = Font(bold=True)
-    ws.cell(row=total_row, column=3, value=round(total_amount, 2)).font = Font(bold=True)
+    ws.cell(row=total_row, column=4, value=round(total_amount, 2)).font = Font(bold=True)
     
     # Merge cells for TOTAL label
-    ws.merge_cells(start_row=total_row, start_column=1, end_row=total_row, end_column=2)
+    ws.merge_cells(start_row=total_row, start_column=1, end_row=total_row, end_column=3)
     
     # Apply border to total row
-    for col in range(1, 6):
+    for col in range(1, 7):
         cell = ws.cell(row=total_row, column=col)
         cell.border = thin_border
-        if col > 3:
+        if col > 4:
             cell.value = ''
     
     # Add summary section
     summary_row = total_row + 2
-    ws.cell(row=summary_row, column=1, value='Total Expenses:').font = Font(bold=True)
-    ws.cell(row=summary_row, column=2, value=round(total_amount, 2)).font = Font(bold=True)
+    for offset, (label, amount) in enumerate([
+        ('Daily Expenses:', daily_total),
+        ('Monthly Expenses:', monthly_total),
+        ('Total Expenses:', total_amount),
+    ]):
+        ws.cell(row=summary_row + offset, column=1, value=label).font = Font(bold=True)
+        ws.cell(row=summary_row + offset, column=2, value=round(amount, 2)).font = Font(bold=True)
     
     # Save to bytes
     excel_buffer = io.BytesIO()

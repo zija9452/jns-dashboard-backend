@@ -23,7 +23,7 @@ class ExpenseService:
             expense_date=expense_create.expense_date or date.today(),
             branch=expense_create.branch,
             created_by=expense_create.created_by,
-            is_admin_only=expense_create.is_admin_only
+            is_monthly=expense_create.is_monthly
         )
 
         db.add(db_expense)

@@ -16,7 +16,9 @@ class Expense(SQLModel, table=True):
     branch: str = Field(max_length=100, default_factory=current_branch_name, index=True)  # Index for branch filtering
     created_by: uuid.UUID = Field(foreign_key="users.id", index=True)  # Index for user filtering
     created_at: datetime = Field(default_factory=lambda: datetime.now(), index=True)  # Index for sorting
-    is_admin_only: bool = Field(default=False, index=True)  # Admin-marked expenses are hidden from cashiers everywhere
+    # Monthly / overhead expense (rent, salary...): admin only, not paid from the counter, so it is
+    # kept out of daily cash + daily profit and only subtracted in the Sales View "after monthly" line
+    is_monthly: bool = Field(default=False, index=True)
 
 class ExpenseRead(SQLModel):
     id: uuid.UUID
@@ -26,7 +28,7 @@ class ExpenseRead(SQLModel):
     branch: str
     created_by: uuid.UUID
     created_at: datetime
-    is_admin_only: bool = False
+    is_monthly: bool = False
 
 class ExpenseCreate(SQLModel):
     expense: str
@@ -34,11 +36,11 @@ class ExpenseCreate(SQLModel):
     expense_date: date
     branch: str
     created_by: Optional[uuid.UUID] = None
-    is_admin_only: bool = False
+    is_monthly: bool = False
 
 class ExpenseUpdate(SQLModel):
     expense: Optional[str] = None
     amount: Optional[Decimal] = None
     expense_date: Optional[str] = None
     branch: Optional[str] = None
-    is_admin_only: Optional[bool] = None
+    is_monthly: Optional[bool] = None

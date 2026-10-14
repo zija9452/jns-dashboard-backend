@@ -19,58 +19,64 @@ async def get_expenses(
     page: int = 1,
     limit: int = 8,
     created_by: Optional[str] = None,
+    kind: str = "daily",  # "daily" (counter), "monthly" (rent, salary... admin only) or "all"
+    month: Optional[str] = None,  # "YYYY-MM": only that month's expenses
     current_user: User = Depends(admin_cashier_employee_sales_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Get list of expenses with pagination
-    - Admin & Employee: Can view all expenses
-    - Cashier: Can only view current date expenses
-    Returns: Paginated data + total count for proper frontend pagination
+    - Admin & Employee: Can view all expenses (Daily, Monthly or both)
+    - Cashier: Can only view current date Daily expenses
+    Returns: Paginated data + total count + amount total for proper frontend pagination,
+    and for admins the summary cards (today's Daily, the month's Daily and Monthly totals)
     """
     # Calculate skip from page
     skip = (page - 1) * limit
 
-    # Build base query
-    base_statement = select(Expense)
+    if kind not in ("daily", "monthly", "all"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="kind must be daily, monthly or all")
 
-    # Apply role-based filtering
+    # Monthly expenses are never shown to cashiers
     if current_user.role.name == "cashier":
-        # Cashier can only see current date expenses, and never admin-only ones
-        today = date.today()
-        base_statement = base_statement.where(Expense.expense_date == today)
-        base_statement = base_statement.where(Expense.is_admin_only == False)
-    # Admin & Employee see all expenses (no filter)
+        kind = "daily"
+
+    filters = []
+    if kind != "all":
+        filters.append(Expense.is_monthly == (kind == "monthly"))
+
+    # Cashier can only see current date expenses
+    if current_user.role.name == "cashier":
+        filters.append(Expense.expense_date == date.today())
+
+    # Month for the list filter and the summary cards (cards fall back to the current month)
+    try:
+        year_no, month_no = (int(part) for part in month.split("-")) if month else (date.today().year, date.today().month)
+        first_day = date(year_no, month_no, 1)
+        next_first_day = date(year_no + (month_no == 12), month_no % 12 + 1, 1)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid month format (YYYY-MM)")
+    if month:
+        filters.append(Expense.expense_date >= first_day)
+        filters.append(Expense.expense_date < next_first_day)
 
     # Apply created_by filter
     if created_by:
         try:
-            created_by_uuid = UUID(created_by)
-            base_statement = base_statement.where(Expense.created_by == created_by_uuid)
+            filters.append(Expense.created_by == UUID(created_by))
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid user ID format"
             )
 
-    # Get total count
-    count_statement = select(Expense.id)
-    
-    # Apply role-based filtering for count
-    if current_user.role.name == "cashier":
-        today = date.today()
-        count_statement = count_statement.where(Expense.expense_date == today)
-        count_statement = count_statement.where(Expense.is_admin_only == False)
+    base_statement = select(Expense).where(*filters)
 
-    if created_by:
-        try:
-            created_by_uuid = UUID(created_by)
-            count_statement = count_statement.where(Expense.created_by == created_by_uuid)
-        except ValueError:
-            pass
-
-    count_result = await db.execute(count_statement)
-    total_count = len(count_result.scalars().all())
+    # Get total count + amount total of the whole filtered list (not just this page)
+    totals_result = await db.execute(
+        select(func.count(Expense.id), func.coalesce(func.sum(Expense.amount), 0)).where(*filters)
+    )
+    total_count, total_amount = totals_result.one()
 
     # Apply pagination and order by expense_date ascending (oldest first)
     statement = base_statement.order_by(Expense.expense_date.asc(), Expense.created_at.asc()).offset(skip).limit(limit)
@@ -91,15 +97,38 @@ async def get_expenses(
                 "branch": expense.branch or "",
                 "created_by": str(expense.created_by),
                 "created_at": expense.created_at.isoformat() if expense.created_at else None,
-                "is_admin_only": expense.is_admin_only
+                "is_monthly": expense.is_monthly
             }
             for expense in expenses
         ],
         'page': page,
         'limit': limit,
         'total': total_count,
-        'totalPages': total_pages
+        'totalPages': total_pages,
+        'totalAmount': float(total_amount)
     }
+
+    # Summary cards on the Expenses page (admin only)
+    if current_user.role.name == "admin":
+        today_result = await db.execute(
+            select(func.coalesce(func.sum(Expense.amount), 0)).where(
+                Expense.is_monthly == False,
+                Expense.expense_date == date.today()
+            )
+        )
+        today_daily = today_result.scalar_one()
+        month_result = await db.execute(
+            select(Expense.is_monthly, func.sum(Expense.amount)).where(
+                Expense.expense_date >= first_day,
+                Expense.expense_date < next_first_day
+            ).group_by(Expense.is_monthly)
+        )
+        month_totals = {is_monthly: float(amount or 0) for is_monthly, amount in month_result.all()}
+        response_data['cards'] = {
+            'todayDaily': float(today_daily),
+            'monthDaily': month_totals.get(False, 0.0),
+            'monthMonthly': month_totals.get(True, 0.0),
+        }
 
     return response_data
 
@@ -122,9 +151,9 @@ async def create_expense(
                 detail="Cashiers can only create expenses for current date"
             )
 
-    # Only admins may mark an expense as admin-only; force it off for everyone else
+    # Only admins may add a Monthly expense; everyone else only adds Daily ones
     if current_user.role.name != "admin":
-        expense_create.is_admin_only = False
+        expense_create.is_monthly = False
 
     # Set the created_by field to the current user if not specified in the request
     if not expense_create.created_by:
@@ -141,7 +170,7 @@ async def create_expense(
         "branch": expense.branch,
         "created_by": str(expense.created_by),
         "created_at": expense.created_at.isoformat() if expense.created_at else None,
-        "is_admin_only": expense.is_admin_only
+        "is_monthly": expense.is_monthly
     }
 
 @router.get("/{expense_id}")
@@ -164,7 +193,7 @@ async def get_expense(
 
     expense = await ExpenseService.get_expense(db, expense_uuid)
 
-    if not expense or (current_user.role.name == "cashier" and expense.is_admin_only):
+    if not expense or (current_user.role.name == "cashier" and expense.is_monthly):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Expense not found"
@@ -179,7 +208,7 @@ async def get_expense(
         "branch": expense.branch,
         "created_by": str(expense.created_by),
         "created_at": expense.created_at.isoformat() if expense.created_at else None,
-        "is_admin_only": expense.is_admin_only
+        "is_monthly": expense.is_monthly
     }
 
 @router.put("/{expense_id}")
@@ -204,7 +233,7 @@ async def update_expense(
 
     expense = await ExpenseService.get_expense(db, expense_uuid)
 
-    if not expense or (current_user.role.name == "cashier" and expense.is_admin_only):
+    if not expense or (current_user.role.name == "cashier" and expense.is_monthly):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Expense not found"
@@ -218,9 +247,9 @@ async def update_expense(
                 detail="Cashiers can only update expenses for current date"
             )
 
-    # Only admins may change the admin-only flag
+    # Only admins may change Daily / Monthly
     if current_user.role.name != "admin":
-        expense_update.is_admin_only = None
+        expense_update.is_monthly = None
 
     updated_expense = await ExpenseService.update_expense(db, expense_uuid, expense_update)
 
@@ -233,7 +262,7 @@ async def update_expense(
         "branch": updated_expense.branch,
         "created_by": str(updated_expense.created_by),
         "created_at": updated_expense.created_at.isoformat() if updated_expense.created_at else None,
-        "is_admin_only": updated_expense.is_admin_only
+        "is_monthly": updated_expense.is_monthly
     }
 
 @router.delete("/{expense_id}")
@@ -257,7 +286,7 @@ async def delete_expense(
 
     # Check if expense exists and get it
     expense = await ExpenseService.get_expense(db, expense_uuid)
-    if not expense or (current_user.role.name == "cashier" and expense.is_admin_only):
+    if not expense or (current_user.role.name == "cashier" and expense.is_monthly):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Expense not found"

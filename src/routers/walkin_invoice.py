@@ -1233,10 +1233,8 @@ async def get_today_sales_report(
     daily_cash_result = await db.execute(select(DailyCash).where(DailyCash.date == target_date))
     daily_cash = daily_cash_result.scalar_one_or_none()
 
-    # Get total expenses for the date (admin-only expenses stay hidden from cashiers)
-    expense_conditions = [Expense.expense_date == target_date]
-    if current_user.role.name == "cashier":
-        expense_conditions.append(Expense.is_admin_only == False)
+    # Get total expenses for the date: Daily only, Monthly ones (rent, salary...) aren't paid from the counter
+    expense_conditions = [Expense.expense_date == target_date, Expense.is_monthly == False]
 
     expenses_result = await db.execute(
         select(func.sum(Expense.amount)).where(and_(*expense_conditions))
