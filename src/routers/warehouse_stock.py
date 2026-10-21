@@ -14,6 +14,7 @@ from ..models.user import User
 from ..models.warehouse_vendor import WarehouseVendor
 from ..services.product_service import ProductService
 from ..auth.session_auth import get_current_user_from_session
+from .stock import centered_barcode_x, fitted_name_font_size
 from sqlmodel import select
 from decimal import Decimal
 
@@ -62,6 +63,52 @@ class StockAdjustRequest(BaseModel):
     product_id: str
     qty: int  # positive for increase, negative for decrease
     ref: Optional[str] = None
+
+
+class WarehouseBarcodeItem(BaseModel):
+    product_id: str
+    quantity: int
+    vendor_name: Optional[str] = None
+
+
+@router.post("/barcodes")
+async def generate_warehouse_barcodes(
+    items: List[WarehouseBarcodeItem],
+    current_user: User = Depends(warehouse_required()),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    ZPL labels (one per unit) for warehouse products, without touching stock.
+    Same label as the shop's (/stock/generatebarcodesonly) but the vendor name
+    is printed where the shop prints the price.
+    """
+    zpl_commands = []
+    for item in items:
+        product = await db.get(Product, UUID(item.product_id))
+        if not product or not product.barcode:
+            continue
+        vendor = (item.vendor_name or "").strip()
+        for i in range(max(item.quantity, 0)):
+            zpl = "^XA"
+            zpl += f"^FO{centered_barcode_x(product.barcode)},40^BY2,2,80^BCN,80,Y,N,N^FD{product.barcode}^FS"
+            name_font = fitted_name_font_size(product.name)
+            zpl += f"^FO10,150^A0N,{name_font},{name_font}^FB400,1,0,C^FD{product.name}^FS"
+            if vendor:
+                # Vendor names are longer than a price: shrink to fit one line, up to the price's size 30
+                vendor_font = fitted_name_font_size(vendor, max_size=30)
+                zpl += f"^FO10,175^A0N,{vendor_font},{vendor_font}^FB400,1,0,C^FD{vendor}^FS"
+            zpl += "^XZ"
+            zpl_commands.append({
+                "product_id": item.product_id,
+                "barcode": product.barcode,
+                "unit_index": i + 1,
+                "zpl": zpl
+            })
+
+    return {
+        "message": f"Generated {len(zpl_commands)} barcode(s)",
+        "zpl_commands": zpl_commands
+    }
 
 
 @router.post("/in")
