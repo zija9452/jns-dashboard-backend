@@ -103,7 +103,16 @@ async def create_warehouse_invoice(
             pro_name = item.get('pro_name')
             quantity = int(item.get('pro_quantity', 0))
             unit_price = float(item.get('unit_price', 0))
+            shop_price = float(item.get('shop_price') or 0)
             discount = float(item.get('discount', 0))
+
+            # Rate = the shop's cost; with the shop selling price it is set on the
+            # destination branch's product, so both must be filled
+            if unit_price <= 0 or shop_price <= 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Set Rate (shop cost) and Shop Selling Price for '{pro_name}'"
+                )
 
             # Verify product exists
             product_result = await db.execute(select(Product).where(Product.name == pro_name))
@@ -132,6 +141,9 @@ async def create_warehouse_invoice(
             product.warehouse_stock = (product.warehouse_stock or 0) - quantity
             if not destination_branch:
                 product.stock_level = (product.stock_level or 0) + quantity
+                product.cost_price = Decimal(str(unit_price))
+                product.unit_price = Decimal(str(shop_price))
+                product.updated_at = datetime.now()
             db.add(product)
 
             # Stock Entries
@@ -162,6 +174,7 @@ async def create_warehouse_invoice(
                 "product_id": str(product.id),
                 "quantity": quantity,
                 "unit_price": unit_price,
+                "shop_price": shop_price,
                 "total_price": item_total_before_discount,
                 "discount": discount,
                 "cat_name": str(item.get('cat_name', '')),
@@ -313,10 +326,13 @@ async def create_warehouse_invoice(
 
 @router.get("/products")
 async def get_warehouse_products(
+    customer_id: Optional[str] = None,
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get products that belong to warehouse and have stock
+    Get products that belong to warehouse and have stock, with the shop cost
+    ("price") and shop selling price of the branch `customer_id` stocks
+    (Light House if the customer has no other destination branch).
     """
     statement = select(Product).where(
         Product.is_warehouse_product == True,
@@ -324,13 +340,34 @@ async def get_warehouse_products(
     )
     result = await db.execute(statement)
     products = result.scalars().all()
-    
+
+    # Light House: the warehouse row is also the shop product
+    shop_prices = {p.barcode: (p.cost_price, p.unit_price) for p in products}
+    destination_branch = None
+    if customer_id:
+        try:
+            customer = await db.get(WarehouseCustomer, uuid.UUID(customer_id))
+        except ValueError:
+            customer = None
+        destination_branch = customer.destination_branch if customer else None
+    if destination_branch and destination_branch != DEFAULT_BRANCH and destination_branch in session_factories:
+        barcodes = [p.barcode for p in products if p.barcode]
+        async with session_factories[destination_branch]() as branch_db:
+            rows = await branch_db.execute(
+                select(Product.barcode, Product.cost_price, Product.unit_price).where(Product.barcode.in_(barcodes))
+            )
+            shop_prices = {r.barcode: (r.cost_price, r.unit_price) for r in rows}
+
+    def as_float(value):
+        return float(value) if value else 0.0
+
     return [
         {
             "id": str(p.id),
             "product_name": p.name,
             "category": p.category,
-            "price": float(p.cost_price) if p.cost_price else 0.0,
+            "price": as_float(shop_prices.get(p.barcode, (0, 0))[0]),
+            "shop_price": as_float(shop_prices.get(p.barcode, (0, 0))[1]),
             "stock": p.warehouse_stock,
             "barcode": p.barcode
         }

@@ -3,8 +3,11 @@ A product added in one branch is also created in the other branches with the sam
 barcode / SKU / name / price and stock 0, so one label scans in every shop.
 
 Only the creation is copied: later edits (price, name...), stock and deletes stay per
-branch. Warehouse products are not copied (they reach a branch by warehouse transfer,
-see branch_transfer.py) and neither are "(dummy)" display pieces.
+branch. Warehouse products are copied too, as a plain shop product (warehouse fields
+stay in Light House); "(dummy)" display pieces are not copied.
+
+Categories are copied the same way (create only), so every branch's category dropdown
+has the categories its products use.
 """
 import logging
 import uuid
@@ -15,13 +18,14 @@ from sqlalchemy import func, select
 
 from ..config.branches import BRANCHES, configured_branches, current_branch
 from ..database.database import session_factories
+from ..models.category import Category
 from ..models.product import Product
 
 logger = logging.getLogger(__name__)
 
 
-def should_mirror(is_warehouse_product: bool, name: str) -> bool:
-    return not is_warehouse_product and "DUMMY" not in (name or "").upper()
+def should_mirror(name: str) -> bool:
+    return "DUMMY" not in (name or "").upper()
 
 
 def _other_branches() -> List[str]:
@@ -56,7 +60,7 @@ async def mirror_product(src: Product) -> List[str]:
     Returns warnings for branches where it failed (the product stays in this branch;
     running sync_products.py later fills the gap)."""
     warnings: List[str] = []
-    if not src.barcode or not should_mirror(src.is_warehouse_product, src.name):
+    if not src.barcode or not should_mirror(src.name):
         return warnings
     for code in _other_branches():
         branch = BRANCHES[code]
@@ -65,10 +69,37 @@ async def mirror_product(src: Product) -> List[str]:
                 exists = await db.execute(select(Product.id).where(Product.barcode == src.barcode).limit(1))
                 if exists.first():
                     continue
+                await ensure_category(db, src.category, branch.name)
                 db.add(copy_for_branch(src, branch.name, keep_id=not await db.get(Product, src.id)))
                 await db.commit()
         except Exception as e:
             logger.exception("Copying product %s to %s failed", src.barcode, code)
+            warnings.append(f"Not added in {branch.name}: {str(e) or type(e).__name__}"[:300])
+    return warnings
+
+
+async def ensure_category(db, name: Optional[str], branch_name: str) -> None:
+    """Add category `name` to this branch's categories table if it isn't there, so
+    it shows in the category dropdown. The caller commits."""
+    if not name:
+        return
+    exists = await db.execute(select(Category.id).where(Category.name == name).limit(1))
+    if not exists.first():
+        db.add(Category(name=name, branch=branch_name))
+
+
+async def mirror_category(name: str) -> List[str]:
+    """Create category `name` in the other branches that don't have it.
+    Returns warnings for branches where it failed."""
+    warnings: List[str] = []
+    for code in _other_branches():
+        branch = BRANCHES[code]
+        try:
+            async with session_factories[code]() as db:
+                await ensure_category(db, name, branch.name)
+                await db.commit()
+        except Exception as e:
+            logger.exception("Copying category %s to %s failed", name, code)
             warnings.append(f"Not added in {branch.name}: {str(e) or type(e).__name__}"[:300])
     return warnings
 

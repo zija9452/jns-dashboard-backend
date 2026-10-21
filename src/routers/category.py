@@ -9,6 +9,7 @@ from ..database.database import get_db
 from ..models.category import Category, CategoryCreate, CategoryUpdate, CategoryRead
 from ..models.user import User
 from ..auth.session_auth import get_current_user_from_session
+from ..services.product_mirror import mirror_category
 
 router = APIRouter(prefix="/category", tags=["Category"])
 
@@ -46,7 +47,9 @@ async def create_category(
     db.add(db_category)
     await db.commit()
     await db.refresh(db_category)
-    
+
+    await mirror_category(db_category.name)
+
     return db_category
 
 
@@ -83,7 +86,8 @@ async def create_categories_bulk(
         await db.commit()
         for cat in db_categories:
             await db.refresh(cat)
-    
+            await mirror_category(cat.name)
+
     return db_categories
 
 

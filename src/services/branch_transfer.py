@@ -14,6 +14,7 @@ import json
 import logging
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from typing import Optional, Tuple
 
 from sqlalchemy import select, func
@@ -109,6 +110,12 @@ async def _apply_in_branch(lh_db: AsyncSession, invoice: WarehouseInvoice, branc
             if product is None:
                 product = await _create_branch_product(db, lh_product, branch.name, now)
 
+            # Invoice rate is the branch's cost; shop_price its selling price
+            # (invoices made before shop_price existed keep the branch's prices)
+            if item.get("shop_price"):
+                product.cost_price = Decimal(str(item["unit_price"]))
+                product.unit_price = Decimal(str(item["shop_price"]))
+
             quantity = int(item["quantity"])
             product.stock_level = (product.stock_level or 0) + quantity
             product.updated_at = now
@@ -128,8 +135,7 @@ async def _apply_in_branch(lh_db: AsyncSession, invoice: WarehouseInvoice, branc
 
 async def _create_branch_product(db: AsyncSession, src: Product, branch_name: str, now: datetime) -> Product:
     """First transfer of a product the branch doesn't have yet: copy it with
-    stock 0 and no warehouse fields. Price is only copied here; later transfers
-    never overwrite the branch's own price."""
+    stock 0 and no warehouse fields. The invoice's prices are set on it after."""
     sku_taken = await db.execute(select(Product.id).where(Product.sku == src.sku).limit(1))
     if sku_taken.first():
         raise TransferError(

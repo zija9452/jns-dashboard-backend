@@ -14,6 +14,7 @@ from ..models.user import User  # Import User at the top to avoid NameError
 from ..services.product_service import ProductService
 from ..services.cloudinary_service import CloudinaryService
 from ..services.product_mirror import find_clash, mirror_product, should_mirror
+from ..config.branches import current_branch_name
 from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, admin_employee_required_from_session, admin_employee_warehouse_required_from_session, admin_employee_warehouse_production_required_from_session
 from sqlmodel import select
 
@@ -78,6 +79,10 @@ async def create_product(
     if current_user.role.name == "warehouse":
         product_create.is_warehouse_product = True
 
+    # The warehouse lives in this branch's DB; its products are this branch's shop rows too
+    if product_create.is_warehouse_product:
+        product_create.branch = current_branch_name()
+
     # Check if product name already exists (case-insensitive)
     from sqlmodel import select
     statement = select(Product).where(Product.name == product_create.name)
@@ -111,7 +116,7 @@ async def create_product(
         )
 
     # Also created in the other branches (stock 0): their name / SKU must be free there too
-    mirror = should_mirror(product_create.is_warehouse_product, product_create.name)
+    mirror = should_mirror(product_create.name)
     if mirror:
         clash = await find_clash(product_create.name, product_create.sku, product_create.barcode)
         if clash:
