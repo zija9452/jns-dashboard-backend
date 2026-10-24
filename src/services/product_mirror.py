@@ -3,7 +3,7 @@ A product added in one branch is also created in the other branches with the sam
 barcode / SKU / name / price and stock 0, so one label scans in every shop.
 
 Only the creation is copied: later edits (price, name...), stock and deletes stay per
-branch. Warehouse products are copied too, as a plain shop product (warehouse fields
+branch, except a warehouse product's shop cost / selling price edit (mirror_prices). Warehouse products are copied too, as a plain shop product (warehouse fields
 stay in Light House); "(dummy)" display pieces are not copied.
 
 Categories are copied the same way (create only), so every branch's category dropdown
@@ -75,6 +75,32 @@ async def mirror_product(src: Product) -> List[str]:
         except Exception as e:
             logger.exception("Copying product %s to %s failed", src.barcode, code)
             warnings.append(f"Not added in {branch.name}: {str(e) or type(e).__name__}"[:300])
+    return warnings
+
+
+async def mirror_prices(barcode: Optional[str], cost_price, unit_price) -> List[str]:
+    """Warehouse product edit: set the same shop cost / selling price on the product
+    with this barcode in the other branches (only the fields given)."""
+    warnings: List[str] = []
+    if not barcode or (cost_price is None and unit_price is None):
+        return warnings
+    for code in _other_branches():
+        branch = BRANCHES[code]
+        try:
+            async with session_factories[code]() as db:
+                result = await db.execute(select(Product).where(Product.barcode == barcode))
+                product = result.scalar_one_or_none()
+                if product is None:
+                    continue
+                if cost_price is not None:
+                    product.cost_price = cost_price
+                if unit_price is not None:
+                    product.unit_price = unit_price
+                product.updated_at = datetime.now()
+                await db.commit()
+        except Exception as e:
+            logger.exception("Copying prices of %s to %s failed", barcode, code)
+            warnings.append(f"Price not changed in {branch.name}: {str(e) or type(e).__name__}"[:300])
     return warnings
 
 

@@ -13,7 +13,7 @@ from ..models.product import Product, ProductCreate, ProductUpdate, ProductRead
 from ..models.user import User  # Import User at the top to avoid NameError
 from ..services.product_service import ProductService
 from ..services.cloudinary_service import CloudinaryService
-from ..services.product_mirror import find_clash, mirror_product, should_mirror
+from ..services.product_mirror import find_clash, mirror_prices, mirror_product, should_mirror
 from ..config.branches import current_branch_name
 from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, admin_employee_required_from_session, admin_employee_warehouse_required_from_session, admin_employee_warehouse_production_required_from_session
 from sqlmodel import select
@@ -777,7 +777,15 @@ async def update_product(
     # Clear cache after updating product
     await clear_products_cache()
 
-    return await ProductService.update_product(db, product_uuid, product_update, str(current_user.id))
+    old_barcode = product.barcode
+    is_warehouse = product.is_warehouse_product
+    updated = await ProductService.update_product(db, product_uuid, product_update, str(current_user.id))
+
+    # Warehouse product: shop cost / selling price are the same in every branch
+    if is_warehouse:
+        for warning in await mirror_prices(old_barcode, product_update.cost_price, product_update.unit_price):
+            logger.warning(warning)
+    return updated
 
 @router.delete("/{product_id}")
 async def delete_product(

@@ -146,13 +146,16 @@ async def create_warehouse_invoice(
                 product.updated_at = datetime.now()
             db.add(product)
 
-            # Stock Entries
+            # Stock Entries (on the invoice date, with cost so stock reports total them)
+            transfer_ref = f"W_INV_TRANSFER_{payment_date.strftime('%Y%m%d')}"
             stock_out = StockEntry(
                 product_id=product.id,
                 qty=-quantity,
+                cost_price=product.warehouse_cost,
                 type=StockEntryType.OUT,
                 location="warehouse",
-                ref=f"W_INV_TRANSFER_{datetime.now().strftime('%Y%m%d')}"
+                ref=transfer_ref,
+                created_at=payment_date
             )
             db.add(stock_out)
 
@@ -161,10 +164,13 @@ async def create_warehouse_invoice(
                 stock_in = StockEntry(
                     product_id=product.id,
                     qty=quantity,
+                    cost_price=Decimal(str(unit_price)),
+                    unit_price=Decimal(str(shop_price)),
                     type=StockEntryType.IN,
                     location="Stock In",
                     vendor_id=js_vendor_id,
-                    ref=f"W_INV_TRANSFER_{datetime.now().strftime('%Y%m%d')}"
+                    ref=transfer_ref,
+                    created_at=payment_date
                 )
                 db.add(stock_in)
 

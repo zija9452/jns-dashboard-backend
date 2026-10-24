@@ -22,7 +22,7 @@ from ..database.database import get_db
 from ..models.user import User
 from ..models.cash_deposit import CashDeposit
 from ..models.payment_proof import (
-    PaymentProof, PaymentProofImage, PaymentProofReject, is_online_method,
+    PaymentProof, PaymentProofApprove, PaymentProofImage, PaymentProofReject, is_online_method,
     PROOF_MISSING, PROOF_PENDING, PROOF_APPROVED, PROOF_REJECTED, SOURCE_CUSTOMIZED,
 )
 from ..services.cloudinary_service import CloudinaryService
@@ -150,6 +150,7 @@ def _serialize_proof(proof: PaymentProof, images: List[PaymentProofImage], names
         "reviewed_by_name": names.get(proof.reviewed_by) if proof.reviewed_by else None,
         "reviewed_at": proof.reviewed_at.isoformat() if proof.reviewed_at else None,
         "reject_reason": proof.reject_reason,
+        "notes": proof.notes,
         "branch": proof.branch,
         "images": [{"id": str(i.id), "file_url": i.file_url} for i in images],
     }
@@ -285,6 +286,7 @@ async def update_proof_images(
             proof.uploaded_at = None
         # Resubmitted: back in the review queue, the old reject is cleared (like deposits)
         proof.reject_reason = None
+        proof.notes = None
         proof.reviewed_by = None
         proof.reviewed_at = None
         db.add(proof)
@@ -304,16 +306,18 @@ async def update_proof_images(
 @router.post("/{proof_id}/approve")
 async def approve_proof(
     proof_id: str,
+    body: Optional[PaymentProofApprove] = None,
     current_user: User = Depends(admin_sales_required_from_session()),
     db: AsyncSession = Depends(get_db),
 ):
-    """Money confirmed -> locked."""
+    """Money confirmed -> locked (with the optional reviewer comment)."""
     proof = await _get_proof_or_404(db, proof_id, lock=True)
     if proof.status == PROOF_MISSING:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Attach the pay slip before approving")
     if proof.status != PROOF_PENDING:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{proof.status.title()} payment cannot be approved")
     proof.status = PROOF_APPROVED
+    proof.notes = ((body.notes if body else None) or "").strip()[:500] or None
     proof.reviewed_by = current_user.id
     proof.reviewed_at = datetime.now()
     db.add(proof)
@@ -343,6 +347,7 @@ async def reject_proof(
 
     proof.status = PROOF_REJECTED
     proof.reject_reason = reason[:500]
+    proof.notes = (body.notes or "").strip()[:500] or None
     proof.reviewed_by = current_user.id
     proof.reviewed_at = datetime.now()
     db.add(proof)

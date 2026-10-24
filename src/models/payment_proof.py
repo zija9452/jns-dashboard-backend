@@ -45,6 +45,7 @@ class PaymentProof(SQLModel, table=True):
     reviewed_by: Optional[uuid.UUID] = Field(default=None, foreign_key="users.id")
     reviewed_at: Optional[datetime] = None
     reject_reason: Optional[str] = Field(default=None, max_length=500)
+    notes: Optional[str] = Field(default=None, max_length=500)  # reviewer comment, saved with approve / reject
     branch: str = Field(max_length=100, default_factory=current_branch_name, index=True)
 
 
@@ -60,3 +61,8 @@ class PaymentProofImage(SQLModel, table=True):
 
 class PaymentProofReject(SQLModel):
     reason: str
+    notes: Optional[str] = None  # optional reviewer comment
+
+
+class PaymentProofApprove(SQLModel):
+    notes: Optional[str] = None  # optional reviewer comment

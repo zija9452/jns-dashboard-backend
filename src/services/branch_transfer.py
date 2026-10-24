@@ -124,10 +124,13 @@ async def _apply_in_branch(lh_db: AsyncSession, invoice: WarehouseInvoice, branc
             db.add(StockEntry(
                 product_id=product.id,
                 qty=quantity,
+                cost_price=product.cost_price,
+                unit_price=product.unit_price,
                 type=StockEntryType.IN,
                 location="Stock In",
                 vendor_id=vendor.id if vendor else None,
                 ref=invoice.invoice_no,
+                created_at=invoice.payment_date or now,
             ))
 
         await db.commit()

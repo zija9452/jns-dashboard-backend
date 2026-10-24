@@ -46,6 +46,8 @@ STATEMENTS = [
     "ALTER TABLE payment_proofs DROP CONSTRAINT IF EXISTS fk_payment_proofs_customer_invoice;",
     # rejection_seen_at was added then dropped on 2026-10-09 (rejected now stays until resubmitted)
     "ALTER TABLE payment_proofs DROP COLUMN IF EXISTS rejection_seen_at;",
+    # 2026-10-24: comment written with the pay slip (like a cash deposit's notes)
+    "ALTER TABLE payment_proofs ADD COLUMN IF NOT EXISTS notes VARCHAR(500) NULL;",
     "CREATE UNIQUE INDEX IF NOT EXISTS ux_payment_proofs_invoice_payment ON payment_proofs (invoice_id, payment_id);",
     "CREATE INDEX IF NOT EXISTS ix_payment_proofs_source ON payment_proofs (source);",
     "CREATE INDEX IF NOT EXISTS ix_payment_proofs_invoice_id ON payment_proofs (invoice_id);",
