@@ -271,6 +271,7 @@ async def create_walkin_invoice(
                 type=StockEntryType.SALE,
                 location="Sale",
                 ref=invoice_no,
+                created_at=payment_date,  # Picker date, so back-dated sales land on that day in stock reports
             )
             db.add(stock_out_entry)
 
@@ -653,7 +654,7 @@ async def get_walkin_invoices(
             "total_amount": float(inv.total_amount),
             "amount_paid": float(inv.amount_paid),
             "discount": discount,
-            "date": inv.created_at.strftime("%Y-%m-%d"),
+            "date": (inv.payment_date or inv.created_at).strftime("%Y-%m-%d"),
             "status": getattr(inv, 'payment_status', 'paid'),  # Use payment_status instead of status
             "items": items_data,
             "created_at": inv.created_at.isoformat(),
@@ -728,7 +729,7 @@ async def get_walkin_invoice_receipt(
         balance_due=0.0,
         payment_method=invoice.payment_method,
         payment_status=invoice.payment_status,
-        created_at=invoice.created_at,
+        created_at=invoice.payment_date or invoice.created_at,
         bill_type=bill_type
     )
 
@@ -818,8 +819,8 @@ async def get_walkin_invoices_by_date(
                     "Discount": float(item.get('discount', 0.0)),
                     "Total Discount": float(totals_data.get('discount', 0.0)) if isinstance(totals_data, dict) else 0.0,
                     "Cost": float(item.get('unit_price', 0.0)) * int(item.get('quantity', item.get('pro_quantity', 1))),
-                    "Time": invoice.created_at.strftime("%H:%M:%S") if invoice.created_at else "",
-                    "Date": invoice.created_at.strftime("%Y-%m-%d") if invoice.created_at else ""
+                    "Time": (invoice.payment_date or invoice.created_at).strftime("%H:%M:%S") if (invoice.payment_date or invoice.created_at) else "",
+                    "Date": (invoice.payment_date or invoice.created_at).strftime("%Y-%m-%d") if (invoice.payment_date or invoice.created_at) else ""
                 }
                 products_list.append(product_detail)
 
@@ -1026,8 +1027,8 @@ async def get_daily_invoice_report(
                     "Discount": float(item.get('discount', 0.0)),
                     "Total Discount": float(totals_data.get('discount', 0.0)) if isinstance(totals_data, dict) else 0.0,
                     "Cost": float(item.get('unit_price', 0.0)) * int(item.get('quantity', item.get('pro_quantity', 1))),  # Calculate cost as price * quantity
-                    "Time": invoice.created_at.strftime("%H:%M:%S") if invoice.created_at else "",
-                    "Date": invoice.created_at.strftime("%Y-%m-%d") if invoice.created_at else ""
+                    "Time": (invoice.payment_date or invoice.created_at).strftime("%H:%M:%S") if (invoice.payment_date or invoice.created_at) else "",
+                    "Date": (invoice.payment_date or invoice.created_at).strftime("%Y-%m-%d") if (invoice.payment_date or invoice.created_at) else ""
                 }
                 products_list.append(product_detail)
 

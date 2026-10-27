@@ -397,6 +397,7 @@ async def get_walkin_invoices(
                     "total_discount": total_discount_display,
                     "cost": item_cost,
                     "created_at": inv.created_at.isoformat() if inv.created_at else None,
+                    "payment_date": (inv.payment_date or inv.created_at).isoformat() if (inv.payment_date or inv.created_at) else None,
                     # ALL rows get is_refunded=True for red background
                     "is_refunded": invoice_refund_info["is_refunded"] if invoice_refund_info else False,
                     # Only FIRST row gets detailed refund info for tooltip
@@ -911,7 +912,7 @@ async def get_walkin_invoices_pdf(
                 invoice_rows += f"""
                 <tr>
                     <td class="border">{inv.invoice_no}</td>
-                    <td class="border">{inv.created_at.strftime('%Y-%m-%d') if inv.created_at else ''}</td>
+                    <td class="border">{(inv.payment_date or inv.created_at).strftime('%Y-%m-%d') if (inv.payment_date or inv.created_at) else ''}</td>
                     <td class="border">{product_name}</td>
                     <td class="border text-right">{quantity}</td>
                     <td class="border text-right">{unit_price:.0f}</td>
@@ -919,7 +920,7 @@ async def get_walkin_invoices_pdf(
                     <td class="border text-right">{item_total:.0f}</td>
                     {paid_cell}
                     <td class="border text-right">{item_cost:.0f}</td>
-                    <td class="border">{_to_pkt_time(inv.created_at)}</td>
+                    <td class="border">{_to_pkt_time(inv.payment_date or inv.created_at)}</td>
                 </tr>
                 """
                 total_amount += item_total
@@ -1172,14 +1173,14 @@ async def get_walkin_invoices_excel(
                 
                 # Write row data
                 ws.cell(row=row_num, column=1, value=inv.invoice_no).border = thin_border
-                ws.cell(row=row_num, column=2, value=inv.created_at.strftime('%Y-%m-%d') if inv.created_at else '').border = thin_border
+                ws.cell(row=row_num, column=2, value=(inv.payment_date or inv.created_at).strftime('%Y-%m-%d') if (inv.payment_date or inv.created_at) else '').border = thin_border
                 ws.cell(row=row_num, column=3, value=product_name).border = thin_border
                 ws.cell(row=row_num, column=4, value=quantity).border = thin_border
                 ws.cell(row=row_num, column=5, value=round(unit_price, 2)).border = thin_border
                 ws.cell(row=row_num, column=6, value=round(item_discount, 2)).border = thin_border
                 ws.cell(row=row_num, column=7, value=round(item_total, 2)).border = thin_border
                 ws.cell(row=row_num, column=8, value=round(item_cost, 2)).border = thin_border
-                ws.cell(row=row_num, column=9, value=inv.created_at.strftime('%I:%M %p') if inv.created_at else '').border = thin_border
+                ws.cell(row=row_num, column=9, value=(inv.payment_date or inv.created_at).strftime('%I:%M %p') if (inv.payment_date or inv.created_at) else '').border = thin_border
                 
                 # Apply alignments
                 for col in range(1, 10):
