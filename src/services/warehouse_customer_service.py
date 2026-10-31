@@ -20,7 +20,8 @@ class WarehouseCustomerService:
             name=customer_create.name,
             contacts=customer_create.contacts,
             cnic=customer_create.cnic,
-            branch=customer_create.branch
+            branch=customer_create.branch,
+            destination_branch=customer_create.destination_branch,
         )
 
         db.add(db_customer)

@@ -21,14 +21,23 @@ from ..models.warehouse_customer import WarehouseCustomer
 from ..models.salesman import Salesman
 from ..models.user import User
 from ..models.stock_entry import StockEntry, StockEntryType
+from ..models.batch import Batch, BatchVendor, ProductBatch
+from ..models.warehouse_vendor import WarehouseVendor
 from ..auth.session_auth import admin_cashier_employee_required_from_session, admin_employee_required_from_session
 from ..config.branches import DEFAULT_BRANCH
 from ..database.database import session_factories
 from ..services.branch_transfer import transfer_invoice_stock
+from ..services.batch_service import product_batch_label
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/warehouse-invoice", tags=["warehouse-invoice"])
+
+
+def is_direct_customer(customer: Optional[WarehouseCustomer]) -> bool:
+    """A warehouse customer with no destination branch buys straight from the warehouse
+    (Light House / Karim Abad customers have their branch code)."""
+    return bool(customer) and not customer.destination_branch
 
 @router.post("/create")
 async def create_warehouse_invoice(
@@ -38,7 +47,9 @@ async def create_warehouse_invoice(
 ):
     """
     Create a new warehouse invoice and save to warehouse_invoices table.
-    Decreases warehouse_stock and increases stock_level (shop stock).
+    Decreases warehouse_stock and, for a branch customer, increases that branch's shop
+    stock. A direct customer (no destination branch) buys straight from the warehouse:
+    the stock goes to no shop.
     """
     # Extract data from request body
     order_items = request_data.get('items', [])
@@ -78,7 +89,10 @@ async def create_warehouse_invoice(
             logger.error(f"Invalid UUID format for customer_id: {customer_id}")
 
     # Customer mapped to another branch (e.g. Karim Abad): stock goes to that
-    # branch's database instead of the Light House shop (MULTI_BRANCH_PLAN Phase 7)
+    # branch's database instead of the Light House shop (MULTI_BRANCH_PLAN Phase 7).
+    # A customer with no branch is a direct customer: a sale, no shop gets the stock.
+    # (No customer chosen keeps the old way: the Light House shop.)
+    is_direct = is_direct_customer(customer_obj)
     destination_branch = customer_obj.destination_branch if customer_obj else None
     if destination_branch == DEFAULT_BRANCH:
         destination_branch = None
@@ -106,28 +120,56 @@ async def create_warehouse_invoice(
             shop_price = float(item.get('shop_price') or 0)
             discount = float(item.get('discount', 0))
 
-            # Rate = the shop's cost; with the shop selling price it is set on the
-            # destination branch's product, so both must be filled
-            if unit_price <= 0 or shop_price <= 0:
+            # Branch: Rate = the shop's cost; with the shop selling price it is set on the
+            # destination branch's product, so both must be filled.
+            # Direct customer: Rate = the price it is sold at; no shop price.
+            if is_direct:
+                shop_price = 0.0
+                if unit_price <= 0:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Set the Rate for '{pro_name}'"
+                    )
+            elif unit_price <= 0 or shop_price <= 0:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Set Rate (shop cost) and Shop Selling Price for '{pro_name}'"
                 )
 
-            # Verify product exists
-            product_result = await db.execute(select(Product).where(Product.name == pro_name))
-            product = product_result.scalar_one_or_none()
+            # The line picked: a batch (its own barcode / stock) or the product's stock
+            # outside batches ("Old Stock"). Older clients send only the name.
+            product_batch = None
+            if item.get('product_batch_id'):
+                product_batch = await db.get(ProductBatch, uuid.UUID(str(item['product_batch_id'])))
+                if not product_batch:
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Batch of '{pro_name}' not found")
+                product = await db.get(Product, product_batch.product_id)
+            elif item.get('product_id'):
+                product = await db.get(Product, uuid.UUID(str(item['product_id'])))
+            else:
+                product_result = await db.execute(select(Product).where(Product.name == pro_name))
+                product = product_result.scalar_one_or_none()
             if not product:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Product '{pro_name}' not found"
                 )
 
-            # Check warehouse stock
-            if (product.warehouse_stock or 0) < quantity:
+            # Check warehouse stock of the picked line
+            if product_batch:
+                available = product_batch.warehouse_stock or 0
+                line_name = f"{pro_name} ({product_batch.barcode})"
+            else:
+                in_batches = (await db.execute(
+                    select(func.coalesce(func.sum(ProductBatch.warehouse_stock), 0))
+                    .where(ProductBatch.product_id == product.id, ProductBatch.batch_id.isnot(None))
+                )).scalar() or 0
+                available = (product.warehouse_stock or 0) - in_batches
+                line_name = pro_name
+            if available < quantity:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Insufficient warehouse stock for '{pro_name}'. Available: {product.warehouse_stock or 0}"
+                    detail=f"Insufficient warehouse stock for '{line_name}'. Available: {available}"
                 )
 
             # Branch transfer matches the product by barcode in the other DB
@@ -137,30 +179,45 @@ async def create_warehouse_invoice(
                     detail=f"Product '{pro_name}' has no barcode; add a barcode before transferring to another branch"
                 )
 
-            # TRANSFER LOGIC: Warehouse -> Shop
+            # TRANSFER LOGIC: Warehouse -> Shop (a direct sale only leaves the warehouse)
             product.warehouse_stock = (product.warehouse_stock or 0) - quantity
-            if not destination_branch:
+            if not destination_branch and not is_direct:
                 product.stock_level = (product.stock_level or 0) + quantity
-                product.cost_price = Decimal(str(unit_price))
-                product.unit_price = Decimal(str(shop_price))
+                if product_batch:
+                    # The batch keeps its own shop cost / price; the product's stay for
+                    # its old stock
+                    product_batch.stock_level = (product_batch.stock_level or 0) + quantity
+                    product_batch.shop_cost = Decimal(str(unit_price))
+                    product_batch.shop_price = Decimal(str(shop_price))
+                else:
+                    product.cost_price = Decimal(str(unit_price))
+                    product.unit_price = Decimal(str(shop_price))
                 product.updated_at = datetime.now()
             db.add(product)
+            if product_batch:
+                product_batch.warehouse_stock = (product_batch.warehouse_stock or 0) - quantity
+                product_batch.updated_at = datetime.now()
+                db.add(product_batch)
+            # The cost as entered at Stock In (freight / cartage only go into the selling price)
+            warehouse_cost = product_batch.cost if product_batch else product.warehouse_cost
 
             # Stock Entries (on the invoice date, with cost so stock reports total them)
-            transfer_ref = f"W_INV_TRANSFER_{payment_date.strftime('%Y%m%d')}"
+            transfer_ref = f"W_INV_{'SALE' if is_direct else 'TRANSFER'}_{payment_date.strftime('%Y%m%d')}"
             stock_out = StockEntry(
                 product_id=product.id,
                 qty=-quantity,
-                cost_price=product.warehouse_cost,
+                cost_price=warehouse_cost,
                 type=StockEntryType.OUT,
                 location="warehouse",
                 ref=transfer_ref,
+                product_batch_id=product_batch.id if product_batch else None,
                 created_at=payment_date
             )
             db.add(stock_out)
 
-            # Other branch gets its Stock In entry in its own DB (branch_transfer)
-            if not destination_branch:
+            # Other branch gets its Stock In entry in its own DB (branch_transfer); a
+            # direct sale has no shop Stock In
+            if not destination_branch and not is_direct:
                 stock_in = StockEntry(
                     product_id=product.id,
                     qty=quantity,
@@ -170,6 +227,7 @@ async def create_warehouse_invoice(
                     location="Stock In",
                     vendor_id=js_vendor_id,
                     ref=transfer_ref,
+                    product_batch_id=product_batch.id if product_batch else None,
                     created_at=payment_date
                 )
                 db.add(stock_in)
@@ -180,12 +238,19 @@ async def create_warehouse_invoice(
                 "product_id": str(product.id),
                 "quantity": quantity,
                 "unit_price": unit_price,
-                "shop_price": shop_price,
+                "shop_price": shop_price or None,  # none for a direct sale
                 "total_price": item_total_before_discount,
                 "discount": discount,
                 "cat_name": str(item.get('cat_name', '')),
-                "cost_price": float(product.warehouse_cost) if product.warehouse_cost else 0.0,
+                "cost_price": float(warehouse_cost) if warehouse_cost else 0.0,
             }
+            if product_batch:
+                # The other branch makes its copy of the batch line from these
+                item_obj.update({
+                    "product_batch_id": str(product_batch.id),
+                    "batch_barcode": product_batch.barcode,
+                    "batch_label": await product_batch_label(db, product_batch),
+                })
             items_list.append(item_obj)
             total_amount += Decimal(str(item_total_before_discount))
             total_discount += discount
@@ -261,7 +326,7 @@ async def create_warehouse_invoice(
                     "amount": float(amount_paid),
                     "payment_method": payment_method,
                     "date": payment_date.isoformat(),
-                    "description": "Warehouse Transfer Payment"
+                    "description": "Warehouse Direct Sale Payment" if is_direct else "Warehouse Transfer Payment"
                 }]),
                 discounts=Decimal(str(total_discount)),
                 payment_method=payment_method,
@@ -350,12 +415,17 @@ async def get_warehouse_products(
     # Light House: the warehouse row is also the shop product
     shop_prices = {p.barcode: (p.cost_price, p.unit_price) for p in products}
     destination_branch = None
+    customer = None
     if customer_id:
         try:
             customer = await db.get(WarehouseCustomer, uuid.UUID(customer_id))
         except ValueError:
             customer = None
         destination_branch = customer.destination_branch if customer else None
+    # Direct customer: sold at the selling price (Rate), no shop price
+    direct = is_direct_customer(customer)
+    if direct:
+        shop_prices = {p.barcode: (p.unit_price, p.unit_price) for p in products}
     if destination_branch and destination_branch != DEFAULT_BRANCH and destination_branch in session_factories:
         barcodes = [p.barcode for p in products if p.barcode]
         async with session_factories[destination_branch]() as branch_db:
@@ -367,18 +437,57 @@ async def get_warehouse_products(
     def as_float(value):
         return float(value) if value else 0.0
 
-    return [
-        {
-            "id": str(p.id),
-            "product_name": p.name,
-            "category": p.category,
-            "price": as_float(shop_prices.get(p.barcode, (0, 0))[0]),
-            "shop_price": as_float(shop_prices.get(p.barcode, (0, 0))[1]),
-            "stock": p.warehouse_stock,
-            "barcode": p.barcode
-        }
-        for p in products
-    ]
+    # Batch lines with warehouse stock, oldest batch first
+    batch_lines: Dict[uuid.UUID, list] = {}
+    if products:
+        rows = await db.execute(
+            select(ProductBatch, Batch.batch_no, WarehouseVendor.name)
+            .join(Batch, ProductBatch.batch_id == Batch.id)
+            .outerjoin(BatchVendor, ProductBatch.batch_vendor_id == BatchVendor.id)
+            .outerjoin(WarehouseVendor, BatchVendor.warehouse_vendor_id == WarehouseVendor.id)
+            .where(ProductBatch.product_id.in_([p.id for p in products]), ProductBatch.warehouse_stock > 0)
+            .order_by(Batch.batch_no, ProductBatch.created_at)
+        )
+        for pb, batch_no, vendor_name in rows.all():
+            # Only the batch no under the name; two vendors' lines differ by barcode
+            label = f"Batch {batch_no:03d}"
+            batch_lines.setdefault(pb.product_id, []).append((pb, label))
+
+    # One line for the product's stock outside batches ("Old Stock") and one per batch,
+    # each with its own barcode and stock, so the invoice moves exactly that stock
+    lines = []
+    for p in products:
+        batches = batch_lines.get(p.id, [])
+        old_stock = (p.warehouse_stock or 0) - sum(pb.warehouse_stock for pb, _ in batches)
+        if old_stock > 0:
+            lines.append({
+                "id": str(p.id),
+                "product_id": str(p.id),
+                "product_batch_id": None,
+                "batch_label": "Old Stock" if batches else None,
+                "product_name": p.name,
+                "category": p.category,
+                "price": as_float(shop_prices.get(p.barcode, (0, 0))[0]),
+                "shop_price": as_float(shop_prices.get(p.barcode, (0, 0))[1]),
+                "stock": old_stock,
+                "barcode": p.barcode
+            })
+        for pb, label in batches:
+            lines.append({
+                "id": str(pb.id),
+                "product_id": str(p.id),
+                "product_batch_id": str(pb.id),
+                "batch_label": label,
+                "product_name": p.name,
+                "category": p.category,
+                # Direct: the batch's selling price. Branch: last invoice rate / price of
+                # this batch, else its cost / selling price
+                "price": as_float(pb.shop_price or pb.selling_price) if direct else as_float(pb.shop_cost or pb.cost),
+                "shop_price": as_float(pb.shop_price or pb.selling_price),
+                "stock": pb.warehouse_stock,
+                "barcode": pb.barcode
+            })
+    return lines
 
 @router.get("/all-invoices")
 async def get_all_warehouse_invoices(

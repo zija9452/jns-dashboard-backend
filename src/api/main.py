@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 import os
 from decimal import Decimal
 
-from src.routers import auth, users, products, customers, vendors, salesman, salesman_attendance, stock, expenses, customer_invoice, refunds, admin, pos, walkin_invoice, walkin_refund, category, brand, expense_type, sales_view, duplicate_bill, customer_category, ideal_price, rush_pricing, dtf_pricing, quotation, price_modifier, warehouse_stock, warehouse_customers, warehouse_vendors, warehouse_invoice, warehouse_sales_view, shop_order, demand, demand_category, demand_item, tournament, cash_deposit, payment_proof, ready_articles
+from src.routers import auth, users, products, customers, vendors, salesman, salesman_attendance, stock, expenses, customer_invoice, refunds, admin, pos, walkin_invoice, walkin_refund, category, brand, expense_type, sales_view, duplicate_bill, customer_category, ideal_price, rush_pricing, dtf_pricing, quotation, price_modifier, warehouse_stock, warehouse_customers, warehouse_vendors, warehouse_invoice, warehouse_sales_view, shop_order, demand, demand_category, demand_item, tournament, cash_deposit, payment_proof, ready_articles, warehouse_batches
 from src.utils.error_handlers import setup_error_handlers
 from src.middleware.security import SecurityHeadersMiddleware
 from src.utils.metrics import MetricsMiddleware, start_metrics_server
@@ -225,6 +225,7 @@ app.include_router(tournament.router, prefix="/tournament", tags=["tournament"])
 app.include_router(cash_deposit.router, tags=["cash-deposits"])
 app.include_router(payment_proof.router, tags=["payment-proofs"])
 app.include_router(payment_proof.record_router, tags=["payments-record"])
+app.include_router(warehouse_batches.router, tags=["warehouse-batches"])
 
 if __name__ == "__main__":
     import uvicorn

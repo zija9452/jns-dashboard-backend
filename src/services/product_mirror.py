@@ -19,6 +19,7 @@ from sqlalchemy import func, select
 from ..config.branches import BRANCHES, configured_branches, current_branch
 from ..database.database import session_factories
 from ..models.category import Category
+from ..models.batch import ProductBatch
 from ..models.product import Product
 
 logger = logging.getLogger(__name__)
@@ -75,6 +76,36 @@ async def mirror_product(src: Product) -> List[str]:
         except Exception as e:
             logger.exception("Copying product %s to %s failed", src.barcode, code)
             warnings.append(f"Not added in {branch.name}: {str(e) or type(e).__name__}"[:300])
+    return warnings
+
+
+async def mirror_batch_line(line: ProductBatch, product_barcode: str, label: str) -> List[str]:
+    """A new batch line (Stock In) is copied to the other branches with stock 0, like a
+    product: same barcode, label ("Batch 001") and price, no batches row there. A branch
+    without the product is skipped (its first warehouse invoice makes the copy)."""
+    warnings: List[str] = []
+    for code in _other_branches():
+        branch = BRANCHES[code]
+        try:
+            async with session_factories[code]() as db:
+                exists = await db.execute(select(ProductBatch.id).where(ProductBatch.barcode == line.barcode).limit(1))
+                if exists.first():
+                    continue
+                result = await db.execute(select(Product.id).where(Product.barcode == product_barcode))
+                product_id = result.scalar_one_or_none()
+                if product_id is None:
+                    warnings.append(f"Batch not added in {branch.name}: product not there")
+                    continue
+                now = datetime.now()
+                db.add(ProductBatch(
+                    product_id=product_id, batch_id=None, label=label, barcode=line.barcode,
+                    cost=line.cost, landed_cost=line.landed_cost, selling_price=line.selling_price,
+                    warehouse_stock=0, stock_level=0, created_at=now, updated_at=now,
+                ))
+                await db.commit()
+        except Exception as e:
+            logger.exception("Copying batch line %s to %s failed", line.barcode, code)
+            warnings.append(f"Batch not added in {branch.name}: {str(e) or type(e).__name__}"[:300])
     return warnings
 
 

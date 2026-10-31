@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config.branches import BRANCHES
 from ..database.database import session_factories
+from ..models.batch import ProductBatch
 from ..models.product import Product
 from ..models.stock_entry import StockEntry, StockEntryType
 from ..models.vendor import Vendor
@@ -110,13 +111,20 @@ async def _apply_in_branch(lh_db: AsyncSession, invoice: WarehouseInvoice, branc
             if product is None:
                 product = await _create_branch_product(db, lh_product, branch.name, now)
 
-            # Invoice rate is the branch's cost; shop_price its selling price
-            # (invoices made before shop_price existed keep the branch's prices)
-            if item.get("shop_price"):
+            quantity = int(item["quantity"])
+            product_batch = None
+            if item.get("batch_barcode"):
+                # A batch keeps its barcode / shop cost / price here too (a copy of the
+                # Light House batch line); the product's prices stay for its old stock
+                product_batch = await _branch_batch_line(db, product, item, now)
+                product_batch.stock_level = (product_batch.stock_level or 0) + quantity
+                db.add(product_batch)
+            elif item.get("shop_price"):
+                # Invoice rate is the branch's cost; shop_price its selling price
+                # (invoices made before shop_price existed keep the branch's prices)
                 product.cost_price = Decimal(str(item["unit_price"]))
                 product.unit_price = Decimal(str(item["shop_price"]))
 
-            quantity = int(item["quantity"])
             product.stock_level = (product.stock_level or 0) + quantity
             product.updated_at = now
             db.add(product)
@@ -124,16 +132,47 @@ async def _apply_in_branch(lh_db: AsyncSession, invoice: WarehouseInvoice, branc
             db.add(StockEntry(
                 product_id=product.id,
                 qty=quantity,
-                cost_price=product.cost_price,
-                unit_price=product.unit_price,
+                cost_price=product_batch.shop_cost if product_batch else product.cost_price,
+                unit_price=product_batch.shop_price if product_batch else product.unit_price,
                 type=StockEntryType.IN,
                 location="Stock In",
                 vendor_id=vendor.id if vendor else None,
                 ref=invoice.invoice_no,
+                product_batch_id=product_batch.id if product_batch else None,
                 created_at=invoice.payment_date or now,
             ))
 
         await db.commit()
+
+
+async def _branch_batch_line(db: AsyncSession, product: Product, item: dict, now: datetime) -> ProductBatch:
+    """This branch's copy of a Light House batch line (same barcode), made on its first
+    transfer; each transfer sets the invoice's rate / shop price on it."""
+    result = await db.execute(select(ProductBatch).where(ProductBatch.barcode == item["batch_barcode"]))
+    line = result.scalar_one_or_none()
+    rate = Decimal(str(item["unit_price"]))
+    price = Decimal(str(item["shop_price"]))
+    if line is None:
+        line = ProductBatch(
+            product_id=product.id,
+            batch_id=None,
+            label=item.get("batch_label") or None,
+            barcode=item["batch_barcode"],
+            cost=Decimal(str(item.get("cost_price") or 0)),
+            landed_cost=Decimal(str(item.get("cost_price") or 0)),
+            selling_price=price,
+            warehouse_stock=0,
+            stock_level=0,
+            created_at=now,
+        )
+    elif line.product_id != product.id:
+        raise TransferError(f"Barcode {item['batch_barcode']} belongs to another product here")
+    line.shop_cost = rate
+    line.shop_price = price
+    line.updated_at = now
+    db.add(line)
+    await db.flush()
+    return line
 
 
 async def _create_branch_product(db: AsyncSession, src: Product, branch_name: str, now: datetime) -> Product:

@@ -29,10 +29,16 @@ def centered_barcode_x(data: str, module_width: int = 2) -> int:
     """
     Code 128 bar width grows to the right from ^FO with no native ZPL centering, so a long
     barcode (more digits) drifts off-center. Estimate total rendered width (start + one
-    module per data char + check digit, each ~11 modules, plus a 13-module stop pattern) and
+    symbol per data char + check digit, each 11 modules, plus a 13-module stop pattern) and
     return the left x so the barcode is centered on BARCODE_CENTER_X regardless of length.
+    Labels print in auto mode (^BCN,..,A), which packs an all-digit barcode two digits per
+    symbol (an odd last digit costs a code switch + 1 symbol).
     """
-    total_modules = 11 * (len(data) + 2) + 13
+    if data.isdigit() and len(data) >= 4:
+        symbols = len(data) // 2 + (2 if len(data) % 2 else 0)
+    else:
+        symbols = len(data)
+    total_modules = 11 * (symbols + 2) + 13
     barcode_width = total_modules * module_width
     x = int(BARCODE_CENTER_X - barcode_width / 2)
     return max(x, 0)
@@ -66,6 +72,10 @@ from ..models.stock_entry import StockEntry, StockEntryType, StockEntryCreate, S
 from ..services.stock_service import StockService
 from ..services.shop_transfer import TRANSFER_LOCATIONS, TRANSFER_OUT, transfer_label
 from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, cashier_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session, admin_cashier_employee_production_required_from_session, warehouse_required_from_session
+from ..utils.batch_barcode import search_term_for
+from ..models.batch import Batch, BatchVendor, ProductBatch
+from ..models.warehouse_vendor import WarehouseVendor
+from ..services.batch_service import line_ranges
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -98,6 +108,7 @@ async def view_stock(
     shelf: Optional[str] = None,
     page: int = 1,
     limit: int = 8,
+    batch_lines: bool = False,
     current_user: User = Depends(admin_cashier_employee_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
@@ -106,6 +117,9 @@ async def view_stock(
     Matches product page pattern with all required fields
     Access: Admin, Cashier, Employee
     Returns: Paginated data + total count for proper frontend pagination
+    batch_lines=true (walk-in sale): a product with batches comes as one line for its
+    stock outside batches ("Old Stock") and one per batch with stock, each with its own
+    barcode / price / stock, so the sale takes exactly that stock.
     """
     from sqlalchemy import func
     
@@ -130,6 +144,7 @@ async def view_stock(
         base_statement = base_statement.where(Product.branch == branches)
 
     # Apply search filter
+    search_string = await search_term_for(db, search_string)  # a scanned batch barcode finds its product
     if search_string and search_string.strip():
         search_pattern = f"%{search_string.strip()}%"
         base_statement = base_statement.where(
@@ -189,6 +204,17 @@ async def view_stock(
     vendor_result = await db.execute(vendor_query)
     vendor_map = {row[0]: row[1] for row in vendor_result.fetchall()}
 
+    # How many batch lines each product has (the row opens to show them)
+    count_rows = await db.execute(
+        select(ProductBatch.product_id, func.count()).where(ProductBatch.product_id.in_(product_ids))
+        .group_by(ProductBatch.product_id)
+    )
+    batch_counts = {row[0]: row[1] for row in count_rows.all()}
+    # Products with batches show their lowest - highest price / cost / margin instead of one
+    ranges = {} if batch_lines else await line_ranges(
+        db, [(p[0], p[6], p[3], p[2]) for p in products if batch_counts.get(p[0])], shop=True
+    )
+
     result_list = []
     for p in products:
         p_id = p[0]
@@ -198,6 +224,10 @@ async def view_stock(
         
         result_list.append({
             "pro_id": str(p_id),
+            "batch_count": batch_counts.get(p_id, 0),
+            "price_range": ranges[p_id]["price"] if p_id in ranges else None,
+            "cost_range": ranges[p_id]["cost"] if p_id in ranges else None,
+            "margin_range": ranges[p_id]["margin"] if p_id in ranges else None,
             "vendor_name": vendor_map.get(p_id, ""),
             "product_name": p[1],
             "category": p[5] or "",
@@ -210,6 +240,9 @@ async def view_stock(
             "branch": p[7] or ""
         })
 
+    if batch_lines:
+        result_list = await _with_batch_lines(db, result_list)
+
     total_pages = (total_count + limit - 1) // limit if limit > 0 else 1
 
     return {
@@ -220,6 +253,103 @@ async def view_stock(
         'total_pages': total_pages,
         'has_more': page < total_pages
     }
+
+
+def _batch_line_label(product_batch: ProductBatch, batch: Optional[Batch], vendor: Optional[WarehouseVendor] = None) -> str:
+    """Light House: its batch's number (no vendor - invoices show only "Batch 003");
+    another branch: the copied label."""
+    if not batch:
+        return product_batch.label or "Batch"
+    return f"Batch {batch.batch_no:03d}"
+
+
+async def _with_batch_lines(db: AsyncSession, rows: list) -> list:
+    """Split each view_stock row with batches into Old Stock + one line per batch with
+    shop stock. Every line has its own "id"; a batch line also its product_batch_id."""
+    if not rows:
+        return rows
+    batch_rows = (await db.execute(
+        select(ProductBatch, Batch, WarehouseVendor)
+        .outerjoin(Batch, ProductBatch.batch_id == Batch.id)
+        .outerjoin(BatchVendor, ProductBatch.batch_vendor_id == BatchVendor.id)
+        .outerjoin(WarehouseVendor, BatchVendor.warehouse_vendor_id == WarehouseVendor.id)
+        .where(ProductBatch.product_id.in_([UUID(r["pro_id"]) for r in rows]), ProductBatch.stock_level > 0)
+        .order_by(ProductBatch.created_at)
+    )).all()
+    by_product = {}
+    for pb, batch, vendor in batch_rows:
+        by_product.setdefault(str(pb.product_id), []).append((pb, batch, vendor))
+
+    lines = []
+    for row in rows:
+        batches = by_product.get(row["pro_id"], [])
+        old_stock = row["stock"] - sum(pb.stock_level for pb, _, _ in batches)
+        if old_stock > 0:
+            lines.append({**row, "id": row["pro_id"], "stock": old_stock, "product_batch_id": None,
+                          "batch_label": "Old Stock" if batches else None})
+        for pb, batch, vendor in batches:
+            # The shop's own rate / price from the warehouse invoice, else the batch's
+            cost = float(pb.shop_cost if pb.shop_cost is not None else pb.cost)
+            price = float(pb.shop_price if pb.shop_price is not None else pb.selling_price)
+            lines.append({
+                **row,
+                "id": str(pb.id),
+                "product_batch_id": str(pb.id),
+                "batch_label": _batch_line_label(pb, batch, vendor),
+                "stock": pb.stock_level,
+                "price": price,
+                "cost": cost,
+                "barcode": pb.barcode,
+                "margin": round(((price - cost) / cost * 100) if cost else 0.0, 2),
+            })
+    return lines
+
+
+@router.get("/batches/{product_id}")
+async def shop_batch_lines(
+    product_id: str,
+    current_user: User = Depends(get_current_user_from_session),
+    db: AsyncSession = Depends(get_db)
+):
+    """A product's shop stock in this branch line by line: "Old Stock" (stock outside the
+    batches; only when not 0) then each batch with its own barcode / shop cost / shop price /
+    shop stock. In Light House a line has its batch; in another branch it is a copy with
+    only its label."""
+    try:
+        product = await db.get(Product, UUID(product_id))
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid product ID format")
+    if not product:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
+    rows = (await db.execute(
+        select(ProductBatch, Batch, WarehouseVendor)
+        .outerjoin(Batch, ProductBatch.batch_id == Batch.id)
+        .outerjoin(BatchVendor, ProductBatch.batch_vendor_id == BatchVendor.id)
+        .outerjoin(WarehouseVendor, BatchVendor.warehouse_vendor_id == WarehouseVendor.id)
+        .where(ProductBatch.product_id == product.id)
+        .order_by(ProductBatch.created_at)
+    )).all()
+
+    old_stock = (product.stock_level or 0) - sum(pb.stock_level or 0 for pb, _, _ in rows)
+    lines = [] if old_stock == 0 else [{
+        "label": "Old Stock",
+        "barcode": product.barcode,
+        "vendor_name": None,
+        "cost": float(product.cost_price or 0),
+        "selling_price": float(product.unit_price or 0),
+        "stock": old_stock,
+    }]
+    for pb, batch, vendor in rows:
+        lines.append({
+            "label": _batch_line_label(pb, batch),
+            "barcode": pb.barcode,
+            "vendor_name": vendor.name.strip() if vendor else None,
+            # The shop's own rate / price from the warehouse invoice, else the batch's
+            "cost": float(pb.shop_cost if pb.shop_cost is not None else pb.cost),
+            "selling_price": float(pb.shop_price if pb.shop_price is not None else pb.selling_price),
+            "stock": pb.stock_level or 0,
+        })
+    return {"product_id": str(product.id), "name": product.name, "lines": lines}
 
 
 @router.get("/searchstock")
@@ -239,6 +369,7 @@ async def search_stock(
     # Apply filters
     if branches:
         statement = statement.where(Product.branch == branches)
+    search_string = await search_term_for(db, search_string)  # a scanned batch barcode finds its product
     if search_string:
         statement = statement.where(Product.name.ilike(f"%{search_string}%"))
 
@@ -717,7 +848,7 @@ async def save_stock_in_with_barcode(
 
                 # 1. Barcode - auto-centered on BARCODE_CENTER_X regardless of digit count
                 barcode_x = centered_barcode_x(product.barcode)
-                zpl += f"^FO{barcode_x},40^BY2,2,80^BCN,80,Y,N,N^FD{product.barcode}^FS"
+                zpl += f"^FO{barcode_x},40^BY2,2,80^BCN,80,Y,N,N,A^FD{product.barcode}^FS"
 
                 # 2. Product name - single line, font auto-shrinks to fit instead of wrapping/cutting
                 name_font = fitted_name_font_size(product.name)
@@ -1770,7 +1901,7 @@ async def print_barcodes(
         x_center = centered_barcode_x(barcode)
 
         # 1. Barcode - auto-centered on BARCODE_CENTER_X regardless of digit count
-        zpl_commands += f"^FO{x_center},{y_start}^BY2,2,80^BCN,80,Y,N,N^FD{barcode}^FS"
+        zpl_commands += f"^FO{x_center},{y_start}^BY2,2,80^BCN,80,Y,N,N,A^FD{barcode}^FS"
 
         # 2. Product name - single line, font auto-shrinks to fit instead of wrapping/cutting
         name_font = fitted_name_font_size(pro_name)
@@ -1838,7 +1969,7 @@ async def generate_barcodes_only(
 
             # 1. Barcode - auto-centered on BARCODE_CENTER_X regardless of digit count
             barcode_x = centered_barcode_x(barcode)
-            zpl += f"^FO{barcode_x},40^BY2,2,80^BCN,80,Y,N,N^FD{barcode}^FS"
+            zpl += f"^FO{barcode_x},40^BY2,2,80^BCN,80,Y,N,N,A^FD{barcode}^FS"
 
             # 2. Product name - single line, font auto-shrinks to fit instead of wrapping/cutting
             name_font = fitted_name_font_size(pro_name)

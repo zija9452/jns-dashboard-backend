@@ -16,10 +16,39 @@ from ..models.product import Product
 from ..models.customer import Customer
 from ..models.user import User
 from ..models.daily_cash import DailyCash
+from ..models.batch import ProductBatch
 from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, cashier_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session
 from .walkin_invoice import pkt_now
 
 router = APIRouter()
+
+
+def _line_key(item: dict) -> tuple:
+    """A bill line: the product + its batch (one product can be sold from two batches on
+    one bill, each its own line). Old bills / items without a batch: the name alone."""
+    return (item.get('product_name'), item.get('product_batch_id') or None)
+
+
+async def _return_stock(db: AsyncSession, item: dict, qty: int) -> None:
+    """Put qty of a bill line back on the shelf (negative qty takes it off again, when a
+    refund is deleted): the product's shop stock, and its batch line's when it was sold
+    from a batch - so the piece sells again at that batch's price."""
+    product = None
+    if item.get('product_id'):
+        try:
+            product = await db.get(Product, uuid.UUID(str(item['product_id'])))
+        except ValueError:
+            product = None
+    if product is None:
+        product = (await db.execute(select(Product).where(Product.name == item.get('product_name')))).scalar_one_or_none()
+    if product:
+        product.stock_level = max((product.stock_level or 0) + qty, 0)
+        db.add(product)
+    if item.get('product_batch_id'):
+        product_batch = await db.get(ProductBatch, uuid.UUID(str(item['product_batch_id'])))
+        if product_batch:
+            product_batch.stock_level = max((product_batch.stock_level or 0) + qty, 0)
+            db.add(product_batch)
 
 
 @router.post("/refunds/walkin-invoice")
@@ -131,18 +160,14 @@ async def create_walkin_invoice_refund(
     refunds_result = await db.execute(refunds_statement)
     previous_refunds = refunds_result.scalars().all()
     
-    # Calculate already refunded quantities per product
+    # Calculate already refunded quantities per bill line (product + batch)
     already_refunded_qty = {}
     for refund in previous_refunds:
         try:
             refund_items = json.loads(refund.items)
             for item in refund_items:
-                product_name = item.get('product_name')
-                qty_returned = item.get('quantity_returned', 0)
-                if product_name in already_refunded_qty:
-                    already_refunded_qty[product_name] += qty_returned
-                else:
-                    already_refunded_qty[product_name] = qty_returned
+                key = _line_key(item)
+                already_refunded_qty[key] = already_refunded_qty.get(key, 0) + item.get('quantity_returned', 0)
         except:
             pass
     
@@ -158,12 +183,16 @@ async def create_walkin_invoice_refund(
                 detail=f"Quantity for product '{product_name}' must be positive"
             )
 
-        # Find the product in the original invoice
+        # Find the line in the original invoice: by product + batch when the client sends
+        # the batch, else the product's first line (bills from before batches)
         original_item = None
         for item in original_items:
-            if item.get('product_name') == product_name:
-                original_item = item
-                break
+            if item.get('product_name') != product_name:
+                continue
+            if refund_item.get('product_batch_id') and item.get('product_batch_id') != refund_item.get('product_batch_id'):
+                continue
+            original_item = item
+            break
 
         if not original_item:
             raise HTTPException(
@@ -174,8 +203,15 @@ async def create_walkin_invoice_refund(
         # Check original quantity
         original_qty = int(original_item.get('quantity', 0))
         
+        # The refund line carries the bill line's batch / product (record + delete use them)
+        refund_item['product_batch_id'] = original_item.get('product_batch_id')
+        if original_item.get('batch_barcode'):
+            refund_item['batch_barcode'] = original_item.get('batch_barcode')
+        if original_item.get('product_id'):
+            refund_item['product_id'] = original_item.get('product_id')
+
         # Check if already refunded
-        already_refunded = already_refunded_qty.get(product_name, 0)
+        already_refunded = already_refunded_qty.get(_line_key(original_item), 0)
         remaining_qty = original_qty - already_refunded
         
         if remaining_qty <= 0:
@@ -197,14 +233,9 @@ async def create_walkin_invoice_refund(
         item_unit_price = float(original_item.get('unit_price', 0))
         computed_max_refund_total += Decimal(str(item_unit_price * quantity_returned))
 
-        # Update product inventory (add back the returned quantity)
-        product_result = await db.execute(select(Product).where(Product.name == product_name))
-        product = product_result.scalar_one_or_none()
-
-        if product:
-            # Increase stock level by the returned amount
-            product.stock_level += quantity_returned
-            await db.commit()
+        # Back on the shelf: the product's shop stock, and its batch's when sold from one
+        await _return_stock(db, original_item, quantity_returned)
+        await db.commit()
 
     # Sanity check only — cashier-entered amount must not exceed the items' listed
     # (undiscounted) price for the requested quantity. Small epsilon for rounding.
@@ -239,12 +270,11 @@ async def create_walkin_invoice_refund(
     # (across this and any previous refunds); otherwise 'partial'.
     all_refunded_qty = dict(already_refunded_qty)
     for ri in refunded_items:
-        ri_name = ri.get('product_name')
-        ri_qty = int(ri.get('quantity_returned', 0))
-        all_refunded_qty[ri_name] = all_refunded_qty.get(ri_name, 0) + ri_qty
+        key = _line_key(ri)
+        all_refunded_qty[key] = all_refunded_qty.get(key, 0) + int(ri.get('quantity_returned', 0))
 
     fully_refunded = bool(original_items) and all(
-        all_refunded_qty.get(item.get('product_name'), 0) >= int(item.get('quantity', 0))
+        all_refunded_qty.get(_line_key(item), 0) >= int(item.get('quantity', 0))
         for item in original_items
     )
 
@@ -646,22 +676,11 @@ async def delete_walkin_invoice_refund(
     try:
         refunded_items = json.loads(refund.items)
         for item in refunded_items:
-            product_name = item.get('product_name')
-            quantity_returned = item.get('quantity_returned', 0)
-            
-            if product_name and quantity_returned:
-                # Find and update the product
-                product_result = await db.execute(
-                    select(Product).where(Product.name == product_name)
-                )
-                product = product_result.scalar_one_or_none()
-
-                if product:
-                    # Reduce stock level by the refunded amount (since refund meant adding back to stock)
-                    # If we're deleting the refund, we need to remove those items from stock again
-                    product.stock_level -= quantity_returned
-                    if product.stock_level < 0:
-                        product.stock_level = 0  # Don't allow negative stock
+            quantity_returned = int(item.get('quantity_returned', 0) or 0)
+            if item.get('product_name') and quantity_returned:
+                # Deleting the refund takes the returned pieces off the shelf again -
+                # from the product and from its batch when it was a batch line
+                await _return_stock(db, item, -quantity_returned)
     except Exception as e:
         # If there's an error parsing items or updating inventory, continue with deletion
         pass

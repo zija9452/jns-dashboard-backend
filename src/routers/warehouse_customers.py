@@ -13,8 +13,17 @@ from ..models.user import User
 from ..models.warehouse_customer import WarehouseCustomer, WarehouseCustomerCreate, WarehouseCustomerUpdate, WarehouseCustomerRead
 from ..services.warehouse_customer_service import WarehouseCustomerService
 from ..auth.session_auth import admin_required_from_session, admin_employee_warehouse_required_from_session
+from ..config.branches import BRANCHES
 
 router = APIRouter()
+
+
+def _check_destination(data) -> None:
+    """Destination branch: a branch code (its shop gets the stock) or empty = direct customer."""
+    if data.destination_branch in ("", None):
+        data.destination_branch = None
+    elif data.destination_branch not in BRANCHES:
+        raise HTTPException(status_code=400, detail="Unknown branch for this customer")
 
 @router.get("/", response_model=List[WarehouseCustomerRead])
 async def get_customers(
@@ -75,7 +84,9 @@ async def view_customers(
             "cus_cnic": customer.cnic or "",
             "cus_address": contacts_data.get("address", ""),
             "branch": customer.branch or "",
-            "cus_balance": float(customer.cus_balance or 0.0)
+            "cus_balance": float(customer.cus_balance or 0.0),
+            # "" = direct customer, else the branch whose shop gets the stock
+            "destination_branch": customer.destination_branch or "",
         }
         result_list.append(customer_data)
 
@@ -96,6 +107,7 @@ async def create_customer(
     db: AsyncSession = Depends(get_db)
 ):
     """Create a new warehouse customer"""
+    _check_destination(customer_create)
     return await WarehouseCustomerService.create_customer(db, customer_create, str(current_user.id))
 
 @router.get("/market-balance")
@@ -142,6 +154,8 @@ async def update_customer(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid customer ID format")
 
+    if "destination_branch" in customer_update.model_fields_set:
+        _check_destination(customer_update)
     customer = await WarehouseCustomerService.update_customer(db, customer_uuid, customer_update, str(current_user.id))
     if not customer:
         raise HTTPException(status_code=404, detail="Warehouse customer not found")

@@ -44,13 +44,16 @@ async def view_vendors(
 
     if search_string and search_string.strip():
         search_pattern = f"%{search_string.strip()}%"
-        base_statement = base_statement.where(WarehouseVendor.name.ilike(search_pattern))
+        base_statement = base_statement.where(or_(
+            WarehouseVendor.name.ilike(search_pattern),
+            WarehouseVendor.vendor_code == search_string.strip(),
+        ))
 
     count_statement = select(func.count()).select_from(base_statement.subquery())
     count_result = await db.execute(count_statement)
     total_count = count_result.scalar() or 0
 
-    statement = base_statement.offset(skip).limit(limit)
+    statement = base_statement.order_by(WarehouseVendor.vendor_no.asc().nulls_last(), WarehouseVendor.name).offset(skip).limit(limit)
     result = await db.execute(statement)
     vendors = result.scalars().all()
 
@@ -65,6 +68,7 @@ async def view_vendors(
         vendor_data = {
             "ven_id": str(vendor.id),
             "ven_name": vendor.name,
+            "vendor_code": vendor.vendor_code,
             "ven_phone": contacts_data.get("phone", ""),
             "ven_address": contacts_data.get("address", ""),
             "branch": vendor.branch or "",

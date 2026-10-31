@@ -14,8 +14,9 @@ class WarehouseCustomer(SQLModel, table=True):
     cnic: Optional[str] = Field(default=None, max_length=20)
     branch: Optional[str] = Field(default=None, max_length=200)
     cus_balance: Optional[Decimal] = Field(default=0.00, max_digits=10, decimal_places=2)
-    # Branch code (config/branches.py) whose DB receives this customer's warehouse
-    # invoice stock, e.g. "karimabad". None = Light House shop (same product row).
+    # Branch code (config/branches.py) whose shop receives this customer's warehouse
+    # invoice stock: "lighthouse" (same DB) or e.g. "karimabad". None = direct customer:
+    # buys straight from the warehouse, no shop gets the stock.
     destination_branch: Optional[str] = Field(default=None, max_length=50)
     created_at: datetime = Field(default_factory=lambda: datetime.now(), index=True)
     updated_at: datetime = Field(default_factory=lambda: datetime.now(), nullable=False, index=True)
@@ -27,6 +28,7 @@ class WarehouseCustomerRead(SQLModel):
     cnic: Optional[str]
     branch: Optional[str]
     cus_balance: Optional[Decimal]
+    destination_branch: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -36,6 +38,7 @@ class WarehouseCustomerCreate(SQLModel):
     cnic: Optional[str] = None
     branch: Optional[str] = None
     cus_balance: Optional[Decimal] = 0.00
+    destination_branch: Optional[str] = None  # None = direct customer
 
 class WarehouseCustomerUpdate(SQLModel):
     name: Optional[str] = None
@@ -43,3 +46,4 @@ class WarehouseCustomerUpdate(SQLModel):
     cnic: Optional[str] = None
     branch: Optional[str] = None
     cus_balance: Optional[Decimal] = None
+    destination_branch: Optional[str] = None  # None / "" = direct customer

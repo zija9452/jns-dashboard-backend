@@ -24,7 +24,8 @@ class StockEntry(SQLModel, table=True):
     unit_price: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(10, 2), nullable=True))  # Selling price snapshot at the time of this entry
     type: StockEntryType
     location: Optional[str] = Field(default=None, max_length=100)
-    batch: Optional[str] = Field(default=None, max_length=50)
+    batch: Optional[str] = Field(default=None, max_length=50)  # batch label, e.g. "Ali (001) - Batch 001"
+    product_batch_id: Optional[uuid.UUID] = Field(default=None, foreign_key="product_batches.id", index=True)
     expiry: Optional[date] = Field(default=None)
     ref: Optional[str] = Field(default=None)  # Reference to transaction
     created_by: Optional[uuid.UUID] = Field(default=None, foreign_key="users.id")  # Who entered this stock-in/adjustment (null for older entries and system-generated sale/out entries)

@@ -25,8 +25,12 @@ ONE_LINE_MAX = 41  # chars that fit in 400 dots at the min name font 16
 
 
 def centered_barcode_x(data, module_width=2):
-    # Same as routers/stock.py
-    return max(int(208 - (11 * (len(data) + 2) + 13) * module_width / 2), 0)
+    # Same as routers/stock.py (auto mode packs digits in pairs)
+    if data.isdigit() and len(data) >= 4:
+        symbols = len(data) // 2 + (2 if len(data) % 2 else 0)
+    else:
+        symbols = len(data)
+    return max(int(208 - (11 * (symbols + 2) + 13) * module_width / 2), 0)
 
 
 def fitted_name_font_size(name, block_width=400, max_size=19, min_size=16):
@@ -46,10 +50,10 @@ def label(name, barcode, price):
     x = centered_barcode_x(barcode)
     if len(name) <= ONE_LINE_MAX:
         f = fitted_name_font_size(name)
-        return ("^XA" f"^FO{x},40^BY2,2,80^BCN,80,Y,N,N^FD{barcode}^FS"
+        return ("^XA" f"^FO{x},40^BY2,2,80^BCN,80,Y,N,N,A^FD{barcode}^FS"
                 f"^FO10,150^A0N,{f},{f}^FB400,1,0,C^FD{name}^FS" + price_zpl + "^XZ")
     line1, line2 = split_name(name)
-    return ("^XA" f"^FO{x},25^BY2,2,65^BCN,65,Y,N,N^FD{barcode}^FS"
+    return ("^XA" f"^FO{x},25^BY2,2,65^BCN,65,Y,N,N,A^FD{barcode}^FS"
             f"^FO10,122^A0N,19,19^FB400,1,0,C^FD{line1}^FS"
             f"^FO10,145^A0N,19,19^FB400,1,0,C^FD{line2}^FS" + price_zpl + "^XZ")
 

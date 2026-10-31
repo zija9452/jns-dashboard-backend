@@ -12,8 +12,12 @@ from ..models.product import Product
 from ..models.stock_entry import StockEntry, StockEntryType
 from ..models.user import User
 from ..models.warehouse_vendor import WarehouseVendor
+from ..models.batch import ProductBatch
+from ..services.batch_service import open_batch_vendor, stock_into_batch, stocked_totals, batch_label, line_label, line_ranges
+from ..services.product_mirror import mirror_batch_line
 from ..services.product_service import ProductService
 from ..auth.session_auth import get_current_user_from_session
+from ..utils.batch_barcode import search_term_for
 from .stock import centered_barcode_x, fitted_name_font_size
 from sqlmodel import select
 from decimal import Decimal
@@ -57,6 +61,8 @@ class StockInRequest(BaseModel):
     vendor_id: Optional[str] = None
     cost_price: Optional[float] = 0.0
     ref: Optional[str] = None
+    batch_id: Optional[str] = None  # open batch with vendor_id in it; none = old way (no batch barcode)
+    selling_price: Optional[float] = None  # batch price; none = worked out from the vendor's bill in the batch
 
 
 class StockAdjustRequest(BaseModel):
@@ -68,7 +74,8 @@ class StockAdjustRequest(BaseModel):
 class WarehouseBarcodeItem(BaseModel):
     product_id: str
     quantity: int
-    vendor_name: Optional[str] = None
+    vendor_name: Optional[str] = None  # text under the name (vendor, or "Ali (001) - Batch 001")
+    batch_barcode: Optional[str] = None  # print this batch line's barcode instead of the product's
 
 
 @router.post("/barcodes")
@@ -87,10 +94,19 @@ async def generate_warehouse_barcodes(
         product = await db.get(Product, UUID(item.product_id))
         if not product or not product.barcode:
             continue
+        code = product.barcode
+        if item.batch_barcode:
+            line = (await db.execute(select(ProductBatch).where(
+                ProductBatch.barcode == item.batch_barcode, ProductBatch.product_id == product.id
+            ))).scalar_one_or_none()
+            if not line:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                    detail=f"Batch barcode {item.batch_barcode} is not {product.name}'s")
+            code = line.barcode
         vendor = (item.vendor_name or "").strip()
         for i in range(max(item.quantity, 0)):
             zpl = "^XA"
-            zpl += f"^FO{centered_barcode_x(product.barcode)},40^BY2,2,80^BCN,80,Y,N,N^FD{product.barcode}^FS"
+            zpl += f"^FO{centered_barcode_x(code)},40^BY2,2,80^BCN,80,Y,N,N,A^FD{code}^FS"
             name_font = fitted_name_font_size(product.name)
             zpl += f"^FO10,150^A0N,{name_font},{name_font}^FB400,1,0,C^FD{product.name}^FS"
             if vendor:
@@ -100,7 +116,7 @@ async def generate_warehouse_barcodes(
             zpl += "^XZ"
             zpl_commands.append({
                 "product_id": item.product_id,
-                "barcode": product.barcode,
+                "barcode": code,
                 "unit_index": i + 1,
                 "zpl": zpl
             })
@@ -169,9 +185,26 @@ async def stock_in(
         vendor.balance = (vendor.balance or Decimal('0.00')) + Decimal(str(total_cost))
         db.add(vendor)
 
-    # Update warehouse_stock and warehouse_cost columns
+    product_batch = None
+    new_line = False
+    label = None
+    if request.batch_id:
+        if not vendor_id_uuid:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Choose the vendor of the batch")
+        if request.qty <= 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Quantity must be more than 0")
+        batch, batch_vendor = await open_batch_vendor(db, request.batch_id, vendor_id_uuid)
+        label = batch_label(vendor, batch)
+        product_batch, new_line = await stock_into_batch(
+            db, product, batch, batch_vendor, vendor, request.qty, Decimal(str(request.cost_price or 0.0)),
+            Decimal(str(request.selling_price)) if request.selling_price else None,
+        )
+
+    # Update warehouse_stock and warehouse_cost columns. A batch keeps its own cost, so
+    # warehouse_cost stays the old (unbatched) stock's cost.
     product.warehouse_stock = (product.warehouse_stock or 0) + request.qty
-    product.warehouse_cost = Decimal(str(request.cost_price or 0.0))
+    if not product_batch:
+        product.warehouse_cost = Decimal(str(request.cost_price or 0.0))
     db.add(product)
 
     # Create stock entry
@@ -182,20 +215,40 @@ async def stock_in(
         cost_price=Decimal(str(request.cost_price or 0.0)),
         type=StockEntryType.IN,
         location="warehouse",
-        ref=request.ref or f"W_IN_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        ref=request.ref or f"W_IN_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+        product_batch_id=product_batch.id if product_batch else None,
+        batch=label[:50] if label else None,
+        unit_price=product_batch.selling_price if product_batch else None,
     )
     db.add(stock_entry)
 
     await db.commit()
     await db.refresh(product)
 
-    return {
+    response = {
         "success": True,
         "message": "Stock added successfully",
         "new_stock": product.warehouse_stock,
         "vendor_name": vendor_name,
         "amount_added_to_balance": total_cost if vendor_id_uuid else None
     }
+    if product_batch:
+        stocked = (await stocked_totals(db, [batch_vendor.id]))[batch_vendor.id]
+        response.update({
+            "batch_label": label,
+            "batch_barcode": product_batch.barcode,
+            "landed_cost": float(product_batch.landed_cost),
+            "selling_price": float(product_batch.selling_price),
+            "batch_stock": product_batch.warehouse_stock,
+            # The vendor's bill in this batch
+            "stocked_total": float(stocked),
+            "invoice_total": float(batch_vendor.invoice_total),
+            # Warning only - the Stock In is saved
+            "over_bill": stocked > batch_vendor.invoice_total,
+            # A new batch line goes to the other branches with stock 0, like a new product
+            "branch_warnings": await mirror_batch_line(product_batch, product.barcode, line_label(batch, vendor)) if new_line else [],
+        })
+    return response
 
 
 @router.post("/adjust")
@@ -263,7 +316,7 @@ async def view_stock(
     View warehouse stock (products where is_warehouse_product = true)
     Shows warehouse_stock column values
     """
-    from sqlalchemy import or_
+    from sqlalchemy import or_, func
 
     skip = (page - 1) * limit
 
@@ -287,6 +340,7 @@ async def view_stock(
         Product.warehouse_stock > 0
     )
 
+    search = await search_term_for(db, search)  # a scanned batch barcode finds its product
     if search and search.strip():
         search_pattern = f"%{search.strip()}%"
         base_statement = base_statement.where(
@@ -342,10 +396,23 @@ async def view_stock(
         vendor_result = await db.execute(vendor_query)
         vendor_map = {row[0]: row[1] for row in vendor_result.fetchall()}
 
+    # How many batch lines each product has (to open its batches)
+    batch_counts = {}
+    if product_ids:
+        count_result = await db.execute(
+            select(ProductBatch.product_id, func.count()).where(ProductBatch.product_id.in_(product_ids))
+            .group_by(ProductBatch.product_id)
+        )
+        batch_counts = {row[0]: row[1] for row in count_result.all()}
+    # Products with batches show their lowest - highest cost instead of one cost
+    ranges = await line_ranges(db, [(p[0], p[2], p[12] or p[10], p[9]) for p in products if batch_counts.get(p[0])], shop=False)
+
     # Format response
     result_list = [
         {
             "id": str(p[0]),
+            "batch_count": batch_counts.get(p[0], 0),
+            "warehouse_cost_range": ranges[p[0]]["cost"] if p[0] in ranges else None,
             "vendor_name": vendor_map.get(p[0], ""),
             "name": p[1],
             "warehouse_stock": p[2] or 0,
@@ -571,6 +638,13 @@ async def update_stock_entry(
     # Apply the new quantity
     product.warehouse_stock = (product.warehouse_stock or 0) + request.qty
 
+    if stock_entry.product_batch_id:
+        product_batch = await db.get(ProductBatch, stock_entry.product_batch_id)
+        if product_batch:
+            product_batch.warehouse_stock = (product_batch.warehouse_stock or 0) - old_qty + request.qty
+            product_batch.updated_at = datetime.now()
+            db.add(product_batch)
+
     # Update the stock entry
     stock_entry.qty = request.qty
     stock_entry.ref = request.ref
@@ -624,6 +698,13 @@ async def delete_stock_entry(
 
     # Reverse the stock entry effect
     product.warehouse_stock = (product.warehouse_stock or 0) - stock_entry.qty
+
+    if stock_entry.product_batch_id:
+        product_batch = await db.get(ProductBatch, stock_entry.product_batch_id)
+        if product_batch:
+            product_batch.warehouse_stock = (product_batch.warehouse_stock or 0) - stock_entry.qty
+            product_batch.updated_at = datetime.now()
+            db.add(product_batch)
 
     db.add(product)
     await db.delete(stock_entry)

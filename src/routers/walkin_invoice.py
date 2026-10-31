@@ -28,6 +28,9 @@ from .payment_proof import new_payment_entry, proof_for_payment, delete_invoice_
 from .cash_deposit import _delete_cloudinary as delete_proof_cloudinary
 from ..utils.firestore_signals import publish_signals, PAYMENTS_REVIEW_SIGNAL, PAYMENTS_CASHIER_SIGNAL
 from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, cashier_required_from_session, employee_required_from_session, admin_cashier_employee_required_from_session
+from ..utils.batch_barcode import search_term_for
+from ..models.batch import ProductBatch
+from ..services.batch_service import product_batch_label
 
 router = APIRouter()
 
@@ -143,9 +146,23 @@ async def create_walkin_invoice(
                 detail="Discount cannot be negative"
             )
 
-        # Verify product exists in the database
-        # with_for_update() locks the row so concurrent requests can't read stale stock
-        product_result = await db.execute(select(Product).where(Product.name == pro_name).with_for_update())
+        # The line picked: a batch (its own barcode / stock) or the product's stock
+        # outside batches ("Old Stock"). Older clients send only the name.
+        # with_for_update() locks the rows so concurrent requests can't read stale stock
+        product_batch = None
+        if item.get('product_batch_id'):
+            product_batch = (await db.execute(
+                select(ProductBatch).where(ProductBatch.id == uuid.UUID(str(item['product_batch_id']))).with_for_update()
+            )).scalar_one_or_none()
+            if not product_batch:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Batch of '{pro_name}' not found"
+                )
+            product_statement = select(Product).where(Product.id == product_batch.product_id)
+        else:
+            product_statement = select(Product).where(Product.name == pro_name)
+        product_result = await db.execute(product_statement.with_for_update())
         product = product_result.scalar_one_or_none()
         if not product:
             raise HTTPException(
@@ -153,12 +170,27 @@ async def create_walkin_invoice(
                 detail=f"Product '{pro_name}' not found in inventory"
             )
 
-        # Check if sufficient inventory is available
-        if product.stock_level < quantity:
+        # Check if sufficient inventory is available in the picked line
+        if product_batch:
+            available = product_batch.stock_level or 0
+            line_name = f"{pro_name} ({product_batch.barcode})"
+        else:
+            in_batches = (await db.execute(
+                select(func.coalesce(func.sum(ProductBatch.stock_level), 0))
+                .where(ProductBatch.product_id == product.id)
+            )).scalar() or 0
+            available = (product.stock_level or 0) - in_batches
+            line_name = pro_name
+        if available < quantity:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Insufficient stock for product '{pro_name}'. Available: {product.stock_level}, Requested: {quantity}"
+                detail=f"Insufficient stock for product '{line_name}'. Available: {available}, Requested: {quantity}"
             )
+        # The batch's shop cost (last warehouse invoice rate), else the product's
+        if product_batch:
+            cost_price = product_batch.shop_cost if product_batch.shop_cost is not None else product_batch.cost
+        else:
+            cost_price = product.cost_price
 
         # Calculate total for this item (before discount)
         item_total_before_discount = quantity * unit_price
@@ -178,8 +210,15 @@ async def create_walkin_invoice(
             "total_price": item_total_before_discount,  # Price before discount
             "discount": item_discount,
             "cat_name": str(item.get('cat_name', '')),
-            "cost_price": float(product.cost_price) if product.cost_price else 0.0,  # Store cost price
+            "cost_price": float(cost_price) if cost_price else 0.0,  # Store cost price
         }
+        if product_batch:
+            # Kept in the record (refund / reports), never printed on the bill
+            item_obj.update({
+                "product_batch_id": str(product_batch.id),
+                "batch_barcode": product_batch.barcode,
+                "batch_label": await product_batch_label(db, product_batch),
+            })
         items_list.append(item_obj)
         total_amount += Decimal(str(item_total_before_discount))
         total_discount += item_discount
@@ -189,12 +228,17 @@ async def create_walkin_invoice(
         if new_stock_level < 0:
             new_stock_level = 0  # Don't allow negative stock
         product.stock_level = new_stock_level
+        if product_batch:
+            product_batch.stock_level = (product_batch.stock_level or 0) - quantity
+            product_batch.updated_at = datetime.now()
+            db.add(product_batch)
 
         # Collect for StockEntry(OUT) — created after invoice_no is known below
         sold_items_for_stock_entry.append({
             "product_id": product.id,
             "qty": quantity,
-            "cost_price": product.cost_price,
+            "cost_price": cost_price,
+            "product_batch_id": product_batch.id if product_batch else None,
         })
         # No commit here — committed atomically with the invoice below
 
@@ -271,6 +315,7 @@ async def create_walkin_invoice(
                 type=StockEntryType.SALE,
                 location="Sale",
                 ref=invoice_no,
+                product_batch_id=si["product_batch_id"],
                 created_at=payment_date,  # Picker date, so back-dated sales land on that day in stock reports
             )
             db.add(stock_out_entry)
@@ -524,6 +569,12 @@ async def delete_walkin_invoice(
                 if product:
                     # Increase stock level by the sold amount
                     product.stock_level += quantity_sold
+                    # A batch sale goes back into that batch
+                    if item.get('product_batch_id'):
+                        product_batch = await db.get(ProductBatch, uuid.UUID(str(item['product_batch_id'])))
+                        if product_batch:
+                            product_batch.stock_level = (product_batch.stock_level or 0) + quantity_sold
+                            db.add(product_batch)
                     await db.commit()
     except Exception as e:
         logging.error(f"Error restoring inventory for invoice {invoice_id}: {str(e)}")
@@ -861,6 +912,7 @@ async def get_products_for_sales(
     statement = select(Product)
 
     # Apply search filters
+    search_term = await search_term_for(db, search_term)  # a scanned batch barcode finds its product
     if search_term:
         search_lower = search_term.lower()
         statement = statement.where(
@@ -869,6 +921,7 @@ async def get_products_for_sales(
             (Product.sku.ilike(f"%{search_lower}%"))
         )
 
+    barcode = await search_term_for(db, barcode)  # a scanned batch barcode finds its product
     if barcode:
         statement = statement.where(Product.barcode == barcode)
 

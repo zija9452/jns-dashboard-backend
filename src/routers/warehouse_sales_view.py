@@ -17,9 +17,39 @@ from src.models.user import User
 from src.models.warehouse_invoice import WarehouseInvoice
 from src.models.stock_entry import StockEntry, StockEntryType
 from src.models.product import Product
+from src.models.batch import Batch, BatchVendor, ProductBatch
+from src.models.warehouse_vendor import WarehouseVendor
 from src.auth.session_auth import admin_cashier_employee_required_from_session
 
 router = APIRouter(prefix="/warehouse-salesview", tags=["warehouse-salesview"])
+
+
+async def _batch_names(db: AsyncSession, invoices) -> Dict[str, str]:
+    """"Vendor\\nBatch 001" (batch no under the vendor) of every batch line sold in these
+    invoices (items keep its id)."""
+    ids = set()
+    for inv in invoices:
+        try:
+            ids.update(i['product_batch_id'] for i in json.loads(inv.items or '[]') if i.get('product_batch_id'))
+        except (ValueError, TypeError):
+            continue
+    if not ids:
+        return {}
+    rows = await db.execute(
+        select(ProductBatch.id, Batch.batch_no, WarehouseVendor.name)
+        .join(Batch, ProductBatch.batch_id == Batch.id)
+        .join(BatchVendor, ProductBatch.batch_vendor_id == BatchVendor.id)
+        .join(WarehouseVendor, BatchVendor.warehouse_vendor_id == WarehouseVendor.id)
+        .where(ProductBatch.id.in_(ids))
+    )
+    return {str(pb_id): f"{vendor.strip()}\nBatch {batch_no:03d}" for pb_id, batch_no, vendor in rows.all()}
+
+
+def _item_batch(item: dict, names: Dict[str, str]) -> str:
+    """The batch an invoice line came from; a line with no batch was Old Stock."""
+    if not item.get('product_batch_id'):
+        return "Old Stock"
+    return names.get(item['product_batch_id']) or item.get('batch_label') or "Batch"
 
 @router.get("/dashboard/stats")
 async def get_warehouse_dashboard_stats(
@@ -221,14 +251,15 @@ async def get_warehouse_sales_view(
     statement = statement.order_by(WarehouseInvoice.created_at.asc())
     result = await db.execute(statement)
     invoices = result.scalars().all()
-    
+    batch_names = await _batch_names(db, invoices)
+
     invoice_list = []
     for inv in invoices:
         try:
             items = json.loads(inv.items) if inv.items else []
             total_invoice_paid = float(inv.amount_paid)
             total_invoice_discount = float(inv.discounts)
-            
+
             first_item = True
             for item in items:
                 product_name = item.get('product_name', 'N/A')
@@ -243,6 +274,7 @@ async def get_warehouse_sales_view(
                 invoice_list.append({
                     "id": str(inv.id),
                     "invoice_no": inv.invoice_no,
+                    "batch": _item_batch(item, batch_names),
                     "product_name": product_name,
                     "total_amount": float(item_total),
                     "amount_paid": amount_paid,
@@ -336,6 +368,7 @@ async def get_warehouse_sales_pdf(
     
     result = await db.execute(statement)
     invoices = result.scalars().all()
+    batch_names = await _batch_names(db, invoices)
 
     invoice_rows = ""
     total_amount_paid = 0.0
@@ -350,7 +383,8 @@ async def get_warehouse_sales_pdf(
                 quantity = item.get('quantity', 0)
                 unit_price = item.get('unit_price', 0)
                 item_discount = float(item.get('discount', 0))
-                unit_cost = float(item.get('cost_price', 0))
+                # Line totals, as on the screen: cost x qty and rate x qty - discount
+                row_cost = float(item.get('cost_price', 0)) * quantity
                 row_total = (quantity * unit_price) - item_discount
                 amount_paid = total_invoice_paid if first_item else 0.0
                 total_amount_paid += amount_paid
@@ -358,12 +392,12 @@ async def get_warehouse_sales_pdf(
                 invoice_rows += f"""
                 <tr>
                     <td class="border">{inv.invoice_no}</td>
+                    <td class="border">{_item_batch(item, batch_names).replace(chr(10), '<br>')}</td>
                     <td class="border">{product_name}</td>
                     <td class="border">{inv.customer_name or 'N/A'}</td>
-                    <td class="border text-right">{unit_cost:.0f}</td>
-                    <td class="border text-right">{unit_price:.0f}</td>
-                    <td class="border text-center">{quantity}</td>
+                    <td class="border text-right">{row_cost:.0f}</td>
                     <td class="border text-right">{row_total:.0f}</td>
+                    <td class="border text-center">{quantity}</td>
                     <td class="border text-right">{item_discount if first_item else 0}</td>
                     <td class="border text-right">{amount_paid:.0f}</td>
                     <td class="border">{inv.payment_date.strftime('%I:%M:%S %p') if inv.payment_date else inv.created_at.strftime('%I:%M:%S %p')}</td>
@@ -396,7 +430,7 @@ async def get_warehouse_sales_pdf(
         <table>
             <thead>
                 <tr>
-                    <th>Order ID</th><th>Product</th><th>Customer</th><th>Cost</th><th>Price</th><th>Qty</th><th>Total</th><th>Discount</th><th>Amount Paid</th><th>Time</th>
+                    <th>Order ID</th><th>Batch</th><th>Product</th><th>Customer</th><th>Cost</th><th>Price</th><th>Qty</th><th>Discount</th><th>Amount Paid</th><th>Time</th>
                 </tr>
             </thead>
             <tbody>
@@ -433,12 +467,14 @@ async def get_warehouse_sales_excel(
     
     result = await db.execute(statement)
     invoices = result.scalars().all()
+    batch_names = await _batch_names(db, invoices)
 
     wb = Workbook()
     ws = wb.active
     ws.title = "Warehouse Sales"
 
-    headers = ['Order ID', 'Product', 'Customer', 'Cost', 'Price', 'Qty', 'Total', 'Discount', 'Amount Paid', 'Time']
+    # Same columns as the screen: Cost / Price are line totals
+    headers = ['Order ID', 'Batch', 'Product', 'Customer', 'Cost', 'Price', 'Qty', 'Discount', 'Amount Paid', 'Time']
     for col, header in enumerate(headers, 1):
         cell = ws.cell(row=1, column=col, value=header)
         cell.font = Font(bold=True)
@@ -451,12 +487,12 @@ async def get_warehouse_sales_excel(
             first_item = True
             for item in items:
                 ws.cell(row=row_num, column=1, value=inv.invoice_no)
-                ws.cell(row=row_num, column=2, value=item.get('product_name'))
-                ws.cell(row=row_num, column=3, value=inv.customer_name)
-                ws.cell(row=row_num, column=4, value=float(item.get('cost_price', 0)))
-                ws.cell(row=row_num, column=5, value=float(item.get('unit_price', 0)))
-                ws.cell(row=row_num, column=6, value=item.get('quantity'))
-                ws.cell(row=row_num, column=7, value=(item.get('quantity', 0) * float(item.get('unit_price', 0))) - float(item.get('discount', 0)))
+                ws.cell(row=row_num, column=2, value=_item_batch(item, batch_names)).alignment = Alignment(wrap_text=True)
+                ws.cell(row=row_num, column=3, value=item.get('product_name'))
+                ws.cell(row=row_num, column=4, value=inv.customer_name)
+                ws.cell(row=row_num, column=5, value=float(item.get('cost_price', 0)) * item.get('quantity', 0))
+                ws.cell(row=row_num, column=6, value=(item.get('quantity', 0) * float(item.get('unit_price', 0))) - float(item.get('discount', 0)))
+                ws.cell(row=row_num, column=7, value=item.get('quantity'))
                 ws.cell(row=row_num, column=8, value=float(item.get('discount', 0)) if first_item else 0)
                 ws.cell(row=row_num, column=9, value=total_invoice_paid if first_item else 0)
                 ws.cell(row=row_num, column=10, value=inv.payment_date.strftime('%H:%M:%S') if inv.payment_date else inv.created_at.strftime('%H:%M:%S'))

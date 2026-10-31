@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Dict, Any
 from uuid import UUID
@@ -10,12 +10,15 @@ import io
 
 from ..database.database import get_db
 from ..models.product import Product, ProductCreate, ProductUpdate, ProductRead
+from ..models.batch import ProductBatch
 from ..models.user import User  # Import User at the top to avoid NameError
 from ..services.product_service import ProductService
 from ..services.cloudinary_service import CloudinaryService
 from ..services.product_mirror import find_clash, mirror_prices, mirror_product, should_mirror
+from ..services.batch_service import line_ranges
 from ..config.branches import current_branch_name
 from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, admin_employee_required_from_session, admin_employee_warehouse_required_from_session, admin_employee_warehouse_production_required_from_session
+from ..utils.batch_barcode import search_term_for, product_for_batch_barcode
 from sqlmodel import select
 
 logger = logging.getLogger(__name__)
@@ -290,6 +293,7 @@ async def view_products(
         base_statement = base_statement.where(Product.is_warehouse_product == True)
 
     # Apply search filter at database level (case-insensitive)
+    search_string = await search_term_for(db, search_string)  # a scanned batch barcode finds its product
     if search_string and search_string.strip():
         search_pattern = f"%{search_string.strip()}%"
         base_statement = base_statement.where(
@@ -327,10 +331,31 @@ async def view_products(
     result = await db.execute(statement)
     products = result.fetchall()
 
+    # How many vendor batches each product has (the warehouse list opens to show them)
+    batch_counts = {}
+    if products:
+        count_rows = await db.execute(
+            select(ProductBatch.product_id, func.count()).where(ProductBatch.product_id.in_([p[0] for p in products]))
+            .group_by(ProductBatch.product_id)
+        )
+        batch_counts = {row[0]: row[1] for row in count_rows.all()}
+    # Products with batches show their lowest - highest price / cost instead of one:
+    # warehouse cost on the warehouse list, shop price / cost on the shop list
+    is_warehouse_list = bool(warehouse) and warehouse.lower() == 'true'
+    with_batches = [p for p in products if batch_counts.get(p[0])]
+    if is_warehouse_list:
+        ranges = await line_ranges(db, [(p[0], p[13], p[15] or p[3], p[2]) for p in with_batches], shop=False)
+    else:
+        ranges = await line_ranges(db, [(p[0], p[10], p[3], p[2]) for p in with_batches], shop=True)
+
     # Format response using list comprehension - minimal fields only
     result_list = [
         {
             "pro_id": str(p[0]),
+            "batch_count": batch_counts.get(p[0], 0),
+            "warehouse_cost_range": ranges[p[0]]["cost"] if is_warehouse_list and p[0] in ranges else None,
+            "price_range": ranges[p[0]]["price"] if not is_warehouse_list and p[0] in ranges else None,
+            "cost_range": ranges[p[0]]["cost"] if not is_warehouse_list and p[0] in ranges else None,
             "pro_name": p[1],
             "pro_price": float(p[2]) if p[2] else 0.0,
             "pro_cost": float(p[3]) if p[3] else 0.0,
@@ -514,6 +539,10 @@ async def search_product_by_barcode(
         statement = select(Product).where(Product.sku == barcode)
         result = await db.execute(statement)
         product = result.scalar_one_or_none()
+
+    if not product:
+        # A batch barcode (product barcode + vendor code + batch no)
+        product = await product_for_batch_barcode(db, barcode)
 
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
