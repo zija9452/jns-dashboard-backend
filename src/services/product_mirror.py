@@ -135,6 +135,30 @@ async def mirror_prices(barcode: Optional[str], cost_price, unit_price) -> List[
     return warnings
 
 
+async def mirror_image(barcode: Optional[str], old_image: Optional[str], new_image: Optional[str]) -> List[str]:
+    """Product picture changed / removed: the same on the product with this barcode in the
+    other branches - only where it still had the old picture (or none), so a branch's own
+    different picture stays."""
+    warnings: List[str] = []
+    if not barcode:
+        return warnings
+    for code in _other_branches():
+        branch = BRANCHES[code]
+        try:
+            async with session_factories[code]() as db:
+                result = await db.execute(select(Product).where(Product.barcode == barcode))
+                product = result.scalar_one_or_none()
+                if product is None or (product.attributes or "") not in ("", old_image or ""):
+                    continue
+                product.attributes = new_image or None
+                product.updated_at = datetime.now()
+                await db.commit()
+        except Exception as e:
+            logger.exception("Copying picture of %s to %s failed", barcode, code)
+            warnings.append(f"Picture not changed in {branch.name}: {str(e) or type(e).__name__}"[:300])
+    return warnings
+
+
 async def ensure_category(db, name: Optional[str], branch_name: str) -> None:
     """Add category `name` to this branch's categories table if it isn't there, so
     it shows in the category dropdown. The caller commits."""

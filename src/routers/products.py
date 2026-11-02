@@ -14,7 +14,7 @@ from ..models.batch import ProductBatch
 from ..models.user import User  # Import User at the top to avoid NameError
 from ..services.product_service import ProductService
 from ..services.cloudinary_service import CloudinaryService
-from ..services.product_mirror import find_clash, mirror_prices, mirror_product, should_mirror
+from ..services.product_mirror import find_clash, mirror_image, mirror_prices, mirror_product, should_mirror
 from ..services.batch_service import line_ranges
 from ..config.branches import current_branch_name
 from ..auth.session_auth import get_current_user_from_session, admin_required_from_session, admin_employee_required_from_session, admin_employee_warehouse_required_from_session, admin_employee_warehouse_production_required_from_session
@@ -818,12 +818,17 @@ async def update_product(
     await clear_products_cache()
 
     old_barcode = product.barcode
+    old_image = product.attributes
     is_warehouse = product.is_warehouse_product
     updated = await ProductService.update_product(db, product_uuid, product_update, str(current_user.id))
 
     # Warehouse product: shop cost / selling price are the same in every branch
     if is_warehouse:
         for warning in await mirror_prices(old_barcode, product_update.cost_price, product_update.unit_price):
+            logger.warning(warning)
+    # A new / removed picture goes to the other branches' copy too (one Cloudinary image)
+    if product_update.attributes is not None and (product_update.attributes or "") != (old_image or ""):
+        for warning in await mirror_image(old_barcode, old_image, product_update.attributes):
             logger.warning(warning)
     return updated
 
