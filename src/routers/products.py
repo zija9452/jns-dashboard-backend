@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy import or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from uuid import UUID
 import uuid
 import time
@@ -58,6 +58,7 @@ async def clear_products_cache():
 
 class ProductCreateResult(ProductRead):
     branch_warnings: List[str] = []  # other branches where the copy failed
+    barcode_changed_from: Optional[str] = None  # the shown barcode was saved by someone else first
 
 
 @router.post("/", response_model=ProductCreateResult)
@@ -106,17 +107,26 @@ async def create_product(
             detail="Product with this SKU already exists"
         )
 
-    # Barcode is generated but editable (to keep an existing label); required and unique
+    # Barcode is generated but editable (to keep an existing label); required and unique.
+    # Locked until the save commits, so two people saving at once never take one barcode:
+    # an untouched generated barcode someone else saved first is swapped for the next free one.
     product_create.barcode = (product_create.barcode or "").strip()
     if not product_create.barcode:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Barcode is required")
-    result = await db.execute(select(Product).where(Product.barcode == product_create.barcode))
-    barcode_owner = result.scalar_one_or_none()
-    if barcode_owner:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Barcode {product_create.barcode} is already used by '{barcode_owner.name}'"
-        )
+    await ProductService.lock_barcodes(db)
+    barcode_changed_from = None
+    if await ProductService.barcode_taken(db, product_create.barcode):
+        if product_create.barcode_auto:
+            barcode_changed_from = product_create.barcode
+            product_create.barcode = await ProductService.generate_unique_barcode(db)
+        else:
+            result = await db.execute(select(Product.name).where(Product.barcode == product_create.barcode).limit(1))
+            owner = result.scalar_one_or_none()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Barcode {product_create.barcode} is already used by '{owner or 'a batch line'}'"
+            )
+    await ProductService.reserve_barcode(db, product_create.barcode)
 
     # Also created in the other branches (stock 0): their name / SKU must be free there too
     mirror = should_mirror(product_create.name)
@@ -130,7 +140,8 @@ async def create_product(
 
     product = await ProductService.create_product(db, product_create, str(current_user.id))
     warnings = await mirror_product(product) if mirror else []
-    return ProductCreateResult(**ProductRead.model_validate(product).model_dump(), branch_warnings=warnings)
+    return ProductCreateResult(**ProductRead.model_validate(product).model_dump(), branch_warnings=warnings,
+                               barcode_changed_from=barcode_changed_from)
 
 # --- TEMPORARY BULK INSERT ENDPOINT (Remove after use) ---
 @router.post("/bulk-insert", response_model=List[ProductRead])

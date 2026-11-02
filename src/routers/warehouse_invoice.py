@@ -21,7 +21,7 @@ from ..models.warehouse_customer import WarehouseCustomer
 from ..models.salesman import Salesman
 from ..models.user import User
 from ..models.stock_entry import StockEntry, StockEntryType
-from ..models.batch import Batch, BatchVendor, ProductBatch
+from ..models.batch import Batch, BatchVendor, ProductBatch, LOCATION_WAREHOUSE
 from ..models.warehouse_vendor import WarehouseVendor
 from ..auth.session_auth import admin_cashier_employee_required_from_session, admin_employee_required_from_session
 from ..config.branches import DEFAULT_BRANCH
@@ -143,6 +143,10 @@ async def create_warehouse_invoice(
                 product_batch = await db.get(ProductBatch, uuid.UUID(str(item['product_batch_id'])))
                 if not product_batch:
                     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Batch of '{pro_name}' not found")
+                line_batch = await db.get(Batch, product_batch.batch_id) if product_batch.batch_id else None
+                if line_batch and line_batch.location != LOCATION_WAREHOUSE:
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                        detail=f"'{pro_name}': {product_batch.barcode} is a shop batch line, not warehouse stock")
                 product = await db.get(Product, product_batch.product_id)
             elif item.get('product_id'):
                 product = await db.get(Product, uuid.UUID(str(item['product_id'])))

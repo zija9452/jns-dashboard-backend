@@ -108,7 +108,7 @@ def _batch_no(batch: Batch) -> str:
 
 async def _get_batch(db: AsyncSession, batch_id: str) -> Batch:
     batch = await db.get(Batch, _parse_uuid(batch_id))
-    if not batch:
+    if not batch or batch.location != LOCATION_WAREHOUSE:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Batch not found")
     return batch
 
@@ -275,7 +275,7 @@ async def product_batch_lines(
         .join(Batch, ProductBatch.batch_id == Batch.id)
         .outerjoin(BatchVendor, ProductBatch.batch_vendor_id == BatchVendor.id)
         .outerjoin(WarehouseVendor, BatchVendor.warehouse_vendor_id == WarehouseVendor.id)
-        .where(ProductBatch.product_id == product.id)
+        .where(ProductBatch.product_id == product.id, Batch.location == LOCATION_WAREHOUSE)
         .order_by(Batch.batch_no, ProductBatch.created_at)
     )).all()
 
@@ -388,7 +388,7 @@ async def product_last_source(
         .select_from(ProductBatch)
         .join(Batch, ProductBatch.batch_id == Batch.id)
         .join(BatchVendor, ProductBatch.batch_vendor_id == BatchVendor.id)
-        .where(ProductBatch.product_id == product_uuid)
+        .where(ProductBatch.product_id == product_uuid, Batch.location == LOCATION_WAREHOUSE)
         .order_by(ProductBatch.updated_at.desc())
         .limit(1)
     )).first()
@@ -403,6 +403,30 @@ async def product_last_source(
     )).scalar_one_or_none()
     return {"batch_id": None, "batch_no": None, "batch_status": None,
             "warehouse_vendor_id": str(vendor_id) if vendor_id else None}
+
+
+@router.get("/product/{product_id}/saved")
+async def product_saved_line(
+    product_id: str,
+    batch_id: str,
+    vendor_id: str,
+    current_user: User = Depends(admin_employee_warehouse_required_from_session()),
+    db: AsyncSession = Depends(get_db),
+):
+    """The product's line of this vendor in this batch, if stocked before: its saved cost /
+    price (Stock In shows them locked). saved False = first time, prices from the bill."""
+    line = (await db.execute(
+        select(ProductBatch)
+        .join(BatchVendor, ProductBatch.batch_vendor_id == BatchVendor.id)
+        .where(ProductBatch.product_id == _parse_uuid(product_id, "product"),
+               BatchVendor.batch_id == _parse_uuid(batch_id),
+               BatchVendor.warehouse_vendor_id == _parse_uuid(vendor_id, "vendor"))
+    )).scalar_one_or_none()
+    if not line:
+        return {"saved": False}
+    return {"saved": True, "barcode": line.barcode, "cost": float(line.cost),
+            "landed_cost": float(line.landed_cost) if line.landed_cost is not None else None,
+            "selling_price": float(line.selling_price), "warehouse_stock": line.warehouse_stock or 0}
 
 
 @router.get("/{batch_id}")

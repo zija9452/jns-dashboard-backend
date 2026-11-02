@@ -12,7 +12,7 @@ from ..models.product import Product
 from ..models.stock_entry import StockEntry, StockEntryType
 from ..models.user import User
 from ..models.warehouse_vendor import WarehouseVendor
-from ..models.batch import ProductBatch
+from ..models.batch import Batch, ProductBatch, LOCATION_SHOP
 from ..services.batch_service import open_batch_vendor, stock_into_batch, stocked_totals, batch_label, line_label, line_ranges
 from ..services.product_mirror import mirror_batch_line
 from ..services.product_service import ProductService
@@ -180,11 +180,8 @@ async def stock_in(
             )
         
         vendor_name = vendor.name
-        # Update vendor balance
-        total_cost = request.qty * (request.cost_price or 0.0)
-        vendor.balance = (vendor.balance or Decimal('0.00')) + Decimal(str(total_cost))
-        db.add(vendor)
 
+    cost_price = Decimal(str(request.cost_price or 0.0))
     product_batch = None
     new_line = False
     label = None
@@ -196,15 +193,23 @@ async def stock_in(
         batch, batch_vendor = await open_batch_vendor(db, request.batch_id, vendor_id_uuid)
         label = batch_label(vendor, batch)
         product_batch, new_line = await stock_into_batch(
-            db, product, batch, batch_vendor, vendor, request.qty, Decimal(str(request.cost_price or 0.0)),
+            db, product, batch, batch_vendor, vendor, request.qty, cost_price,
             Decimal(str(request.selling_price)) if request.selling_price else None,
         )
+        # A line already in the batch keeps its saved cost (not the one sent)
+        cost_price = product_batch.cost
+
+    if vendor_id_uuid:
+        # Update vendor balance
+        total_cost = float(request.qty * cost_price)
+        vendor.balance = (vendor.balance or Decimal('0.00')) + Decimal(str(total_cost))
+        db.add(vendor)
 
     # Update warehouse_stock and warehouse_cost columns. A batch keeps its own cost, so
     # warehouse_cost stays the old (unbatched) stock's cost.
     product.warehouse_stock = (product.warehouse_stock or 0) + request.qty
     if not product_batch:
-        product.warehouse_cost = Decimal(str(request.cost_price or 0.0))
+        product.warehouse_cost = cost_price
     db.add(product)
 
     # Create stock entry
@@ -212,7 +217,7 @@ async def stock_in(
         product_id=product_uuid,
         warehouse_vendor_id=vendor_id_uuid,
         qty=request.qty,
-        cost_price=Decimal(str(request.cost_price or 0.0)),
+        cost_price=cost_price,
         type=StockEntryType.IN,
         location="warehouse",
         ref=request.ref or f"W_IN_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
@@ -400,7 +405,10 @@ async def view_stock(
     batch_counts = {}
     if product_ids:
         count_result = await db.execute(
-            select(ProductBatch.product_id, func.count()).where(ProductBatch.product_id.in_(product_ids))
+            select(ProductBatch.product_id, func.count())
+            .outerjoin(Batch, ProductBatch.batch_id == Batch.id)
+            .where(ProductBatch.product_id.in_(product_ids),
+                   or_(Batch.location.is_(None), Batch.location != LOCATION_SHOP))  # not shop batches
             .group_by(ProductBatch.product_id)
         )
         batch_counts = {row[0]: row[1] for row in count_result.all()}

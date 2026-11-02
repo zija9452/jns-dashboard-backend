@@ -8,12 +8,12 @@ from typing import Dict, List, Optional, Tuple
 from uuid import UUID
 
 from fastapi import HTTPException, Request, status
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config.branches import DEFAULT_BRANCH, current_branch
 from ..database.database import resolve_branch_code
-from ..models.batch import Batch, BatchVendor, ProductBatch, BATCH_OPEN
+from ..models.batch import Batch, BatchVendor, ProductBatch, BATCH_OPEN, LOCATION_SHOP
 from ..models.product import Product
 from ..models.stock_entry import StockEntry, StockEntryType
 from ..models.warehouse_vendor import WarehouseVendor
@@ -35,8 +35,22 @@ def batch_label(vendor: WarehouseVendor, batch: Batch) -> str:
 
 def line_label(batch: Batch, vendor: Optional[WarehouseVendor] = None) -> str:
     """"Batch 001" under the product name on invoices / copies - no vendor (user, 31-10);
-    two vendors' lines of one batch differ by their barcode."""
-    return f"Batch {batch.batch_no:03d}"
+    two vendors' lines of one batch differ by their barcode. A shop batch: "Shop Batch 001"
+    (a shop can have the warehouse's Batch 001 and its own Batch 001 of one product)."""
+    prefix = "Shop Batch" if batch.location == LOCATION_SHOP else "Batch"
+    return f"{prefix} {batch.batch_no:03d}"
+
+
+async def barcode_taken(db: AsyncSession, barcode: str) -> Optional[str]:
+    """Name of what already has this barcode (a product, or another batch line), else None."""
+    taken = (await db.execute(select(Product.name).where(Product.barcode == barcode).limit(1))).scalar_one_or_none()
+    if taken:
+        return taken
+    other = (await db.execute(
+        select(Product.name).join(ProductBatch, ProductBatch.product_id == Product.id)
+        .where(ProductBatch.barcode == barcode).limit(1)
+    )).scalar_one_or_none()
+    return f"{other} (another batch)" if other else None
 
 
 async def product_batch_label(db: AsyncSession, product_batch: ProductBatch) -> str:
@@ -76,7 +90,8 @@ async def stock_into_batch(db: AsyncSession, product: Product, batch: Batch, bat
                            vendor: WarehouseVendor, qty: int, cost: Decimal,
                            selling_price: Optional[Decimal]) -> Tuple[ProductBatch, bool]:
     """Add qty of product to its line of this vendor in batch (made on the first Stock In,
-    with the batch barcode). Cost / price are the latest entered. selling_price None =
+    with the batch barcode). Cost / price are saved on the first Stock In and then stay
+    (later Stock Ins of the line only add stock). selling_price None =
     worked out from the vendor's bill in the batch (cost + freight % + cartage % + markup %
     of cost, rounded up to 10). The caller updates product.warehouse_stock, writes the
     stock entry and commits.
@@ -97,13 +112,7 @@ async def stock_into_batch(db: AsyncSession, product: Product, batch: Batch, bat
     if not line:
         barcode = make_batch_barcode(product.barcode, vendor.vendor_code, batch.batch_no)
         # Never two items with one barcode (a product's own, or another batch line's)
-        taken = (await db.execute(select(Product.name).where(Product.barcode == barcode).limit(1))).scalar_one_or_none()
-        if not taken:
-            other = (await db.execute(
-                select(Product.name).join(ProductBatch, ProductBatch.product_id == Product.id)
-                .where(ProductBatch.barcode == barcode).limit(1)
-            )).scalar_one_or_none()
-            taken = f"{other} (another batch)" if other else None
+        taken = await barcode_taken(db, barcode)
         if taken:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -112,9 +121,11 @@ async def stock_into_batch(db: AsyncSession, product: Product, batch: Batch, bat
         line = ProductBatch(product_id=product.id, batch_id=batch.id, batch_vendor_id=batch_vendor.id,
                             barcode=barcode, cost=cost, landed_cost=landed, selling_price=price, warehouse_stock=0)
 
-    line.cost = cost
-    line.landed_cost = landed
-    line.selling_price = price
+    # A line's prices are saved once (its first Stock In); later Stock Ins only add stock
+    if is_new:
+        line.cost = cost
+        line.landed_cost = landed
+        line.selling_price = price
     line.warehouse_stock = (line.warehouse_stock or 0) + qty
     line.updated_at = datetime.now()
     db.add(line)
@@ -156,7 +167,12 @@ async def line_ranges(db: AsyncSession, rows: List[Tuple[UUID, int, Decimal, Dec
     Only products with batches are returned."""
     if not rows:
         return {}
-    result = await db.execute(select(ProductBatch).where(ProductBatch.product_id.in_([r[0] for r in rows])))
+    statement = select(ProductBatch).where(ProductBatch.product_id.in_([r[0] for r in rows]))
+    if not shop:
+        # Warehouse lists: not the shop's own batch lines (Light House DB has both)
+        statement = statement.outerjoin(Batch, ProductBatch.batch_id == Batch.id).where(
+            or_(Batch.location.is_(None), Batch.location != LOCATION_SHOP))
+    result = await db.execute(statement)
     batches: Dict[UUID, List[ProductBatch]] = {}
     for pb in result.scalars().all():
         batches.setdefault(pb.product_id, []).append(pb)

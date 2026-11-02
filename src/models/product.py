@@ -63,6 +63,7 @@ class ProductCreate(SQLModel):
     stock_level: int = 0
     attributes: Optional[str] = None
     barcode: Optional[str] = None
+    barcode_auto: bool = False  # the generated barcode, untouched: may be swapped at save if taken
     discount: Optional[Decimal] = 0.00
     category: Optional[str] = None
     branch: Optional[str] = None

@@ -16,6 +16,9 @@ class Vendor(SQLModel, table=True):
     terms: Optional[str] = Field(default=None)  # JSON string for payment terms, etc.
     balance: Optional[Decimal] = Field(default=0.00, sa_column=Column(Numeric(10, 2), nullable=True))  # Vendor balance (amount payable)
     payments_history: Optional[str] = Field(default="[]", sa_column=Column(Text, nullable=True))  # JSON array of payment records
+    # Shop batch barcodes (product + vendor code + batch no); same name = same code in every
+    # branch; given when the vendor is first added to a shop batch
+    vendor_code: Optional[str] = Field(default=None, max_length=10)
     created_at: datetime = Field(default_factory=lambda: datetime.now())
     updated_at: datetime = Field(default_factory=lambda: datetime.now(), nullable=False)
 
@@ -27,6 +30,7 @@ class VendorRead(SQLModel):
     terms: Optional[str]
     balance: Optional[Decimal]
     payments_history: Optional[str]
+    vendor_code: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

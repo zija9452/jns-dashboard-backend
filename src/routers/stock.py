@@ -75,7 +75,10 @@ from ..auth.session_auth import get_current_user_from_session, admin_required_fr
 from ..utils.batch_barcode import search_term_for
 from ..models.batch import Batch, BatchVendor, ProductBatch
 from ..models.warehouse_vendor import WarehouseVendor
-from ..services.batch_service import line_ranges
+from ..services.batch_service import line_ranges, line_label
+from ..services.shop_batch_service import (line_cost, line_price, mirror_shop_line, open_shop_batch_vendor,
+                                           shop_batch_label, stock_into_shop_batch)
+from decimal import Decimal
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -256,11 +259,11 @@ async def view_stock(
 
 
 def _batch_line_label(product_batch: ProductBatch, batch: Optional[Batch], vendor: Optional[WarehouseVendor] = None) -> str:
-    """Light House: its batch's number (no vendor - invoices show only "Batch 003");
-    another branch: the copied label."""
+    """Its batch's number ("Batch 003" / "Shop Batch 001" - no vendor on invoices);
+    a copy without its batch: the copied label."""
     if not batch:
         return product_batch.label or "Batch"
-    return f"Batch {batch.batch_no:03d}"
+    return line_label(batch)
 
 
 async def _with_batch_lines(db: AsyncSession, rows: list) -> list:
@@ -322,15 +325,16 @@ async def shop_batch_lines(
     if not product:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
     rows = (await db.execute(
-        select(ProductBatch, Batch, WarehouseVendor)
+        select(ProductBatch, Batch, WarehouseVendor, Vendor)
         .outerjoin(Batch, ProductBatch.batch_id == Batch.id)
         .outerjoin(BatchVendor, ProductBatch.batch_vendor_id == BatchVendor.id)
         .outerjoin(WarehouseVendor, BatchVendor.warehouse_vendor_id == WarehouseVendor.id)
+        .outerjoin(Vendor, BatchVendor.vendor_id == Vendor.id)
         .where(ProductBatch.product_id == product.id)
         .order_by(ProductBatch.created_at)
     )).all()
 
-    old_stock = (product.stock_level or 0) - sum(pb.stock_level or 0 for pb, _, _ in rows)
+    old_stock = (product.stock_level or 0) - sum(pb.stock_level or 0 for pb, _, _, _ in rows)
     lines = [] if old_stock == 0 else [{
         "label": "Old Stock",
         "barcode": product.barcode,
@@ -339,7 +343,8 @@ async def shop_batch_lines(
         "selling_price": float(product.unit_price or 0),
         "stock": old_stock,
     }]
-    for pb, batch, vendor in rows:
+    for pb, batch, vendor, shop_vendor in rows:
+        vendor = vendor or shop_vendor
         lines.append({
             "label": _batch_line_label(pb, batch),
             "barcode": pb.barcode,
@@ -603,6 +608,28 @@ async def stock_transfer_save(
         raise HTTPException(status_code=500, detail="Transfer failed. Please contact the admin.")
 
 
+async def _into_shop_batch(db: AsyncSession, item: dict, product: Product, vendor: Vendor, quantity: int,
+                           cost_price: float, selling_price: float):
+    """Stock In item with a shop batch_id: into the product's line of this vendor in that
+    batch. Returns (line, batch, batch vendor, vendor, made now) or None (Old Stock)."""
+    if not item.get('batch_id'):
+        return None
+    if quantity <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Quantity must be more than 0")
+    batch, batch_vendor = await open_shop_batch_vendor(db, item['batch_id'], vendor.id)
+    line, is_new = await stock_into_shop_batch(db, product, batch, batch_vendor, vendor, quantity,
+                                               Decimal(str(cost_price)), Decimal(str(selling_price)))
+    return line, batch, batch_vendor, vendor, is_new, product.barcode
+
+
+async def _mirror_new_shop_lines(new_lines: list) -> List[str]:
+    """Copy shop batch lines made by this Stock In to the other branches (stock 0)."""
+    warnings: List[str] = []
+    for line, batch, batch_vendor, vendor, _, product_barcode in new_lines:
+        warnings += await mirror_shop_line(line, product_barcode, batch, batch_vendor, vendor)
+    return warnings
+
+
 @router.post("/savestockin")
 async def save_stock_in(
     items: List[dict],
@@ -632,6 +659,7 @@ async def save_stock_in(
     from datetime import datetime
 
     results = []
+    new_shop_lines = []  # (line, batch, batch vendor, vendor, new) to copy to the other branches
 
     for item in items:
         product_id = item.get('product_id')
@@ -671,6 +699,21 @@ async def save_stock_in(
             })
             continue
 
+        # Shop batch (BATCH_COSTING_PLAN.md sec 12): the line's saved cost / price - typed
+        # only on its first Stock In - go on the entry and the vendor balance
+        try:
+            shop_batch = await _into_shop_batch(db, item, product, vendor, quantity, cost_price, selling_price)
+        except HTTPException as e:
+            results.append({"product_id": product_id, "product_name": product.name, "status": "error",
+                            "message": f"{product.name}: {e.detail}"})
+            continue
+        shop_line = shop_batch[0] if shop_batch else None
+        if shop_line:
+            cost_price = float(line_cost(shop_line))
+            selling_price = float(line_price(shop_line))
+            if shop_batch[4]:
+                new_shop_lines.append(shop_batch)
+
         # Create stock entry
         # unit_price snapshots the selling price at the time of this stock-in,
         # so historical reports don't shift when the product's price changes later.
@@ -683,7 +726,9 @@ async def save_stock_in(
             type=StockEntryType.IN,
             location="Stock In",
             ref=f"STOCK_IN_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-            created_by=current_user.id
+            created_by=current_user.id,
+            product_batch_id=shop_line.id if shop_line else None,
+            batch=shop_batch_label(shop_batch[1]) if shop_batch else None,
         )
         db.add(entry)
 
@@ -705,10 +750,14 @@ async def save_stock_in(
             "vendor_id": vendor_id,
             "vendor_name": vendor.name,
             "amount_added_to_balance": total_cost,
+            "batch_barcode": shop_line.barcode if shop_line else None,
+            "cost_price": cost_price,
+            "selling_price": selling_price,
             "status": "success"
         })
 
     await db.commit()
+    branch_warnings = await _mirror_new_shop_lines(new_shop_lines)
 
     # Invalidate stock cache after stock-in
     from ..utils.cache import cache
@@ -717,7 +766,8 @@ async def save_stock_in(
 
     return {
         "message": "Stock in completed successfully",
-        "results": results
+        "results": results,
+        "branch_warnings": branch_warnings,
     }
 
 
@@ -758,6 +808,7 @@ async def save_stock_in_with_barcode(
 
     results = []
     zpl_commands = []
+    new_shop_lines = []
 
     for item in items:
         product_id = item.get('product_id')
@@ -797,6 +848,21 @@ async def save_stock_in_with_barcode(
             })
             continue
 
+        # Shop batch (BATCH_COSTING_PLAN.md sec 12): the line's saved cost / price - typed
+        # only on its first Stock In - go on the entry and the vendor balance
+        try:
+            shop_batch = await _into_shop_batch(db, item, product, vendor, quantity, cost_price, selling_price)
+        except HTTPException as e:
+            results.append({"product_id": product_id, "product_name": product.name, "status": "error",
+                            "message": f"{product.name}: {e.detail}"})
+            continue
+        shop_line = shop_batch[0] if shop_batch else None
+        if shop_line:
+            cost_price = float(line_cost(shop_line))
+            selling_price = float(line_price(shop_line))
+            if shop_batch[4]:
+                new_shop_lines.append(shop_batch)
+
         # Create stock entry
         # unit_price snapshots the selling price at the time of this stock-in,
         # so historical reports don't shift when the product's price changes later.
@@ -809,7 +875,9 @@ async def save_stock_in_with_barcode(
             type=StockEntryType.IN,
             location="Stock In",
             ref=f"STOCK_IN_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-            created_by=current_user.id
+            created_by=current_user.id,
+            product_batch_id=shop_line.id if shop_line else None,
+            batch=shop_batch_label(shop_batch[1]) if shop_batch else None,
         )
         db.add(entry)
 
@@ -831,14 +899,18 @@ async def save_stock_in_with_barcode(
             "vendor_id": vendor_id,
             "vendor_name": vendor.name,
             "amount_added_to_balance": total_cost,
+            "batch_barcode": shop_line.barcode if shop_line else None,
+            "cost_price": cost_price,
+            "selling_price": selling_price,
             "status": "success"
         })
 
         # Generate ZPL barcode with new format (barcode lines, number, name, price)
         # Generate one barcode per unit (quantity)
-        if product.barcode:
-            # Use selling_price from request if provided, otherwise from product
-            barcode_price = selling_price if selling_price > 0 else (product.sell_price or 0.0)
+        label_code = shop_line.barcode if shop_line else product.barcode
+        if label_code:
+            # Use selling_price from request if provided (a batch line: its saved price), otherwise from product
+            barcode_price = selling_price if selling_price > 0 else (product.unit_price or 0.0)
 
             # Generate ZPL for each unit in quantity
             for i in range(quantity):
@@ -847,8 +919,8 @@ async def save_stock_in_with_barcode(
                 zpl = "^XA"
 
                 # 1. Barcode - auto-centered on BARCODE_CENTER_X regardless of digit count
-                barcode_x = centered_barcode_x(product.barcode)
-                zpl += f"^FO{barcode_x},40^BY2,2,80^BCN,80,Y,N,N,A^FD{product.barcode}^FS"
+                barcode_x = centered_barcode_x(label_code)
+                zpl += f"^FO{barcode_x},40^BY2,2,80^BCN,80,Y,N,N,A^FD{label_code}^FS"
 
                 # 2. Product name - single line, font auto-shrinks to fit instead of wrapping/cutting
                 name_font = fitted_name_font_size(product.name)
@@ -862,7 +934,7 @@ async def save_stock_in_with_barcode(
                 zpl_commands.append({
                     "product_id": product_id,
                     "product_name": product.name,
-                    "barcode": product.barcode,
+                    "barcode": label_code,
                     "quantity": quantity,
                     "unit_index": i + 1,  # Track which unit this barcode is for
                     "price": barcode_price,
@@ -870,11 +942,13 @@ async def save_stock_in_with_barcode(
                 })
 
     await db.commit()
+    branch_warnings = await _mirror_new_shop_lines(new_shop_lines)
 
     return {
         "message": "Stock in completed successfully with barcodes",
         "results": results,
-        "zpl_commands": zpl_commands
+        "zpl_commands": zpl_commands,
+        "branch_warnings": branch_warnings,
     }
 
 

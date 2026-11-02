@@ -10,6 +10,7 @@ BATCH_OPEN = "OPEN"      # Goods of this bill still arriving - shown in Stock In
 BATCH_CLOSED = "CLOSED"  # All goods arrived - locked
 
 LOCATION_WAREHOUSE = "warehouse"
+LOCATION_SHOP = "shop"  # shop batch (LH / KA): shop vendors, no bill; same number in every branch
 
 
 class Batch(SQLModel, table=True):
@@ -35,13 +36,15 @@ class Batch(SQLModel, table=True):
 class BatchVendor(SQLModel, table=True):
     """One vendor inside one batch: that vendor's bill of the lot. Its freight / cartage /
     markup apply to every item of the vendor stocked in under the batch. Added at Stock In
-    when the vendor's goods of the lot arrive."""
+    when the vendor's goods of the lot arrive.
+    In a shop batch the vendor is a shop vendor (vendor_id) and there is no bill (all 0)."""
     __tablename__ = "batch_vendors"
     __table_args__ = (UniqueConstraint("batch_id", "warehouse_vendor_id", name="ux_batch_vendors_batch_vendor"),)
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     batch_id: uuid.UUID = Field(foreign_key="batches.id", index=True)
-    warehouse_vendor_id: uuid.UUID = Field(foreign_key="warehouse_vendors.id", index=True)
+    warehouse_vendor_id: Optional[uuid.UUID] = Field(default=None, foreign_key="warehouse_vendors.id", index=True)
+    vendor_id: Optional[uuid.UUID] = Field(default=None, foreign_key="vendors.id", index=True)  # shop batch
     bill_date: Optional[date] = None  # day this vendor's goods of the lot arrived
     invoice_total: Decimal = Field(sa_column=Column(Numeric(14, 2), nullable=False))
     freight: Decimal = Field(default=Decimal("0"), sa_column=Column(Numeric(12, 2), nullable=False))
