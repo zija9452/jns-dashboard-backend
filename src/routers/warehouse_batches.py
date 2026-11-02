@@ -285,6 +285,7 @@ async def product_batch_lines(
     # Old Stock only while some stock is outside the batches (a product stocked straight
     # into a batch never had any)
     lines = [] if old_stock == 0 else [{
+        "product_batch_id": None,
         "label": "Old Stock",
         "barcode": product.barcode,
         "vendor_name": None,
@@ -297,6 +298,7 @@ async def product_batch_lines(
     }]
     for pb, batch, vendor in rows:
         lines.append({
+            "product_batch_id": str(pb.id),
             "label": _batch_no(batch),  # vendor has its own column
             "barcode": pb.barcode,
             "vendor_name": vendor.name.strip() if vendor else None,

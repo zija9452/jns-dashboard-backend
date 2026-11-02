@@ -69,6 +69,7 @@ class StockAdjustRequest(BaseModel):
     product_id: str
     qty: int  # positive for increase, negative for decrease
     ref: Optional[str] = None
+    product_batch_id: Optional[str] = None  # the batch line adjusted; none = Old Stock
 
 
 class WarehouseBarcodeItem(BaseModel):
@@ -286,7 +287,35 @@ async def adjust_stock(
             detail="This product is not marked as warehouse product"
         )
 
-    # Adjust warehouse_stock column
+    # The line adjusted: a warehouse batch line, or Old Stock (stock outside the batches)
+    line, line_batch = None, None
+    if request.product_batch_id:
+        try:
+            line = await db.get(ProductBatch, UUID(request.product_batch_id))
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid batch line ID format")
+        line_batch = await db.get(Batch, line.batch_id) if line and line.batch_id else None
+        if not line or line.product_id != product.id or not line_batch or line_batch.location == LOCATION_SHOP:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Warehouse batch line not found")
+        if (line.warehouse_stock or 0) + request.qty < 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                detail=f"{line.barcode} has only {line.warehouse_stock or 0} in stock")
+        line.warehouse_stock = (line.warehouse_stock or 0) + request.qty
+        line.updated_at = datetime.now()
+        db.add(line)
+    elif request.qty < 0:
+        from sqlalchemy import func as sa_func
+        in_lines = (await db.execute(
+            select(sa_func.coalesce(sa_func.sum(ProductBatch.warehouse_stock), 0))
+            .outerjoin(Batch, ProductBatch.batch_id == Batch.id)
+            .where(ProductBatch.product_id == product.id, Batch.location != LOCATION_SHOP)
+        )).scalar() or 0
+        old_stock = (product.warehouse_stock or 0) - in_lines
+        if old_stock + request.qty < 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                detail=f"Old Stock has only {old_stock} - choose the batch to decrease")
+
+    # Adjust warehouse_stock column (the total of Old Stock + every batch)
     product.warehouse_stock = (product.warehouse_stock or 0) + request.qty
     db.add(product)
 
@@ -295,7 +324,11 @@ async def adjust_stock(
         qty=request.qty,
         type=StockEntryType.ADJUST,
         location="warehouse",
-        ref=request.ref
+        ref=request.ref,
+        product_batch_id=line.id if line else None,
+        batch=line_label(line_batch)[:50] if line_batch else None,
+        cost_price=line.cost if line else None,
+        created_by=current_user.id,
     )
     db.add(stock_entry)
 
@@ -305,7 +338,8 @@ async def adjust_stock(
     return {
         "success": True,
         "message": "Stock adjusted successfully",
-        "new_stock": product.warehouse_stock
+        "new_stock": product.warehouse_stock,
+        "batch_stock": line.warehouse_stock if line else None,
     }
 
 

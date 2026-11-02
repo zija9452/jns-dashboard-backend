@@ -63,6 +63,7 @@ class StockAdjustItem(BaseModel):
     quantity: int
     action: str  # 'increase' or 'decrease'
     reason: Optional[str] = 'Stock count adjustment'
+    product_batch_id: Optional[str] = None  # the batch line adjusted; none = Old Stock
 
 from ..database.database import get_db
 from ..models.user import User
@@ -336,6 +337,7 @@ async def shop_batch_lines(
 
     old_stock = (product.stock_level or 0) - sum(pb.stock_level or 0 for pb, _, _, _ in rows)
     lines = [] if old_stock == 0 else [{
+        "product_batch_id": None,
         "label": "Old Stock",
         "barcode": product.barcode,
         "vendor_name": None,
@@ -346,6 +348,7 @@ async def shop_batch_lines(
     for pb, batch, vendor, shop_vendor in rows:
         vendor = vendor or shop_vendor
         lines.append({
+            "product_batch_id": str(pb.id),
             "label": _batch_line_label(pb, batch),
             "barcode": pb.barcode,
             "vendor_name": vendor.name.strip() if vendor else None,
@@ -355,6 +358,77 @@ async def shop_batch_lines(
             "stock": pb.stock_level or 0,
         })
     return {"product_id": str(product.id), "name": product.name, "lines": lines}
+
+
+@router.get("/lines")
+async def search_stock_lines(
+    search: Optional[str] = None,
+    code: Optional[str] = None,
+    warehouse: bool = False,
+    limit: int = 10,
+    current_user: User = Depends(get_current_user_from_session),
+    db: AsyncSession = Depends(get_db)
+):
+    """Products with their stock lines in ONE answer, for Adjust / Transfer search (no
+    second request, no pop-up): each product comes as "Old Stock" + one row per batch line
+    (stock 0 too, so an increase can go into it). A product without batches = one row
+    (label None). code = a scanned barcode: a batch barcode gives only that line, a product
+    barcode all of that product's lines. warehouse = warehouse stock / warehouse batch lines
+    of warehouse products; else this shop's stock and lines."""
+    from sqlalchemy import func as sa_func
+    from ..models.batch import LOCATION_SHOP
+    limit = min(max(limit, 1), 30)
+    only_line = None
+    if code and code.strip():
+        code = code.strip()
+        only_line = (await db.execute(select(ProductBatch).where(ProductBatch.barcode == code))).scalar_one_or_none()
+        statement = select(Product).where(Product.id == only_line.product_id) if only_line else \
+            select(Product).where(Product.barcode == code)
+    else:
+        term = await search_term_for(db, search)  # a typed batch barcode finds its product
+        if not term or len(term.strip()) < 2:
+            return {"lines": []}
+        statement = select(Product).where(or_(Product.name.ilike(f"%{term.strip()}%"), Product.barcode == term.strip()))
+    if warehouse:
+        statement = statement.where(Product.is_warehouse_product == True)  # noqa: E712
+    products = (await db.execute(statement.order_by(Product.name).limit(limit))).scalars().all()
+    if not products:
+        return {"lines": []}
+
+    line_statement = (
+        select(ProductBatch, Batch)
+        .outerjoin(Batch, ProductBatch.batch_id == Batch.id)
+        .where(ProductBatch.product_id.in_([p.id for p in products]))
+        .order_by(ProductBatch.created_at)
+    )
+    if warehouse:  # warehouse lines only (Light House DB also has shop batch lines)
+        line_statement = line_statement.where(or_(Batch.location.is_(None), Batch.location != LOCATION_SHOP))
+    by_product: dict = {}
+    for pb, batch in (await db.execute(line_statement)).all():
+        by_product.setdefault(pb.product_id, []).append((pb, batch))
+
+    rows = []
+    for p in products:
+        lines = by_product.get(p.id, [])
+        total = (p.warehouse_stock if warehouse else p.stock_level) or 0
+        base = {"product_id": str(p.id), "product_name": p.name, "is_warehouse_product": bool(p.is_warehouse_product),
+                "has_batches": bool(lines)}
+        stock_of = (lambda pb: pb.warehouse_stock or 0) if warehouse else (lambda pb: pb.stock_level or 0)
+        if not only_line:
+            rows.append({**base, "key": f"{p.id}|", "product_batch_id": None,
+                         "label": "Old Stock" if lines else None, "barcode": p.barcode,
+                         "cost": float((p.warehouse_cost or p.cost_price) if warehouse else (p.cost_price or 0)),
+                         "price": float(p.unit_price or 0),
+                         "stock": total - sum(stock_of(pb) for pb, _ in lines)})
+        for pb, batch in lines:
+            if only_line and pb.id != only_line.id:
+                continue
+            rows.append({**base, "key": f"{p.id}|{pb.id}", "product_batch_id": str(pb.id),
+                         "label": _batch_line_label(pb, batch), "barcode": pb.barcode,
+                         "cost": float(pb.cost if warehouse else line_cost(pb)),
+                         "price": float(pb.selling_price if warehouse else line_price(pb)),
+                         "stock": stock_of(pb)})
+    return {"lines": rows}
 
 
 @router.get("/searchstock")
@@ -445,17 +519,49 @@ async def adjust_stock(
             })
             continue
         
-        # Get latest vendor_id for this product to maintain association
-        latest_vendor_query = select(StockEntry.vendor_id).where(
-            StockEntry.product_id == product.id,
-            StockEntry.vendor_id != None
-        ).order_by(StockEntry.created_at.desc()).limit(1)
-        latest_vendor_result = await db.execute(latest_vendor_query)
-        inherited_vendor_id = latest_vendor_result.scalar_one_or_none()
+        # The line adjusted: a batch line (its shop stock / cost), or Old Stock
+        from sqlalchemy import func as sa_func
+        line, line_batch = None, None
+        if item.product_batch_id:
+            try:
+                line = await db.get(ProductBatch, UUID(item.product_batch_id))
+            except ValueError:
+                line = None
+            if not line or line.product_id != product.id:
+                results.append({"product_id": item.product_id, "product_name": product.name,
+                                "status": "error", "message": f"{product.name}: batch line not found"})
+                continue
+            if (line.stock_level or 0) + adjustment_qty < 0:
+                results.append({"product_id": item.product_id, "product_name": product.name, "status": "error",
+                                "message": f"{product.name}: {line.barcode} has only {line.stock_level or 0} in stock"})
+                continue
+            line_batch = await db.get(Batch, line.batch_id) if line.batch_id else None
+        elif adjustment_qty < 0:
+            in_lines = (await db.execute(
+                select(sa_func.coalesce(sa_func.sum(ProductBatch.stock_level), 0)).where(ProductBatch.product_id == product.id)
+            )).scalar() or 0
+            old_stock = (product.stock_level or 0) - in_lines
+            if old_stock + adjustment_qty < 0:
+                results.append({"product_id": item.product_id, "product_name": product.name, "status": "error",
+                                "message": f"{product.name}: Old Stock has only {old_stock} - choose the batch to decrease"})
+                continue
 
-        # Snapshot the product's current cost_price on the entry, same as stock-in,
+        # Vendor: a shop batch line's own vendor, else the product's latest one
+        inherited_vendor_id = None
+        if line and line.batch_vendor_id:
+            line_bv = await db.get(BatchVendor, line.batch_vendor_id)
+            inherited_vendor_id = line_bv.vendor_id if line_bv else None
+        if inherited_vendor_id is None:
+            latest_vendor_query = select(StockEntry.vendor_id).where(
+                StockEntry.product_id == product.id,
+                StockEntry.vendor_id != None
+            ).order_by(StockEntry.created_at.desc()).limit(1)
+            latest_vendor_result = await db.execute(latest_vendor_query)
+            inherited_vendor_id = latest_vendor_result.scalar_one_or_none()
+
+        # Snapshot the cost on the entry (a batch line: its own shop cost), same as stock-in,
         # so the vendor balance effect below and future reports stay historically accurate.
-        cost_price = product.cost_price
+        cost_price = line_cost(line) if line else product.cost_price
 
         # Create stock entry with ADJUST type
         entry = StockEntry(
@@ -463,13 +569,19 @@ async def adjust_stock(
             vendor_id=inherited_vendor_id,
             qty=adjustment_qty,
             cost_price=cost_price,
-            unit_price=product.unit_price,
+            unit_price=line_price(line) if line else product.unit_price,
             type=StockEntryType.ADJUST,
             location="Stock Adjustment",
             ref=f"ADJ_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
             created_by=current_user.id,
+            product_batch_id=line.id if line else None,
+            batch=_batch_line_label(line, line_batch)[:50] if line else None,
         )
         db.add(entry)
+        if line:
+            line.stock_level = (line.stock_level or 0) + adjustment_qty
+            line.updated_at = datetime.now()
+            db.add(line)
 
         # Update product stock
         old_stock = product.stock_level
@@ -2210,7 +2322,7 @@ async def delete_stock_entry(
             detail="Invalid stock entry ID format"
         )
 
-    success = await StockService.delete_stock_entry(db, stock_uuid)
+    success = await StockService.delete_stock_entry(db, stock_uuid, str(current_user.id))
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

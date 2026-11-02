@@ -119,7 +119,7 @@ class StockService:
         return db_stock_entry
 
     @staticmethod
-    async def delete_stock_entry(db: Session, stock_id: UUID) -> bool:
+    async def delete_stock_entry(db: Session, stock_id: UUID, user_id: str = "") -> bool:
         """
         Delete a stock entry
         """
@@ -129,6 +129,13 @@ class StockService:
 
         # Adjust product stock level back
         await StockService._update_product_stock(db, db_stock_entry.product_id, -db_stock_entry.qty)
+        # A batch line's Stock In / adjustment: its shop stock goes back too
+        if db_stock_entry.product_batch_id and db_stock_entry.type in (StockEntryType.IN, StockEntryType.ADJUST):
+            from ..models.batch import ProductBatch
+            line = await db.get(ProductBatch, db_stock_entry.product_batch_id)
+            if line:
+                line.stock_level = (line.stock_level or 0) - db_stock_entry.qty
+                db.add(line)
 
         await db.delete(db_stock_entry)
         await db.commit()
@@ -136,7 +143,7 @@ class StockService:
         # Log the action
         await audit_log(
             db=db,
-            user_id="",  # Need to pass actual user ID from context
+            user_id=user_id,
             entity="StockEntry",
             action="DELETE",
             changes={"id": str(stock_id)}
