@@ -18,7 +18,7 @@ from ..services.product_mirror import mirror_batch_line
 from ..services.product_service import ProductService
 from ..auth.session_auth import get_current_user_from_session
 from ..utils.batch_barcode import search_term_for
-from .stock import centered_barcode_x, fitted_name_font_size
+from .stock import label_zpl
 from sqlmodel import select
 from decimal import Decimal
 
@@ -106,15 +106,8 @@ async def generate_warehouse_barcodes(
             code = line.barcode
         vendor = (item.vendor_name or "").strip()
         for i in range(max(item.quantity, 0)):
-            zpl = "^XA"
-            zpl += f"^FO{centered_barcode_x(code)},40^BY2,2,80^BCN,80,Y,N,N,A^FD{code}^FS"
-            name_font = fitted_name_font_size(product.name)
-            zpl += f"^FO10,150^A0N,{name_font},{name_font}^FB400,1,0,C^FD{product.name}^FS"
-            if vendor:
-                # Vendor names are longer than a price: shrink to fit one line, up to the price's size 30
-                vendor_font = fitted_name_font_size(vendor, max_size=30)
-                zpl += f"^FO10,175^A0N,{vendor_font},{vendor_font}^FB400,1,0,C^FD{vendor}^FS"
-            zpl += "^XZ"
+            # Barcode, name (2 lines when long), vendor name
+            zpl = label_zpl(product.name, code, vendor=vendor)
             zpl_commands.append({
                 "product_id": item.product_id,
                 "barcode": code,

@@ -54,6 +54,37 @@ def fitted_name_font_size(name: str, block_width: int = 400, max_size: int = 19,
     avg_char_width_ratio = 0.6  # empirical average glyph width for Zebra font 0
     fitted = int(block_width / (len(name) * avg_char_width_ratio))
     return max(min_size, min(max_size, fitted))
+
+
+NAME_ONE_LINE_MAX = 41  # chars that fit in 400 dots at the min name font 16
+
+
+def label_zpl(name: str, barcode: str, price: Optional[float] = None, vendor: Optional[str] = None) -> str:
+    """
+    One label: barcode, name, then "Rs. <price>" (shop) or the vendor name (warehouse).
+    A name longer than NAME_ONE_LINE_MAX is split at the space nearest the middle onto
+    2 lines (font 19) with a shorter barcode; a shorter name (or one with no space) stays
+    on 1 line with the font fitted 19..16.
+    """
+    name = name or ""
+    x = centered_barcode_x(barcode)
+    spaces = [i for i, ch in enumerate(name) if ch == " "]
+    if len(name) > NAME_ONE_LINE_MAX and spaces:
+        cut = min(spaces, key=lambda i: abs(i - len(name) / 2))
+        zpl = (f"^XA^FO{x},25^BY2,2,65^BCN,65,Y,N,N,A^FD{barcode}^FS"
+               f"^FO10,122^A0N,19,19^FB400,1,0,C^FD{name[:cut]}^FS"
+               f"^FO10,145^A0N,19,19^FB400,1,0,C^FD{name[cut + 1:]}^FS")
+    else:
+        font = fitted_name_font_size(name)
+        zpl = (f"^XA^FO{x},40^BY2,2,80^BCN,80,Y,N,N,A^FD{barcode}^FS"
+               f"^FO10,150^A0N,{font},{font}^FB400,1,0,C^FD{name}^FS")
+    if vendor:
+        # Vendor names are longer than a price: shrink to fit one line, up to the price's size 30
+        vendor_font = fitted_name_font_size(vendor, max_size=30)
+        zpl += f"^FO10,175^A0N,{vendor_font},{vendor_font}^FB400,1,0,C^FD{vendor}^FS"
+    elif price is not None:
+        zpl += f"^FO80,175^A0N,30,30^FB250,1,0,C^FDRs. {int(price)}^FS"
+    return zpl + "^XZ"
 from pydantic import BaseModel
 
 
@@ -1028,20 +1059,8 @@ async def save_stock_in_with_barcode(
             for i in range(quantity):
                 # ZPL for Zebra GX420d - 80mm label width (~576 dots @ 203dpi)
                 # Center all content horizontally at x=70 (shifted right for better alignment)
-                zpl = "^XA"
-
-                # 1. Barcode - auto-centered on BARCODE_CENTER_X regardless of digit count
-                barcode_x = centered_barcode_x(label_code)
-                zpl += f"^FO{barcode_x},40^BY2,2,80^BCN,80,Y,N,N,A^FD{label_code}^FS"
-
-                # 2. Product name - single line, font auto-shrinks to fit instead of wrapping/cutting
-                name_font = fitted_name_font_size(product.name)
-                zpl += f"^FO10,150^A0N,{name_font},{name_font}^FB400,1,0,C^FD{product.name}^FS"
-
-                # 3. Price - centered, larger font (font size increased from 25 to 30)
-                zpl += f"^FO80,175^A0N,30,30^FB250,1,0,C^FDRs. {int(barcode_price)}^FS"
-
-                zpl += "^XZ"
+                # Barcode, name (2 lines when long), price
+                zpl = label_zpl(product.name, label_code, price=barcode_price)
 
                 zpl_commands.append({
                     "product_id": product_id,
@@ -2079,29 +2098,8 @@ async def print_barcodes(
 
     # ZPL for Zebra GX420d - 80mm label width (~576 dots @ 203dpi)
     # Center all content horizontally at x=70 (shifted right for better alignment)
-    zpl_commands = "^XA"
-
-    for i in range(quantity):
-        # Center position: x=70, y=40 (adjusted for better alignment)
-        y_start = 40
-        x_center = centered_barcode_x(barcode)
-
-        # 1. Barcode - auto-centered on BARCODE_CENTER_X regardless of digit count
-        zpl_commands += f"^FO{x_center},{y_start}^BY2,2,80^BCN,80,Y,N,N,A^FD{barcode}^FS"
-
-        # 2. Product name - single line, font auto-shrinks to fit instead of wrapping/cutting
-        name_font = fitted_name_font_size(pro_name)
-        zpl_commands += f"^FO10,{y_start + 110}^A0N,{name_font},{name_font}^FB400,1,0,C^FD{pro_name}^FS"
-
-        # 3. Price - centered, larger font (font size increased from 25 to 30)
-        zpl_commands += f"^FO80,{y_start + 135}^A0N,30,30^FB250,1,0,C^FDRs. {int(price)}^FS"
-
-        # End current label and start new one for next barcode
-        if i < quantity - 1:
-            zpl_commands += "^XZ"
-            zpl_commands += "^XA"
-
-    zpl_commands += "^XZ"
+    # One label per unit: barcode, name (2 lines when long), price
+    zpl_commands = label_zpl(pro_name, barcode, price=price) * max(quantity, 1)
 
     return {
         "zpl_commands": zpl_commands,
@@ -2151,21 +2149,8 @@ async def generate_barcodes_only(
         # Generate ZPL for each unit
         for i in range(quantity):
             # Complete ZPL label
-            zpl = "^XA"
-
-            # 1. Barcode - auto-centered on BARCODE_CENTER_X regardless of digit count
-            barcode_x = centered_barcode_x(barcode)
-            zpl += f"^FO{barcode_x},40^BY2,2,80^BCN,80,Y,N,N,A^FD{barcode}^FS"
-
-            # 2. Product name - single line, font auto-shrinks to fit instead of wrapping/cutting
-            name_font = fitted_name_font_size(pro_name)
-            zpl += f"^FO10,150^A0N,{name_font},{name_font}^FB400,1,0,C^FD{pro_name}^FS"
-
-            # 3. Price - centered, larger font (font size increased from 25 to 30)
-            zpl += f"^FO80,175^A0N,30,30^FB250,1,0,C^FDRs. {int(price)}^FS"
-
-            # End label
-            zpl += "^XZ"
+            # Barcode, name (2 lines when long), price
+            zpl = label_zpl(pro_name, barcode, price=price)
 
             # Only add if ZPL is valid (has ^XA and ^XZ)
             if zpl.startswith("^XA") and zpl.endswith("^XZ") and len(zpl) > 50:
