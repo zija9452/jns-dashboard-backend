@@ -25,7 +25,7 @@ from ..auth.session_auth import get_current_user_from_session, admin_required_fr
 from ..services.customer_service import CustomerService
 from ..services.salesman_service import SalesmanService
 from ..models.customer import CustomerCreate
-from ..utils.mockup_charges import parse_mockup_charges, mockup_charges_from_totals, load_dye_options
+from ..utils.mockup_charges import parse_mockup_charges, mockup_charges_from_totals, printed_mockup_charges, load_dye_options, moq_print_label
 from ..utils.dtf_charges import load_dtf_context, parse_item_dtf, dtf_charges_from_items, dtf_charges_from_totals
 from ..utils.item_teams import has_teams, team_groups, flat_charges_of_team, flat_charge_label, apply_item_teams, team_names_label
 from ..models.payment_proof import PaymentProof
@@ -379,7 +379,9 @@ async def save_customer_orders(
     )
 
     # Designing / mockup charge: once per category with 1-4 pcs (see utils/mockup_charges.py).
-    mockup_charges, mockup_total = parse_mockup_charges(request_data.get('mockup_charges'), items_list, await load_dye_options(db))
+    mockup_charges, mockup_total = parse_mockup_charges(
+        request_data.get('mockup_charges'), items_list, await load_dye_options(db), user=current_user
+    )
     # DTF printing: one charge per Hoodie / Jacket line with logos (amount editable per order).
     dtf_charges, dtf_total = dtf_charges_from_items(items_list)
 
@@ -636,7 +638,8 @@ async def get_invoice_receipt(
         rush_charge=float(invoice.rush_charge or 0),
         required_by_date=invoice.required_by_date,
         rush_rate=invoice.rush_rate_snapshot,
-        mockup_charges=mockup_charges_from_totals(totals),
+        # Waived (0) MOQ lines are for staff only - not on the customer's receipt.
+        mockup_charges=printed_mockup_charges(totals),
         dtf_charges=dtf_charges_from_totals(totals)
     )
 
@@ -753,7 +756,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
         page_height += 18
         mockup_rows += (
             # Shorter "Flat (Team A - T-shirt)" for a team's charge so it fits the 246px receipt.
-            f'<p class="total-row"><span class="total-label">{"MOQ" if mc.get("team") else "MOQ Charges"} ({flat_charge_label(mc)}):</span>'
+            f'<p class="total-row"><span class="total-label">{"MOQ Charges" if mc.get("scope") == "team" else ("MOQ" if mc.get("team") else "MOQ Charges") + f" ({flat_charge_label(mc)})"}:</span>'
             f'<span class="total-value">+{float(mc.get("amount", 0)):.0f}</span></p>'
         )
     # One "DTF (Hoodie, 1 m)" row per line with DTF logos - same layout as the mockup rows.
@@ -795,7 +798,7 @@ def generate_simple_receipt_pdf(invoice_no, customer_name, team_name, items, tot
             items_rows += "".join(receipt_item_row(item) for item in rows)
             for mc in flats:
                 page_height += 22
-                items_rows += receipt_extra_row(f'MOQ Charges - {_escape(str(mc.get("category", "")))}', float(mc.get("amount", 0)))
+                items_rows += receipt_extra_row(moq_print_label(mc), float(mc.get("amount", 0)))
             for item in rows:
                 dtf = item.get("dtf") or {}
                 if dtf.get("amount"):

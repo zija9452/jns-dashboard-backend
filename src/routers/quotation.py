@@ -19,8 +19,8 @@ from ..models.quotation import (
 )
 from ..models.customer_invoice import CustomerInvoice, CustomerInvoiceStatus
 from ..models.rush_pricing import RushPricingSetting
-from ..auth.session_auth import admin_required_from_session
-from ..utils.mockup_charges import parse_mockup_charges, mockup_charges_from_totals, load_dye_options
+from ..auth.session_auth import admin_cashier_production_required_from_session
+from ..utils.mockup_charges import parse_mockup_charges, mockup_charges_from_totals, printed_mockup_charges, load_dye_options, moq_print_label
 from ..utils.dtf_charges import load_dtf_context, parse_item_dtf, dtf_charges_from_items, dtf_charges_from_totals
 from ..utils.item_teams import apply_item_teams, team_names_label, team_groups, has_teams, flat_charges_of_team, flat_charge_label
 
@@ -184,7 +184,7 @@ def _build_totals(subtotal: Decimal, discount: Decimal, rush_charge: Decimal,
 
 async def _build_quotation(
     quotation_data: QuotationCreate, db: AsyncSession, current_user: User,
-    quotation_no: Optional[str] = None, revision: int = 1,
+    quotation_no: Optional[str] = None, revision: int = 1, previous_mockups: Optional[list] = None,
 ) -> tuple[Quotation, dict]:
     """
     A new DRAFT quotation row from the page's data - shared by Create and Revise.
@@ -195,7 +195,11 @@ async def _build_quotation(
     items_list, subtotal = _parse_items(quotation_data.items, dtf_categories, dtf_setting)
     total_pieces = sum(i["quantity"] for i in items_list)
     discount = quotation_data.discounts or Decimal("0.00")
-    mockup_charges, mockup_total = parse_mockup_charges(quotation_data.mockup_charges, items_list, await load_dye_options(db))
+    # previous_mockups (revision) keeps who waived / reduced an unchanged MOQ.
+    mockup_charges, mockup_total = parse_mockup_charges(
+        quotation_data.mockup_charges, items_list, await load_dye_options(db),
+        user=current_user, previous=previous_mockups
+    )
     dtf_charges, dtf_total = dtf_charges_from_items(items_list)
 
     is_rush, rate_snapshot, threshold_snapshot, rush_charge = await _compute_rush(
@@ -262,7 +266,7 @@ def _saved_response(quotation: Quotation, extra: dict) -> dict:
 @router.post("/create")
 async def create_quotation(
     quotation_data: QuotationCreate,
-    current_user: User = Depends(admin_required_from_session()),
+    current_user: User = Depends(admin_cashier_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     quotation, extra = await _build_quotation(quotation_data, db, current_user)
@@ -280,7 +284,7 @@ REVISABLE_STATUSES = (QuotationStatus.DRAFT, QuotationStatus.SENT, QuotationStat
 async def revise_quotation(
     quotation_id: UUID,
     quotation_data: QuotationCreate,
-    current_user: User = Depends(admin_required_from_session()),
+    current_user: User = Depends(admin_cashier_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -308,7 +312,8 @@ async def revise_quotation(
         )
 
     quotation, extra = await _build_quotation(
-        quotation_data, db, current_user, quotation_no=old.quotation_no, revision=old.revision + 1
+        quotation_data, db, current_user, quotation_no=old.quotation_no, revision=old.revision + 1,
+        previous_mockups=mockup_charges_from_totals(json.loads(old.totals) if old.totals else {})
     )
     db.add(quotation)
     await db.flush()
@@ -330,7 +335,7 @@ async def list_quotations(
     limit: int = 50,
     status: Optional[QuotationStatus] = None,
     customer_id: Optional[UUID] = None,
-    current_user: User = Depends(admin_required_from_session()),
+    current_user: User = Depends(admin_cashier_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     skip = (page - 1) * limit
@@ -406,7 +411,7 @@ async def _get_quotation_or_404(quotation_id: UUID, db: AsyncSession) -> Quotati
 @router.get("/{quotation_id}")
 async def get_quotation(
     quotation_id: UUID,
-    current_user: User = Depends(admin_required_from_session()),
+    current_user: User = Depends(admin_cashier_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     quotation = await _get_quotation_or_404(quotation_id, db)
@@ -442,7 +447,7 @@ async def get_quotation(
 async def update_quotation(
     quotation_id: UUID,
     update_data: QuotationUpdate,
-    current_user: User = Depends(admin_required_from_session()),
+    current_user: User = Depends(admin_cashier_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     quotation = await _get_quotation_or_404(quotation_id, db)
@@ -467,7 +472,10 @@ async def update_quotation(
     # (possibly changed) items, so a category that now has 5+ pcs can't keep its charge.
     saved_totals = json.loads(quotation.totals) if quotation.totals else {}
     mockup_raw = update_data.mockup_charges if update_data.mockup_charges is not None else mockup_charges_from_totals(saved_totals)
-    mockup_charges, mockup_total = parse_mockup_charges(mockup_raw, items_list, await load_dye_options(db))
+    mockup_charges, mockup_total = parse_mockup_charges(
+        mockup_raw, items_list, await load_dye_options(db),
+        user=current_user, previous=mockup_charges_from_totals(saved_totals)
+    )
     dtf_charges, dtf_total = dtf_charges_from_items(items_list)
 
     if update_data.required_by_date is not None:
@@ -509,7 +517,7 @@ async def update_quotation(
 async def update_quotation_status(
     quotation_id: UUID,
     status_update: QuotationStatusUpdate,
-    current_user: User = Depends(admin_required_from_session()),
+    current_user: User = Depends(admin_cashier_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     quotation = await _get_quotation_or_404(quotation_id, db)
@@ -547,7 +555,7 @@ async def update_quotation_status(
 @router.delete("/{quotation_id}")
 async def delete_quotation(
     quotation_id: UUID,
-    current_user: User = Depends(admin_required_from_session()),
+    current_user: User = Depends(admin_cashier_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     quotation = await _get_quotation_or_404(quotation_id, db)
@@ -575,7 +583,7 @@ async def delete_quotation(
 @router.post("/{quotation_id}/convert")
 async def convert_quotation_to_order(
     quotation_id: UUID,
-    current_user: User = Depends(admin_required_from_session()),
+    current_user: User = Depends(admin_cashier_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     quotation = await _get_quotation_or_404(quotation_id, db)
@@ -778,7 +786,7 @@ def _build_quotation_pdf_html(quotation: Quotation) -> str:
             <td class="r strong">{money(item.get('total_price'))}</td>
         </tr>"""
 
-    saved_mockups = mockup_charges_from_totals(totals)
+    saved_mockups = printed_mockup_charges(totals)  # customer's PDF: no waived (0) lines
     team_order = has_teams(items_list)
     rows_html = ""
     team_totals = []  # (team, pieces, total, flat charges) for the totals box
@@ -795,8 +803,8 @@ def _build_quotation_pdf_html(quotation: Quotation) -> str:
             rows_html += "".join(item_row(idx, item) for idx, item in rows)
             for mc in flats:
                 rows_html += (
-                    f'<tr class="extra flat"><td></td><td>MOQ Charges - {escape(str(mc.get("category", "")))}'
-                    f'<div class="item-desc">{int(mc.get("pieces", 0))} pcs (under 5) in this team &middot; once, not per piece</div></td>'
+                    f'<tr class="extra flat"><td></td><td>{moq_print_label(mc)}'
+                    f'<div class="item-desc">{int(mc.get("pieces", 0))} pcs{"" if mc.get("scope") == "team" else " (under 5)"} in this team &middot; once, not per piece</div></td>'
                     f'<td></td><td></td><td class="r strong">{money(mc.get("amount"))}</td></tr>'
                 )
             for idx, item in rows:
@@ -837,8 +845,8 @@ def _build_quotation_pdf_html(quotation: Quotation) -> str:
     # team totals above), so they are not listed again here.
     for mc in ([] if team_order else saved_mockups):
         total_rows += (
-            f'<tr><td>MOQ Charges - {flat_charge_label(mc)}'
-            f'<div class="sub" style="color:#6B7280;">{int(mc.get("pieces", 0))} pcs (under 5) &middot; once for this item</div></td>'
+            f'<tr><td>{moq_print_label(mc, with_team=True)}'
+            f'<div class="sub" style="color:#6B7280;">{int(mc.get("pieces", 0))} pcs{" &middot; once for the order" if mc.get("scope") == "team" else " (under 5) &middot; once for this item"}</div></td>'
             f'<td class="r">+ {money(mc.get("amount"))}</td></tr>'
         )
     for dc in ([] if team_order else dtf_charges_from_totals(totals)):
@@ -1012,7 +1020,7 @@ def _build_quotation_pdf_html(quotation: Quotation) -> str:
 @router.get("/{quotation_id}/pdf")
 async def get_quotation_pdf(
     quotation_id: UUID,
-    current_user: User = Depends(admin_required_from_session()),
+    current_user: User = Depends(admin_cashier_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     from weasyprint import HTML

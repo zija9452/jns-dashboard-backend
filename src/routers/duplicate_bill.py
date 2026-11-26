@@ -314,7 +314,7 @@ async def get_duplicate_invoice(
         items_data = json.loads(invoice.items) if invoice.items else []
 
         from .customer_invoice import generate_simple_receipt_pdf, initial_payment_snapshot
-        from ..utils.mockup_charges import mockup_charges_from_totals
+        from ..utils.mockup_charges import printed_mockup_charges
         from ..utils.dtf_charges import dtf_charges_from_totals
 
         # invoice.total_amount already has rush baked in - pull the plain item
@@ -339,7 +339,7 @@ async def get_duplicate_invoice(
             rush_charge=float(invoice.rush_charge or 0),
             required_by_date=invoice.required_by_date,
             rush_rate=invoice.rush_rate_snapshot,
-            mockup_charges=mockup_charges_from_totals(invoice_totals),
+            mockup_charges=printed_mockup_charges(invoice_totals),  # no waived (0) lines
             dtf_charges=dtf_charges_from_totals(invoice_totals)
         )
 

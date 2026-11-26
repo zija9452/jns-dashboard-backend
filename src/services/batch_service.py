@@ -162,7 +162,7 @@ async def stocked_totals(db: AsyncSession, batch_vendor_ids: List[UUID]) -> Dict
 
 async def line_ranges(db: AsyncSession, rows: List[Tuple[UUID, int, Decimal, Decimal]], shop: bool) -> Dict[UUID, dict]:
     """Lowest / highest cost, price and margin % over each product's lines - its Old Stock
-    (while not 0) and every batch - so a list shows "1,000 – 2,000" on the product row.
+    (even at 0 stock) and every batch - so a list shows "1,000 – 2,000" on the product row.
     rows: (product id, stock, cost, price) as the list has them, warehouse or shop (`shop`).
     Only products with batches are returned."""
     if not rows:
@@ -189,8 +189,8 @@ async def line_ranges(db: AsyncSession, rows: List[Tuple[UUID, int, Decimal, Dec
                      for pb in batches[product_id]]
         else:
             lines = [(pb.warehouse_stock or 0, pb.cost, pb.selling_price) for pb in batches[product_id]]
-        if (stock or 0) - sum(line[0] for line in lines) != 0:
-            lines.append((0, cost or 0, price or 0))  # Old Stock
+        # Old Stock (product's own cost / price) always counts, even at 0 stock (user 2026-11-07)
+        lines.append((0, cost or 0, price or 0))
         costs = [float(c) for _, c, _ in lines]
         prices = [float(p) for _, _, p in lines]
         margins = [round((float(p) - float(c)) / float(c) * 100, 2) if c else 0.0 for _, c, p in lines]

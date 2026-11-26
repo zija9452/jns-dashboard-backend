@@ -57,6 +57,7 @@ def admin_cashier_production_required_from_session():
     production, for the read-only vendor list the Stock In page needs
     (vendor dropdown) without granting production the rest of the
     admin-only Vendors module (create/update/delete/details).
+    Also the whole Quotation module (production has full quotation access).
     """
     async def role_checker(current_user: User = Depends(get_current_user_from_session)):
         if current_user.role.name not in ["admin", "cashier", "production"]:
@@ -210,7 +211,9 @@ def employee_production_required_from_session():
     """Require admin, cashier, employee, or production role from session
 
     Narrow variant of employee_required_from_session() that also allows
-    production, for the Shop Order (restock request) endpoints.
+    production, for the Shop Order (restock request) endpoints, and for
+    reading DTF / Rush pricing (the Quotation page needs the rates; only
+    the GET, editing them stays employee/cashier/admin).
     """
     async def role_checker(current_user: User = Depends(get_current_user_from_session)):
         if current_user.role.name not in ["employee", "cashier", "admin", "production"]:

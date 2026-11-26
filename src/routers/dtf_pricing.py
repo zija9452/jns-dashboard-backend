@@ -7,7 +7,7 @@ from typing import Optional
 from ..database.database import get_db
 from ..models.dtf_pricing import DtfPricingSetting, DtfPricingSettingUpdate, DtfPricingSettingRead
 from ..models.user import User
-from ..auth.session_auth import employee_required_from_session
+from ..auth.session_auth import employee_required_from_session, employee_production_required_from_session
 from ..config.branches import current_branch_name
 
 router = APIRouter(prefix="/dtf-pricing", tags=["DTF Pricing"])
@@ -29,7 +29,7 @@ async def get_dtf_setting(db: AsyncSession, branch: Optional[str] = None) -> Dtf
 @router.get("/", response_model=DtfPricingSettingRead)
 async def get_dtf_pricing(
     branch: Optional[str] = None,
-    current_user: User = Depends(employee_required_from_session()),
+    current_user: User = Depends(employee_production_required_from_session()),
     db: AsyncSession = Depends(get_db)
 ):
     """Get the DTF rate per 0.5 m of roll, the roll width and the gap between logos."""

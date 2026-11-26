@@ -347,7 +347,7 @@ async def shop_batch_lines(
     db: AsyncSession = Depends(get_db)
 ):
     """A product's shop stock in this branch line by line: "Old Stock" (stock outside the
-    batches; only when not 0) then each batch with its own barcode / shop cost / shop price /
+    batches; shown even at 0) then each batch with its own barcode / shop cost / shop price /
     shop stock. In Light House a line has its batch; in another branch it is a copy with
     only its label."""
     try:
@@ -367,7 +367,8 @@ async def shop_batch_lines(
     )).all()
 
     old_stock = (product.stock_level or 0) - sum(pb.stock_level or 0 for pb, _, _, _ in rows)
-    lines = [] if old_stock == 0 else [{
+    # Old Stock always shown, even at 0 - its own price stays visible (user 2026-11-07)
+    lines = [{
         "product_batch_id": None,
         "label": "Old Stock",
         "barcode": product.barcode,
