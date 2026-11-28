@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status as http_status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_, and_
+from sqlalchemy.exc import IntegrityError
 from typing import Optional
 from uuid import UUID
 from datetime import datetime, timedelta
@@ -12,6 +13,31 @@ from ..models.demand_item import DemandItem
 from ..auth.session_auth import employee_required_from_session, get_current_user_from_session
 
 router = APIRouter()
+
+DEMAND_ITEM_NAME_MAX = 150  # demand_items.name max_length
+
+
+async def _get_or_create_demand_item(db: AsyncSession, text: str, category: Optional[str]) -> UUID:
+    """The demand_item with this name (case-insensitive), created if missing -
+    so every demand is linked and shows in the graph / Top Items / item search,
+    whether or not the cashier picked it from the suggestion list."""
+    name = " ".join(text.split())[:DEMAND_ITEM_NAME_MAX]
+    match_statement = select(DemandItem.id).where(func.lower(DemandItem.name) == name.lower())
+    existing_id = (await db.execute(match_statement)).scalars().first()
+    if existing_id:
+        return existing_id
+
+    item = DemandItem(name=name, category=(category or "").strip() or None)
+    try:
+        async with db.begin_nested():
+            db.add(item)
+    except IntegrityError:
+        # Another request created the same name at the same moment - use theirs
+        existing_id = (await db.execute(match_statement)).scalars().first()
+        if existing_id:
+            return existing_id
+        raise
+    return item.id
 
 
 @router.post("/create")
@@ -35,16 +61,13 @@ async def create_demand(
 
     demand_text = demand_data.demand_text.strip()
 
-    # If the client didn't send a demand_item_id (e.g. free text typed
-    # without picking a suggestion), still link it when the text exactly
-    # matches an existing item - otherwise it silently fragments the
-    # Top Items ranking / report into a duplicate "unlinked" group.
+    # If the client didn't send a demand_item_id (free text typed without
+    # picking a suggestion), link it to the item with the same name, creating
+    # that item when it doesn't exist yet - an unlinked demand never shows in
+    # the graph, Top Items or the item search.
     demand_item_id = demand_data.demand_item_id
     if not demand_item_id:
-        match = await db.execute(
-            select(DemandItem.id).where(func.lower(DemandItem.name) == demand_text.lower())
-        )
-        demand_item_id = match.scalar_one_or_none()
+        demand_item_id = await _get_or_create_demand_item(db, demand_text, demand_data.category)
 
     demand = Demand(
         demand_text=demand_text,
@@ -539,6 +562,11 @@ async def update_demand(
             raise HTTPException(
                 status_code=http_status.HTTP_400_BAD_REQUEST,
                 detail="Demand text cannot be empty"
+            )
+        if new_text != demand.demand_text:
+            # Text changed -> re-link to the item with the new name (created if missing)
+            demand.demand_item_id = await _get_or_create_demand_item(
+                db, new_text, request_data.get("category") or demand.category
             )
         demand.demand_text = new_text
 
